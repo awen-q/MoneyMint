@@ -43,6 +43,11 @@
 - **价格重复插行 + 撤销永不清理**：价格 INSERT 增加存在性幂等检查（重复导入同一文件 prices 行数不变）；本批新建价格进 manifest，撤销按清单删（`removed_prices` 等于本批实建数，不再依赖过保守的引用分析）。
 - **软删币种并发恢复竞态误报 404**：`POST /api/commodities` 命中软删行后、恢复事务前被并发请求抢先恢复时，原实现返回 404；现回落为 409 `commodity_exists`（该币种实际已存在），404 只保留给「真不存在」。并发下无数据损坏（表级 UNIQUE 恒 1 行），仅修正错误码语义。
 
+### Known Issues（QA 二轮发现，低危，留待下个小修批）
+
+- 「幂等去重后零交易」的空批次撤销仍返回 404 `import_batch_not_found`：该批新建的价格行与其 manifest 清单行会残留（无数据损坏、无 sync 扩散，手动可清）。修复方向：undo 批次定位改为「manifest 有行 OR 交易有行」。
+- owner 注册预设的默认账本 `default_commodity` 为 NULL：该场景撤销导入的「默认币种兜底护栏」暂无兜底对象；commodities 行本就是导入临建、随批删且记账时 `ensureCommodityOn` 自愈重建，数据无损。在账本设置页落值后护栏即生效。
+
 ### Verified
 
 - Go `build` / `vet` / `test ./...` 全绿（12 包）；`BEAN_CHECK_STRICT=1` 严格 bean-check 通过；迁移 015 幂等重演（rehearsal，源库指纹零改动）通过。

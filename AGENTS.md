@@ -264,9 +264,11 @@ python -m pip install beancount    # 激活 .venv 后执行
 1. `package-lock.json` 在 Linux（CI ubuntu）上的 `npm ci` 与 Dockerfile Node 构建，以 GitHub Actions `web-verify` / 镜像构建的运行记录为准，别把「配置写了」当成「已经跑过」；若失败按 lock 缺平台二进制处理（重新在 Linux 生成）。
 2. `docs/` 现存 `0.5.2-prd.md`（产品口径）与 `0.5.2-design.md`（架构设计）两份权威文档；19 份旧阶段文档仅存 git 历史。
 3. `frontend/dist/legacy/` 为**冻结回滚基准**（不入库，需从 git 历史重建）；`web-build` 的 `emptyOutDir` 会清掉它——需要回滚能力时从 `d297318` 之前的 git 历史重建。回滚旧版须同时设 `LEDGER_AUTH_EXPOSE_TOKEN=true`。
-4. `CHANGELOG.md` 顶部已为 `[0.6.0] - 2026-11-15`，`frontend/package.json` / `docker-compose.yml` / `README.md` 镜像示例已同步 0.6.0；**git tag 仍为 `v0.5.1`**，待收口提交后打 `v0.6.0`——在此之前 `scripts/verify-version.sh` 无参模式（读 `git describe`）会报 tag 滞后 EXIT=1，属预期时序差，传参 `verify-version.sh v0.6.0` 可验证三文件一致。
+4. `CHANGELOG.md` 顶部为 `[0.6.0] - 2026-11-15`，`frontend/package.json` / `docker-compose.yml` / `README.md` 镜像示例已同步 0.6.0；git tag `v0.6.0` 已于 QA 二轮通过后补打（QA 回归全过：三缺陷修复确认无回归），`scripts/verify-version.sh` 无参模式恢复 EXIT=0。
 5. 真机双端联调（浏览器 A/B 同时在线、离线多设备端到端）与批 5 离线链路真机冒烟尚未完整确认。
 6. 下期（M4+）：OFX/CSV 自动导入、Beancount 子集外通用语法（cost 注解 / 价格指令等）、价格 CRUD、规则引擎、Postgres 横向扩展。0.6.0 的遗留实现细节与开放项以 `docs/0.5.2-prd.md` §9 留档为准（N-12）。
+7. **导入撤销已知边界（QA 二轮 DEF-4，低危，留待下个小修批）**：「幂等去重后零交易」的空批次撤销仍 404 `import_batch_not_found`，该批新建价格与其 manifest 行会残留（无数据损坏、无 sync 扩散，手动可清）。修复方向：undo 批次定位改为「manifest 有行 OR 交易有行」。
+8. **注册默认账本 `default_commodity` 为 NULL**：owner 预设路径（`service.Register`）不落默认币种，此场景 undo 的「默认币种兜底护栏」无兜底对象——但 commodities 行本就是导入临建、随批删且记账时 `ensureCommodityOn` 会自愈重建，数据无损；依赖账本设置页落值后护栏生效。
 
 > 旧版功能在新版**一律 Must，不得降级**：CSV 导出、分类拖拽排序、导出不平告警、注册开关、默认账户管理详见方案 §14.5。
 
