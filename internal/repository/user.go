@@ -138,6 +138,10 @@ func (s *Store) LedgerCount() (int, error) {
 
 // CreateLedgerForOwner 事务内创建账本并写入 owner 成员关系（首个注册用户），
 // 返回新账本 id（不再硬编码 id=1，由 AUTOINCREMENT 分配）。
+//
+// default_commodity 落值 'CNY'（0.6.0 收尾修复，QA 二轮发现）：与前端建账固定值
+// （LedgersView.vue）、`service/opening.go` 默认口径一致——否则注册/预设 owner 路径
+// 建出的默认账本该列为 NULL，undo 的「默认币种兜底护栏」无兜底对象。
 func (s *Store) CreateLedgerForOwner(name string, ownerID int64) (int64, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -146,7 +150,7 @@ func (s *Store) CreateLedgerForOwner(name string, ownerID int64) (int64, error) 
 	defer tx.Rollback()
 
 	res, err := tx.Exec(
-		`INSERT INTO ledgers(name, owner_id) VALUES(?, ?)`,
+		`INSERT INTO ledgers(name, owner_id, default_commodity) VALUES(?, ?, 'CNY')`,
 		name, ownerID,
 	)
 	if err != nil {

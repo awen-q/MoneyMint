@@ -803,7 +803,10 @@ func (s *Store) fillPadBalancePreviewNew(a *ImportAnalysis, p *beancount.ParseRe
 //
 // 兼容性：016 之前的历史批次无清单行，撤销只删交易与分录，实体一律保留
 // （安全降级：宁可不删，不误删）。撤销完成后本批 manifest 行一并清理。
-// 不轮换 instance_id（非 restore）。批次不存在返回 import_batch_not_found（404）。
+// 批次定位为「manifest 有行 OR 交易有行」（QA 二轮 DEF-4）：幂等去重后零交易的
+// 空批次同样可撤销（只清 manifest 实体，removed_transactions / removed_postings
+// 如实为 0）；两者皆空才是真不存在，维持 404 import_batch_not_found。
+// 不轮换 instance_id（非 restore）。
 func (s *Store) UndoImportBatch(ledgerID int64, batchID string) (*ImportUndoResult, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -811,7 +814,9 @@ func (s *Store) UndoImportBatch(ledgerID int64, batchID string) (*ImportUndoResu
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// 1) 定位本批交易（未删除）。
+	// 1) 批次定位：「manifest 有行 OR 交易有行」（QA 二轮 DEF-4 修复）。
+	//    「幂等去重后零交易」的空批次合法存在（其新建价格 / 币种已登记 manifest），
+	//    必须同样可撤销；两者皆空才是真不存在的批次（维持 404 import_batch_not_found）。
 	rows, err := tx.Query(
 		`SELECT id, uuid FROM transactions WHERE ledger_id=? AND import_batch_id=? AND deleted_at IS NULL`,
 		ledgerID, batchID,
@@ -836,37 +841,49 @@ func (s *Store) UndoImportBatch(ledgerID int64, batchID string) (*ImportUndoResu
 		return nil, err
 	}
 	rows.Close()
-	if len(txns) == 0 {
+	var manifestRows int
+	if err := tx.QueryRow(
+		`SELECT count(*) FROM import_batch_entities WHERE ledger_id=? AND batch_id=?`,
+		ledgerID, batchID,
+	).Scan(&manifestRows); err != nil {
+		return nil, err
+	}
+	if len(txns) == 0 && manifestRows == 0 {
 		return nil, domain.Codedf(domain.ErrNotFound, domain.CodeImportBatchNotFound,
 			"未找到该导入批次，无法撤销")
 	}
 
-	idArgs := make([]any, 0, len(txns))
-	for _, t := range txns {
-		idArgs = append(idArgs, t.id)
-	}
-	// 2) 硬删分录（先清引用；postings.account_id / transaction_id 外键无级联）。
-	delPostings, err := tx.Exec(
-		`DELETE FROM postings WHERE transaction_id IN (?`+strings.Repeat(",?", len(idArgs)-1)+`)`,
-		idArgs...,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("删除批次分录: %w", err)
-	}
-	removedPostings, _ := delPostings.RowsAffected()
-	// 3) 硬删交易行。
-	delTxns, err := tx.Exec(
-		`DELETE FROM transactions WHERE id IN (?`+strings.Repeat(",?", len(idArgs)-1)+`)`,
-		idArgs...,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("删除批次交易: %w", err)
-	}
-	removedTxns, _ := delTxns.RowsAffected()
-	// 4) sync_log op=delete（每个被删交易）。
-	for _, t := range txns {
-		if _, err := appendSyncLogOn(tx, ledgerID, domain.EntityTransaction, t.uuid, domain.OpDelete); err != nil {
-			return nil, err
+	// 2)~4) 硬删本批交易与分录 + sync_log（空批次无交易，整段跳过，
+	//       removed_transactions / removed_postings 如实为 0）。
+	var removedTxns, removedPostings int64
+	if len(txns) > 0 {
+		idArgs := make([]any, 0, len(txns))
+		for _, t := range txns {
+			idArgs = append(idArgs, t.id)
+		}
+		// 2) 硬删分录（先清引用；postings.account_id / transaction_id 外键无级联）。
+		delPostings, err := tx.Exec(
+			`DELETE FROM postings WHERE transaction_id IN (?`+strings.Repeat(",?", len(idArgs)-1)+`)`,
+			idArgs...,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("删除批次分录: %w", err)
+		}
+		removedPostings, _ = delPostings.RowsAffected()
+		// 3) 硬删交易行。
+		delTxns, err := tx.Exec(
+			`DELETE FROM transactions WHERE id IN (?`+strings.Repeat(",?", len(idArgs)-1)+`)`,
+			idArgs...,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("删除批次交易: %w", err)
+		}
+		removedTxns, _ = delTxns.RowsAffected()
+		// 4) sync_log op=delete（每个被删交易）。
+		for _, t := range txns {
+			if _, err := appendSyncLogOn(tx, ledgerID, domain.EntityTransaction, t.uuid, domain.OpDelete); err != nil {
+				return nil, err
+			}
 		}
 	}
 

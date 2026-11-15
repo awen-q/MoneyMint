@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"familyledger/internal/domain"
@@ -63,9 +64,16 @@ func (s *Service) MinActiveLedgerID(userID int64) (int64, error) {
 }
 
 // CreateLedger 创建新账本，创建者成为 owner；期初日期默认今日（FR-01）。
+//
+// defaultCommodity 为空时归一化为 "CNY"（0.6.0 收尾修复）：与注册首账本
+// （CreateLedgerForOwner）、前端建账固定值同口径，防 API 直调不带该字段继续
+// 产生 NULL 账本（undo 的「默认币种兜底护栏」依赖该列有值）。
 func (s *Service) CreateLedger(userID int64, name, defaultCommodity string) (LedgerView, error) {
 	if name == "" {
 		return LedgerView{}, domain.Invalidf("账本名称必填")
+	}
+	if strings.TrimSpace(defaultCommodity) == "" {
+		defaultCommodity = "CNY"
 	}
 	id, err := s.repo.CreateLedger(userID, name, defaultCommodity)
 	if err != nil {

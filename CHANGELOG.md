@@ -42,11 +42,8 @@
 - **【高危】批次撤销越界硬删既有实体**：原实现用「撤销后零引用」全账本扫描判定孤儿，且 postings 子查询未按 ledger 定界——种子账户无分录的账本上撤销会误删全部既有种子账户（QA 复现 `removed_accounts=35`），无期初账本上连默认币种也会被删，并以 `sync_log op=delete` 扩散到其他端。根治为迁移 016 manifest 方案：撤销只按清单精确删；仍被本批之外分录引用的实体（如后续批次按 name 复用的账户）保留不删、不写 delete 事件；引用检查 join transactions 按 ledger 定界、软删引用计入（与 `CommodityUsage` 保守口径一致）；默认币种额外兜底保护。
 - **价格重复插行 + 撤销永不清理**：价格 INSERT 增加存在性幂等检查（重复导入同一文件 prices 行数不变）；本批新建价格进 manifest，撤销按清单删（`removed_prices` 等于本批实建数，不再依赖过保守的引用分析）。
 - **软删币种并发恢复竞态误报 404**：`POST /api/commodities` 命中软删行后、恢复事务前被并发请求抢先恢复时，原实现返回 404；现回落为 409 `commodity_exists`（该币种实际已存在），404 只保留给「真不存在」。并发下无数据损坏（表级 UNIQUE 恒 1 行），仅修正错误码语义。
-
-### Known Issues（QA 二轮发现，低危，留待下个小修批）
-
-- 「幂等去重后零交易」的空批次撤销仍返回 404 `import_batch_not_found`：该批新建的价格行与其 manifest 清单行会残留（无数据损坏、无 sync 扩散，手动可清）。修复方向：undo 批次定位改为「manifest 有行 OR 交易有行」。
-- owner 注册预设的默认账本 `default_commodity` 为 NULL：该场景撤销导入的「默认币种兜底护栏」暂无兜底对象；commodities 行本就是导入临建、随批删且记账时 `ensureCommodityOn` 自愈重建，数据无损。在账本设置页落值后护栏即生效。
+- **【QA 二轮发现】空批次撤销 404、价格与 manifest 行残留**：「幂等去重后零交易」的空批次（如文件 B 交易与 A 完全一致、仅价格行不同）撤销返回 404 `import_batch_not_found`，该批新建的价格行与其 manifest 清单行永久残留。批次定位改为「manifest 有行 OR 交易有行」：仅 manifest 有行即正常走撤销（manifest 实体按既有护栏精确删、`removed_transactions` / `removed_postings` 如实为 0、清 manifest 行）；两者皆空才是真不存在批次，维持 404。A 批次撤销不受影响。
+- **【QA 二轮发现】注册默认账本 `default_commodity` 为 NULL**：首个注册用户 / 预设 owner 路径（同走 `svc.Register` → `CreateLedgerForOwner`）建出的默认账本不落默认币种，undo 的「默认币种兜底护栏」无兜底对象。现 `CreateLedgerForOwner` 写入 `'CNY'`（与前端建账固定值、`service/opening.go` 默认口径一致），`CreateLedger` 对空 `default_commodity` 同样归一化为 `'CNY'`（防 API 直调产生 NULL 账本）；显式传入的值不被覆盖。不新增迁移。
 
 ### Verified
 
