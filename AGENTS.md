@@ -30,7 +30,9 @@
 
 **核心不变约束**：导出的 `.beancount` 必须能被 `bean-check` 直接校验通过（退出码 0、无报错）。
 
-**当前阶段**：M7 六批全部完成，仓库只剩一套前端；§7 端点表 36 条已与 `internal/server/router.go`、`frontend/src/api/routes.ts` 逐条核对一致。剩余边界见 §9。
+**当前阶段**：M7 六批 + **0.6.0（S0~S6 七批，2026-11-15）全部交付**，仓库只剩一套前端；§7 端点表 **44 条**（基线 36 + 0.6.0 新增 8）已与 `internal/server/router.go`、`frontend/src/api/routes.ts` 逐条核对一致；迁移至 **015**，Vitest **356/356 通过**（47 文件）。剩余边界见 §9。
+
+**0.6.0 已交付**（2026-11-15）：迁移 015_ledger_ops、账本删除、币种 CRUD、账户下级（`parent_uuid` 必传）、余额校准（`balance_key` 独立列，D-1 日初口径）、Beancount 导入（默认 `target=current` + 批次撤销；导入端点移出账本上下文豁免）、修改交易（`PATCH /api/transactions/{uuid}` = 冲正 + 新建，无版本链；权限收紧：editor 仅可改本人交易）。**两条破坏性变更**（导入语义反转 / 交易权限收紧）详见 `CHANGELOG.md` [0.6.0]。0.6.0 产品口径唯一源：[`docs/0.5.2-prd.md`](docs/0.5.2-prd.md)（N-12：§9 只链接不复制 AC）。
 
 ---
 
@@ -64,7 +66,7 @@ python -m pip install beancount    # 激活 .venv 后执行
 ├── cmd/server/main.go    # 后端入口
 ├── internal/             # 后端分层：config → domain → db → repository → service → handler → server
 │   ├── db/{db,migrate}.go   # 开库 + schema 迁移（当前至 015）；迁移框架见 §4
-│   ├── repository/       # 全部 SQL 集中于此（account/transaction/member/sync/session/user/ledger/opening/import）
+│   ├── repository/       # 全部 SQL 集中于此（account/transaction/reversal 冲正内核/commodity/balance/ledger/member/sync/session/user/setting/opening/import）
 │   ├── service/          # 业务：校验/事务编排/余额/自然键合并/同步协议/成员权限/恢复/导入
 │   ├── handler/          # 薄 HTTP 适配层
 │   ├── server/           # 组合根：路由 + CORS/CSRF/auth 中间件 + 静态托管
@@ -79,14 +81,14 @@ python -m pip install beancount    # 激活 .venv 后执行
 │   ├── public/           # sw.js + manifest.json + icons/ + favicon.png（PWA 静态资源）
 │   ├── src/              # 源码：api/ core/（含 sync/ 离线内核） router/ stores/ styles/ views/ components/ + main.ts / App.vue
 │   └── dist/             # 构建产物（gitignore）；dist/legacy/ 为冻结的旧版回滚基准（不入库）
-├── scripts/              # check-bean / verify-version / smoke / local.sh / check-legacy / check-test-floor / compat
+├── scripts/              # check-bean / verify-version / smoke / rehearsal / local.sh / check-legacy / check-test-floor.mjs / compat.mjs
 └── data/                 # 运行时 SQLite（git 忽略）；backups/ 也在其下
 ```
 
 **前端架构（Vue 3 SPA，唯一前端）**：
 - `core/Money.ts`：`decimal.js` 定点金额唯一入口（只收 string 构造、`ROUND_HALF_UP`、`toString()` 固定 `toFixed()`）；另有 `core/{accounts,calendar,csv,filters,opening,ordering,record,storage,m2}.ts` 核心领域逻辑（全部带 `.test.ts`）。
 - `core/sync/`：离线同步内核——`models.ts`（本地实体/死信分类，`DEAD_CODES` 与后端稳定码同源）、`localStore.ts`（Memory 实现）、`idbStore.ts`（离线提交队列的本地持久化，单事务原子写）、`engine.ts`（SyncEngine：pull→push 重映射→pull、库世代隔离、指数退避、CAS 多标签页租约）+ 9 份真实契约样本（`fixtures/`，其中 6 份被 `engine.test.ts` 引用）。
-- `api/{types,routes,errors,client}.ts`：36 端点手写 TS 类型 / 路由常量 / `ApiError` / 类型化 fetch 客户端（401 single-flight / 428 / `X-Ledger-Id` 断言 / FormData 上传；**不生成** OpenAPI）。
+- `api/{types,routes,errors,client}.ts`：44 端点手写 TS 类型 / 路由常量 / `ApiError` / 类型化 fetch 客户端（401 single-flight / 428 / `X-Ledger-Id` 断言 / FormData 上传；**不生成** OpenAPI）。
 - `stores/`：`session / privacy / recordSheet / sync`；views 20 页 + components（AppLayout / RecordSheet / SyncBadge 等）。
 - `vite.config.ts`：`base: './'`、`build.target: 'es2015'`、`@vitejs/plugin-legacy`（`targets: Safari >= 14`）、`outDir: 'dist'`、`server.proxy['/api'] → 127.0.0.1:8080`、alias `@`、`define.__APP_VERSION__` 读 package.json。
 - PWA：`public/sw.js` 只缓存应用壳与静态资源（`/api/*`、`/legacy/*` 绝不拦截），activate 清理非 fambean 前缀旧缓存（含 Flutter 时代 SW 缓存）；`core/pwa.ts` 更新提示不自动打断录入（AC-35）。
@@ -163,7 +165,7 @@ python -m pip install beancount    # 激活 .venv 后执行
 
 ## 7. API 端点清单
 
-> 基线共 **36 条 `/api/` 端点**（下表 36 行 + 末尾 1 行静态回退），与 `internal/server/router.go` 的 `mux.HandleFunc` 及 `frontend/src/api/routes.ts` 的常量一一对应；新增端点须三处同步。**0.6.0 起新增端点见本节末尾「0.6.0 新增端点」小节**（按 Q-10：既有 36 行不重排，文末顺延编号）。
+> 基线共 **36 条 `/api/` 端点**（下表 36 行 + 末尾 1 行静态回退），0.6.0 新增 **8 条**（文末小节），全仓合计 **44 条**；与 `internal/server/router.go` 的 `mux.HandleFunc` 及 `frontend/src/api/routes.ts` 的常量一一对应；新增端点须三处同步。（按 Q-10：既有 36 行不重排，0.6.0 端点文末顺延编号。）
 
 | 端点 | 方法 | 鉴权 | 说明 |
 |---|---|---|---|
@@ -224,10 +226,13 @@ python -m pip install beancount    # 激活 .venv 后执行
 | `/api/accounts/{uuid}/balance` | GET | 登录+成员（viewer 可读） | 0.6.0 S4 #2：`?as_of_date=D` → `200 {account_uuid, as_of_date, cumulative:[{commodity,amount}], calibration:{exists, date, version, targets, transaction_uuid, history}}`；累计口径 `date < D`（日初，不含当日）；`404 account_not_found`、`400 balance_date_invalid` |
 | `/api/accounts/{uuid}/balance` | POST | 登录+成员（非 viewer） | 0.6.0 S4 #3：`{as_of_date:"D", targets:[{commodity,target_balance}]}`（带符号）→ `200 {status, account_uuid, transaction_uuid, reversal_uuid?, version, date:"D-1", entries:[{commodity,diff}]}`；普通 `*` 交易、描述「余额校准: 截至D日初」，独立列 `balance_date`/`balance_key`、**不写 `opening_account_uuid` / tags**、不输出 `balance`/`pad` 指令；`400 balance_date_invalid`、`400 balance_date_too_early`、`409 opening_equity_closed`、`409 account_closed`、`404 account_not_found` |
 | `/api/import/beancount/undo` | POST | 登录+成员（非 viewer） | 0.6.0 S5：`?batch_id=` 撤销一次导入批次 → `200 {removed_transactions, removed_postings, removed_prices, removed_accounts, removed_commodities}`；单一大事务硬删本批交易/分录（`transactions.import_batch_id` 精确范围）+ 撤销后孤儿账户/币种/价格（复用实体仍被其他交易引用，不误删；默认币种保留），写 `sync_log op=delete`；不轮换 `instance_id`；批次不存在 `404 import_batch_not_found`。导入端点自 S5 起同样不再豁免账本上下文 |
+| `/api/transactions/{uuid}` | PATCH | 登录+成员（按 D-15 判定） | 0.6.0 S6：修改交易 = **冲正 + 新建**（无版本链、无 `latest_uuid`，015 无 `supersedes` 列）。载荷镜像 create 契约（date/flag/description/tags/postings，postings 用 `account_id`），响应 `{original_uuid, reversal_uuid, new_uuid}`。判定顺序：已冲正 `409 txn_already_reversed`（**优先于角色**）→ 期初（`opening_account_uuid`）/ 校准（`balance_key`）/ 冲正（`reversal_of`）交易 `409 txn_not_editable` → editor 仅可改**本人**创建的交易（`403 txn_edit_forbidden`；`created_by` 为 NULL 的历史交易按 owner 兜底）；不平 / 引用关户账户先过 create 同款校验。不落幂等键，重试兜底命中已冲正判定 409 |
 
-> 本小节端点已同步 `internal/server/router.go` 与 `frontend/src/api/routes.ts`（沿用 `ledgerById` 常量：同一路径多方法共用一个常量，DELETE 为 0.6.0 新增方法；S2 新增 `commodities` / `commodityByUuid` 两条业务路径常量，均须带 `X-Ledger-Id`）。`GET /api/ledgers` 行级附加 `member_count` / `account_count` / `transaction_count`（P1-03，additive，不新增端点）；请求未带 `X-Ledger-Id` 时回退「该用户所属、未删、最小 id 账本」，不再硬编码 id=1（R3）。
+> 本小节端点已同步 `internal/server/router.go` 与 `frontend/src/api/routes.ts`（沿用 `ledgerById` 常量：同一路径多方法共用一个常量，DELETE 为 0.6.0 新增方法；S2 新增 `commodities` / `commodityByUuid` 两条业务路径常量，均须带 `X-Ledger-Id`；S6 的 PATCH 复用既有 `transactionByUuid` 常量，同一路径新增方法）。`GET /api/ledgers` 行级附加 `member_count` / `account_count` / `transaction_count`（P1-03，additive，不新增端点）；请求未带 `X-Ledger-Id` 时回退「该用户所属、未删、最小 id 账本」，不再硬编码 id=1（R3）。
 >
 > **契约变化（0.6.0 S2，D-04）**：`POST /api/accounts` 必须显式携带 `parent_uuid`，空串表示根账户、父账户 uuid 表示「增加下级」；**不传返回 400**（中文文案会给出修复写法）。前端 `AccountForm.vue` / `CategoriesView.vue`、`scripts/smoke.sh` 与 §10 / README 的 curl 示例均已同步。
+>
+> **契约变化（0.6.0 S6）**：交易三签名（流水 list / 详情 / 回收站 trash）服务端按请求用户 + 角色附加 `can_edit` / `can_restore`（additive、omitempty，仅在线 `TransactionView` / `TrashItemView`，**禁止进 sync loadEntity**）；回收站恢复对 viewer / 非成员 403，前端按钮随 `can_restore` 显隐。在线编辑复用记一笔弹窗（RecordSheet 编辑态预填 PATCH），离线时固定提示「修改需联网」、已冲正固定提示「该交易已被冲正，请修改最新版本」。
 
 ---
 
@@ -248,17 +253,19 @@ python -m pip install beancount    # 激活 .venv 后执行
 
 ---
 
-## 9. 已知边界 / 当前待办（M7 六批全部完成）
+## 9. 已知边界 / 当前待办（0.6.0 已交付）
 
-**已落地（批 0~6，2026-11-12 交付）**：Vue 3 + Vite 脚手架与全部 20 页、`core/Money` 定点金额、`es2015` + plugin-legacy + es2020 语法门禁 + `compat.mjs` API/CSS 扫描、36 端点手写 TS 类型 + 类型化 fetch 客户端（401 single-flight / 428 / `X-Ledger-Id` 断言 / FormData）、D-7 httpOnly Cookie + CSRF + CORS 白名单、迁移 013/014、恢复/导入全链路（M2-a~g）、离线同步内核（`core/sync/`，9 份真实契约样本〔其中 6 份被引擎用例引用〕+ 14 引擎用例）、PWA（`public/sw.js` + 更新提示）、CI `web-verify` job（含用例数下限防假绿）、Dockerfile Node 构建、工具链钉版（`.nvmrc` 22.23.4 / `engines >=22.22 <23` / `engine-strict`）、`LEDGER_AUTH_EXPOSE_TOKEN` 默认 `false`。Vitest **301/301**（37 文件）；Go `build` / `vet` / `test ./...` 全绿。
+**已落地（批 0~6，2026-11-12 交付）**：Vue 3 + Vite 脚手架与全部 20 页、`core/Money` 定点金额、`es2015` + plugin-legacy + es2020 语法门禁 + `compat.mjs` API/CSS 扫描、手写 TS 类型 + 类型化 fetch 客户端（401 single-flight / 428 / `X-Ledger-Id` 断言 / FormData）、D-7 httpOnly Cookie + CSRF + CORS 白名单、迁移 013/014、恢复/导入全链路（M2-a~g）、离线同步内核（`core/sync/`，9 份真实契约样本〔其中 6 份被引擎用例引用〕+ 14 引擎用例）、PWA（`public/sw.js` + 更新提示）、CI `web-verify` job（含用例数下限防假绿）、Dockerfile Node 构建、工具链钉版（`.nvmrc` 22.23.4 / `engines >=22.22 <23` / `engine-strict`）、`LEDGER_AUTH_EXPOSE_TOKEN` 默认 `false`。
+
+**已落地（0.6.0，2026-11-15 交付）**：迁移 015_ledger_ops、账本删除、币种 CRUD、账户下级、余额校准（`balance_key` 独立列）、Beancount 导入（`target=current` + 批次撤销，导入端点移出账本上下文豁免）、修改交易（冲正 + 新建，权限收紧）、`GET /api/ledgers` 行级计数（P1-03）、`X-Ledger-Id` 回退修正（R3）；§7 端点表 36→**44**；Vitest **356/356**（47 文件）；CI 用例数下限同步 356。**验收口径唯一源**：[`docs/0.5.2-prd.md`](docs/0.5.2-prd.md)（N-12：此处只链接、不复制 AC 全文，避免第二份漂移口径）；架构设计见 [`docs/0.5.2-design.md`](docs/0.5.2-design.md)。
 
 **遗留 / 注意**：
 1. `package-lock.json` 在 Linux（CI ubuntu）上的 `npm ci` 与 Dockerfile Node 构建，以 GitHub Actions `web-verify` / 镜像构建的运行记录为准，别把「配置写了」当成「已经跑过」；若失败按 lock 缺平台二进制处理（重新在 Linux 生成）。
 2. `docs/` 现存 `0.5.2-prd.md`（产品口径）与 `0.5.2-design.md`（架构设计）两份权威文档；19 份旧阶段文档仅存 git 历史。
 3. `frontend/dist/legacy/` 为**冻结回滚基准**（不入库，需从 git 历史重建）；`web-build` 的 `emptyOutDir` 会清掉它——需要回滚能力时从 `d297318` 之前的 git 历史重建。回滚旧版须同时设 `LEDGER_AUTH_EXPOSE_TOKEN=true`。
-4. `CHANGELOG.md` 顶部已为 `[0.5.1] - 2026-11-13`，M7 批 0~6 与图标/密码补丁已记入该版本；tag / `frontend/package.json` / 镜像示例已同步为 0.5.1，**`v0.5.1` tag 已推送至 origin**。
+4. `CHANGELOG.md` 顶部已为 `[0.6.0] - 2026-11-15`，`frontend/package.json` / `docker-compose.yml` / `README.md` 镜像示例已同步 0.6.0；**git tag 仍为 `v0.5.1`**，待收口提交后打 `v0.6.0`——在此之前 `scripts/verify-version.sh` 无参模式（读 `git describe`）会报 tag 滞后 EXIT=1，属预期时序差，传参 `verify-version.sh v0.6.0` 可验证三文件一致。
 5. 真机双端联调（浏览器 A/B 同时在线、离线多设备端到端）与批 5 离线链路真机冒烟尚未完整确认。
-6. 下期（M4+）：Beancount 通用语法导入、OFX/CSV 自动导入、规则引擎、商品/价格 CRUD、跨币种 cost 注解、Postgres 横向扩展。
+6. 下期（M4+）：OFX/CSV 自动导入、Beancount 子集外通用语法（cost 注解 / 价格指令等）、价格 CRUD、规则引擎、Postgres 横向扩展。0.6.0 的遗留实现细节与开放项以 `docs/0.5.2-prd.md` §9 留档为准（N-12）。
 
 > 旧版功能在新版**一律 Must，不得降级**：CSV 导出、分类拖拽排序、导出不平告警、注册开关、默认账户管理详见方案 §14.5。
 

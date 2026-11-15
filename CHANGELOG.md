@@ -6,6 +6,40 @@
 > 版本号单一事实源：git tag（`vX.Y.Z`）。发布前 `scripts/verify-version.sh` 会校验
 > tag / 本文件顶部版本 / `frontend/package.json` 三处一致，不一致则构建失败。
 
+## [0.6.0] - 2026-11-15
+
+多账本运营版（任务代号 0.5.2）：账本删除、币种 CRUD、账户下级、余额校准、Beancount 导入到当前账本与批次撤销、修改交易（冲正 + 新建）。账芯与离线同步协议不变，迁移 015（无 `edit_key` / `supersedes`，改账不走版本链）。
+
+### ⚠️ Breaking（两条破坏性变更，升级前必读）
+
+- **导入端点语义反转**（0.6.0 S5）：
+  - `POST /api/import/beancount` 默认 `target` 由「新建账本」反转为 **`target=current`（导入当前账本）**；导入到新账本须显式传 `target=new`。
+  - `/api/import/*` **移出账本上下文豁免**：与业务端点同口径——必须带 `X-Ledger-Id`、校验成员身份、viewer 只读；不再回退硬编码账本。旧客户端不带头的导入请求会落到「该用户所属、未删、最小 id 账本」（R3）或被 403 拒绝。
+- **交易权限收紧**（0.6.0 S6）：
+  - 交易三签名（list / detail / trash）服务端按请求用户 + 角色计算，新增 `can_edit` / `can_restore` 字段（additive，omitempty）；回收站恢复对 viewer / 非成员拒绝（403），前端按钮随 `can_restore` 显隐。
+  - 修改交易（`PATCH /api/transactions/{uuid}`）按 D-15 判定顺序：已冲正 409 `txn_already_reversed`（优先于角色）→ 期初 / 校准 / 冲正交易不可改 409 `txn_not_editable` → editor 仅可改**本人**创建的交易，其他一律 403 `txn_edit_forbidden`（`created_by` 为 NULL 的历史交易按 owner 兜底处理）。
+
+### Added
+
+- **账本删除**（S1）：`DELETE /api/ledgers/{id}`——成员门禁 → 禁删最后一个账本（`409 last_ledger`）→ `pre-ledger-delete` 一致性快照 → 单事务软删（迁移 015 的 `ledgers.deleted_at`）；有成员时 `409 ledger_has_members {member_count, members}`。
+- **币种 CRUD**（S2）：`GET/POST /api/commodities` 与 `DELETE /api/commodities/{uuid}`；新建命中软删行恢复原行（表级 `UNIQUE(ledger_id,symbol)`，绝不 INSERT）；被引用删除 `409 commodity_in_use {accounts, postings, prices, is_default}`；本版不提供精度修改（D-06，precision 默认 2）。
+- **账户增加下级**（S2，D-04）：`POST /api/accounts` 必须显式携带 `parent_uuid`（空串 = 根账户），**不传返回 400**；前端账户 / 分类表单同步。
+- **余额校准**（S4）：`GET/POST /api/accounts/{uuid}/balance`——`?as_of_date=D` 查询日初累计（`date < D` 口径）与校准历史；`POST` 以 targets 生成普通 `*` 校准交易（描述「余额校准： 截至D日初」，独立列 `balance_date` / `balance_key`，不写 `opening_account_uuid` / tags，导出不输出 `balance` / `pad` 指令）；不平自动冲正旧校准再建新校准。
+- **Beancount 导入 + 批次撤销**（S5）：`POST /api/import/beancount/preview`（只读预检：全量错误行号 / 冲突清单 / pad-balance 结构化累计 / 疑似重复提示）→ `POST /api/import/beancount`（单一大事务写入；`target=current` 同名账户复用 + 确定性幂等去重；`target=new` 同名自动加序号）→ `POST /api/import/beancount/undo?batch_id=`（按 `import_batch_id` 精确范围硬删本批交易 / 分录，撤销后孤儿账户 / 币种 / 价格一并清理，默认币种与仍被引用的实体保留）。
+- **修改交易**（S6）：`PATCH /api/transactions/{uuid}` = **冲正 + 新建**（沿用 0.4 起的不可变语义，不原地改、无版本链）：单一大事务内冲正原交易（描述「冲正： 」前缀）→ 原交易 `op=update` → 新建修正交易（三笔 `sync_log`，不新增 op）；幂等兜底——编辑不落幂等键，重试命中已冲正判定返回 409。前端复用记一笔弹窗（RecordSheet 编辑态预填），详情页/列表页展示「已冲正 / 冲正」徽章，离线时明确提示「修改需联网」。
+- **GET /api/ledgers 行级附加** `member_count` / `account_count` / `transaction_count`（P1-03，additive）。
+- **账本上下文回退修正**（R3）：请求未带 `X-Ledger-Id` 时回退「该用户所属、未删、最小 id 账本」，不再硬编码 id=1。
+
+### Changed
+
+- 迁移至 **015_ledger_ops**：`ledgers` / `commodities` 增 `deleted_at`；`transactions` 增 `balance_date` / `balance_key` / `import_batch_id` + 两个部分索引（`idx_txn_balance_key` / `idx_txn_import_batch`）。
+- 账本列表响应对已删账本不可见；账本删除不写 `sync_log`、不轮换库世代 `instance_id`（删除的是账本，不是库）。
+
+### Verified
+
+- Go `build` / `vet` / `test ./...` 全绿（12 包）；`BEAN_CHECK_STRICT=1` 严格 bean-check 通过；迁移 015 幂等重演（rehearsal，源库指纹零改动）通过。
+- Vitest **356/356 通过**（47 文件）；`vue-tsc` 零错误；es2015 产物 + es-check / compat 扫描通过。
+
 ## [0.5.1] - 2026-11-13
 
 M7 前端全量重构收官后的首个补丁版本：Vue 3 SPA 取代 Flutter Web，旧功能不降级，账芯与后端协议不变。
