@@ -6,12 +6,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"familyledger/internal/beancount"
 	"familyledger/internal/db"
 	"familyledger/internal/export"
 	"familyledger/internal/repository"
+	"familyledger/internal/testutil"
 )
 
 // openTestDB 打开一份临时库（含完整 schema + 全部迁移），供导入测试使用。
@@ -346,18 +348,32 @@ func writeTemp(t *testing.T, pattern, content string) string {
 }
 
 // beanCheckCmd 构造一个运行 bean-check 的命令；环境无 bean-check 时返回 nil。
-// 优先用项目 venv 的 `python -m beancount.scripts.check`（部分环境的 bean-check.exe
-// 包装器无法输出，而 python 模块可正常工作），其次回退 PATH 上的 bean-check。
+//
+// 候选列表统一取自 testutil.BeanCheckCandidates（项目 .venv 的两种平台布局优先，
+// 因为部分环境的 bean-check.exe 包装器无法输出而 python 模块可正常工作；其后是
+// python3 / python / bean-check）。历史缺陷（本次修复锁定）：此处曾硬编码
+// `../../.venv/Scripts/python.exe`，属 Windows-only 布局，Linux CI 上必然 Stat 失败；
+// 当时只因「失败后回退 exec.LookPath("bean-check") 且 CI 恰好装了 bean-check」才没炸，
+// 是与 TestBalanceAC35 同类的平台漂移，一并收敛到 testutil 以避免再次分叉。
+//
+// 探测约定与 testutil 一致：裸命令（不含路径分隔符）用 exec.LookPath 判断；
+// 含路径的候选用 os.Stat 判断。返回值契约保持不变：nil 表示「环境无校验器」，
+// 调用方据此走跳过分支，本次不改变任何调用方的 skip / Fatal 行为。
 func beanCheckCmd(t *testing.T, file string) *exec.Cmd {
 	t.Helper()
-	if wd, err := os.Getwd(); err == nil {
-		py := filepath.Join(wd, "..", "..", ".venv", "Scripts", "python.exe")
-		if _, err := os.Stat(py); err == nil {
-			return exec.Command(py, "-m", "beancount.scripts.check", file)
+	for _, cand := range testutil.BeanCheckCandidates(testutil.RepoRoot(t)) {
+		if len(cand) == 0 || cand[0] == "" {
+			continue
 		}
-	}
-	if _, err := exec.LookPath("bean-check"); err == nil {
-		return exec.Command("bean-check", file)
+		if strings.ContainsAny(cand[0], `/\`) {
+			if _, err := os.Stat(cand[0]); err != nil {
+				continue
+			}
+		} else if _, err := exec.LookPath(cand[0]); err != nil {
+			continue
+		}
+		args := append(append([]string{}, cand[1:]...), file)
+		return exec.Command(cand[0], args...)
 	}
 	return nil
 }

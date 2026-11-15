@@ -5,7 +5,6 @@ import (
 	"errors"
 	"math/big"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,6 +14,7 @@ import (
 	"familyledger/internal/domain"
 	"familyledger/internal/export"
 	"familyledger/internal/repository"
+	"familyledger/internal/testutil"
 
 	"github.com/google/uuid"
 )
@@ -391,18 +391,20 @@ func TestBalanceAC35(t *testing.T) {
 			t.Fatalf("导出不得含 balance/pad 指令: %s", line)
 		}
 	}
-	python := filepath.Join("..", "..", ".venv", "Scripts", "python.exe")
-	if _, err := os.Stat(python); err != nil {
-		t.Fatalf("项目 .venv 校验器不可用: %v", err)
-	}
+	// 校验语义不变：导出文本（含中文描述「余额校准: 截至」）必须真的过 bean-check。
+	//
+	// 历史缺陷（本次修复锁定）：此处曾硬编码
+	//   filepath.Join("..", "..", ".venv", "Scripts", "python.exe") + os.Stat 断言，
+	// 那是 Windows-only 的 venv 布局。Linux CI（ubuntu-latest，仓库内无 .venv，
+	// beancount 由 pip 全局安装）上 Stat 必然失败并 t.Fatalf，于是本地全绿、CI 必红。
+	// 现统一走 testutil.RunBeanCheck：候选覆盖 .venv/Scripts、.venv/bin、python3、
+	// python、bean-check 五种，并按 go.mod 定位仓库根，与包深度/平台解耦；
+	// 严格模式下找不到校验器仍然 Fatal（护栏不削弱）。
 	outPath := filepath.Join(t.TempDir(), "balance.beancount")
 	if err := os.WriteFile(outPath, []byte(text), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(python, "-m", "beancount.scripts.check", outPath)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("bean-check 未通过: %v\n%s\n导出文本:\n%s", err, out, text)
-	}
+	testutil.RunBeanCheck(t, outPath, "")
 }
 
 // TestBalanceAC36 AC-3.6：同 D 二次设置 → 冲正旧 + 新建，版本递增，复用 T08 内核。
