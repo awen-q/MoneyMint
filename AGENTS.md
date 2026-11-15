@@ -218,8 +218,13 @@ python -m pip install beancount    # 激活 .venv 后执行
 | 端点 | 方法 | 鉴权 | 说明 |
 |---|---|---|---|
 | `/api/ledgers/{id}` | DELETE | 登录+**owner**（该账本） | 0.6.0 S1：软删账本（迁移 015 的 `ledgers.deleted_at`）。顺序为「成员门禁 → 禁删最后一个 → `pre-ledger-delete` 一致性快照（VACUUM INTO）→ 单事务软删」；错误码 `409 ledger_has_members {member_count, members}`、`409 last_ledger`、`403 ledger_deleted`；不写 `sync_log`、不轮换 `instance_id`。与既有 PATCH 同路径，仅新增方法 |
+| `/api/commodities` | GET | 登录+成员（viewer 可读） | 0.6.0 S2 #4：`200 {commodities:[{uuid,symbol,name,precision,used,is_default}]}`；仅未软删币种 |
+| `/api/commodities` | POST | 登录+成员（非 viewer） | 0.6.0 S2 #5：`{symbol,name?,precision?}` → `201 {uuid,symbol,name,precision}`；`409 commodity_exists {uuid}`；命中软删行 = 恢复原行、返回原 uuid（表级 `UNIQUE(ledger_id,symbol)`，绝不 INSERT），写 `sync_log op=create`；precision 默认 2，本版不提供精度修改（D-06） |
+| `/api/commodities/{uuid}` | DELETE | 登录+成员（非 viewer） | 0.6.0 S2 #6：软删 + `sync_log op=delete`；`200 {ok:true}`；被引用 → `409 commodity_in_use {accounts[],postings,prices,is_default}`（默认币种提示先改账本设置）；重复删幂等 404 |
 
-> 本小节端点已同步 `internal/server/router.go` 与 `frontend/src/api/routes.ts`（沿用 `ledgerById` 常量：同一路径多方法共用一个常量，DELETE 为 0.6.0 新增方法）。`GET /api/ledgers` 行级附加 `member_count` / `account_count` / `transaction_count`（P1-03，additive，不新增端点）；请求未带 `X-Ledger-Id` 时回退「该用户所属、未删、最小 id 账本」，不再硬编码 id=1（R3）。
+> 本小节端点已同步 `internal/server/router.go` 与 `frontend/src/api/routes.ts`（沿用 `ledgerById` 常量：同一路径多方法共用一个常量，DELETE 为 0.6.0 新增方法；S2 新增 `commodities` / `commodityByUuid` 两条业务路径常量，均须带 `X-Ledger-Id`）。`GET /api/ledgers` 行级附加 `member_count` / `account_count` / `transaction_count`（P1-03，additive，不新增端点）；请求未带 `X-Ledger-Id` 时回退「该用户所属、未删、最小 id 账本」，不再硬编码 id=1（R3）。
+>
+> **契约变化（0.6.0 S2，D-04）**：`POST /api/accounts` 必须显式携带 `parent_uuid`，空串表示根账户、父账户 uuid 表示「增加下级」；**不传返回 400**（中文文案会给出修复写法）。前端 `AccountForm.vue` / `CategoriesView.vue`、`scripts/smoke.sh` 与 §10 / README 的 curl 示例均已同步。
 
 ---
 
@@ -277,7 +282,7 @@ curl -c /tmp/fb.cookie -X POST http://127.0.0.1:8080/api/auth/register -H 'Conte
 
 # 建账户 / 记一笔（postings 用 account_id）/ 导出校验
 curl -s -b /tmp/fb.cookie -X POST http://127.0.0.1:8080/api/accounts -H 'X-CSRF: 1' -H 'Content-Type: application/json' \
-  -d '{"name":"Assets:Cash:CNY","type":"Assets","open_date":"2026-08-01","commodity":"CNY"}'
+  -d '{"name":"Assets:Cash:CNY","type":"Assets","open_date":"2026-08-01","commodity":"CNY","parent_uuid":""}'
 curl -s -b /tmp/fb.cookie -X POST http://127.0.0.1:8080/api/transactions -H 'X-CSRF: 1' -H 'Content-Type: application/json' \
   -d '{"date":"2026-08-02","description":"早餐","flag":"*","client_request_id":"demo-001","postings":[{"account_id":1,"commodity":"CNY","amount":"-10.00"},{"account_id":2,"commodity":"CNY","amount":"10.00"}]}'
 curl -s -b /tmp/fb.cookie http://127.0.0.1:8080/api/export -o data/family.beancount

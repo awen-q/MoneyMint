@@ -250,6 +250,52 @@ export interface OkResponse {
   ok: boolean
 }
 
+// ---------- 币种（0.6.0 S2）----------
+
+/** 币种行（GET /api/commodities）。 */
+export interface CommodityView {
+  uuid: string
+  symbol: string
+  name: string
+  precision: number
+  /** 可选 + 容忍旧响应；消费处一律 `=== true` 判真。 */
+  used?: boolean
+  is_default?: boolean
+}
+
+/** GET /api/commodities 响应。 */
+export interface CommodityListResponse {
+  commodities: CommodityView[]
+}
+
+/** POST /api/commodities 请求体；precision 缺省由后端按 2 处理。 */
+export interface CreateCommodityRequest {
+  symbol: string
+  name?: string
+  precision?: number
+}
+
+/** POST /api/commodities 响应。 */
+export interface CommodityCreated {
+  uuid: string
+  symbol: string
+  name: string
+  precision: number
+}
+
+/** DELETE /api/commodities/{uuid} 响应。 */
+export interface DeleteCommodityResponse {
+  ok: boolean
+}
+
+/** 409 commodity_in_use 的响应明细（由 ApiError.details 承载）。 */
+export interface CommodityInUseDetails {
+  accounts?: string[]
+  postings?: number
+  prices?: number
+  is_default?: boolean
+}
+
 // ---------- 期初 ----------
 
 /** GET /api/accounts/{uuid}/opening */

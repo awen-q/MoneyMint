@@ -105,11 +105,12 @@ func (s *Store) EarliestNonOpeningTxnDate(ledgerID int64) (string, error) {
 	return d.String, nil
 }
 
-// CommodityPrecision 返回账本内某币种的展示精度；未登记的币种按 2 位处理。
+// CommodityPrecision 返回账本内某币种的展示精度；未登记 / 已软删的币种按 2 位处理。
+// 0.6.0 S2：软删币种不再参与精度读取（AC-4.4）。
 func (s *Store) CommodityPrecision(ledgerID int64, symbol string) (int, error) {
 	var prec int
 	err := s.db.QueryRow(
-		`SELECT "precision" FROM commodities WHERE ledger_id=? AND symbol=?`,
+		`SELECT "precision" FROM commodities WHERE ledger_id=? AND symbol=? AND deleted_at IS NULL`,
 		ledgerID, symbol,
 	).Scan(&prec)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -819,11 +820,12 @@ func parseDecimalRat(s string) (*big.Rat, error) {
 	return r, nil
 }
 
-// commodityPrecisionTx 在事务内读取币种精度；未登记按 2 位。
+// commodityPrecisionTx 在事务内读取币种精度；未登记 / 已软删按 2 位。
+// 0.6.0 S2：与 CommodityPrecision 同口径，软删币种不再参与精度读取（AC-4.4）。
 func commodityPrecisionTx(tx execer, ledgerID int64, symbol string) (int, error) {
 	var prec int
 	err := tx.QueryRow(
-		`SELECT "precision" FROM commodities WHERE ledger_id=? AND symbol=?`,
+		`SELECT "precision" FROM commodities WHERE ledger_id=? AND symbol=? AND deleted_at IS NULL`,
 		ledgerID, symbol,
 	).Scan(&prec)
 	if errors.Is(err, sql.ErrNoRows) {

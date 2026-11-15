@@ -157,7 +157,7 @@ func TestQA_DeletedLedgerAllBusinessEndpoints403(t *testing.T) {
 		body         any
 	}{
 		{http.MethodGet, "/api/accounts", nil},
-		{http.MethodPost, "/api/accounts", map[string]any{"name": "Assets:QA:X", "type": "Assets", "open_date": "2026-11-01", "commodity": "CNY"}},
+		{http.MethodPost, "/api/accounts", map[string]any{"name": "Assets:QA:X", "type": "Assets", "open_date": "2026-11-01", "commodity": "CNY", "parent_uuid": ""}},
 		{http.MethodGet, "/api/transactions", nil},
 		{http.MethodPost, "/api/transactions", map[string]any{"date": "2026-11-02", "description": "x", "postings": []any{}}},
 		{http.MethodGet, "/api/transactions/trash", nil},
@@ -210,7 +210,7 @@ func TestQA_EditorCannotDelete_ViewerWriteBlocked(t *testing.T) {
 		t.Fatal(err)
 	}
 	st, _, raw = e.do(http.MethodPost, "/api/accounts",
-		map[string]any{"name": "Assets:QA:Y", "type": "Assets", "open_date": "2026-11-01", "commodity": "CNY"},
+		map[string]any{"name": "Assets:QA:Y", "type": "Assets", "open_date": "2026-11-01", "commodity": "CNY", "parent_uuid": ""},
 		"1", bob.Token)
 	if st != http.StatusForbidden {
 		t.Fatalf("viewer 写操作应被后端拦截 403，实际 %d: %s", st, raw)

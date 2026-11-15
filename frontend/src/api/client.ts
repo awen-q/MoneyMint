@@ -27,7 +27,11 @@ import type {
   ChangePasswordResponse,
   CreateAccountRequest,
   CreateLedgerRequest,
+  CommodityCreated,
+  CommodityListResponse,
+  CreateCommodityRequest,
   CreateTransactionRequest,
+  DeleteCommodityResponse,
   DeleteLedgerResponse,
   HealthResponse,
   IdentityCheckResult,
@@ -511,6 +515,22 @@ export const accountApi = {
   /** 关闭账户（Beancount close 语义；余额非 0 时 409 + balances 差额明细）。 */
   close(accountUuid: string): Promise<OkResponse> {
     return api.delete<OkResponse>(formatApiPath(API_ROUTES.accountByUuid, { uuid: accountUuid }))
+  },
+}
+
+/** 币种端点（0.6.0 S2；业务端点，必须携带 X-Ledger-Id）。 */
+export const commodityApi = {
+  list(): Promise<CommodityListResponse> {
+    return api.get<CommodityListResponse>(API_ROUTES.commodities)
+  },
+  create(body: CreateCommodityRequest): Promise<CommodityCreated> {
+    return api.post<CommodityCreated>(API_ROUTES.commodities, body)
+  },
+  /** 软删币种；被引用时后端返回 409 commodity_in_use + 分项明细。 */
+  remove(uuid: string): Promise<DeleteCommodityResponse> {
+    return api.delete<DeleteCommodityResponse>(
+      formatApiPath(API_ROUTES.commodityByUuid, { uuid }),
+    )
   },
 }
 

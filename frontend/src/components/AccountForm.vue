@@ -2,11 +2,13 @@
 /**
  * C-02 账户表单（批 2，新建 / 编辑期初统一组件）
  *
- * - create：类型 + 显示名（name 自动 = `类型:名称`，名称可含冒号形成三层分类）+
+ * - create：类型 + **中文显示名**（name 由 ASCII 规则自动生成，C-03）+
  *   开户日（FR-03：默认 min(账本期初日期, 今日)，且不得晚于账本期初日期）+
  *   可选期初（Assets / Liabilities，金额绝对值 + 方向，FR-04/05）；
  * - opening：只编辑期初（GET 预填 → POST 设置；AC-27：修改已有期初由后端
  *   opening_key 幂等生成「冲正 + 新建」成对交易，前端容忍重试）；
+ * - 0.6.0 S2：支持 `parent` 传入「＋ 增加下级」的父账户，父项预填、
+ *   类型继承且置灰，提交时 `parent_uuid` 必传（根账户显式传空串）。
  * - 409 / 校验错误集中展示，带 `balances` 差额明细表（AC-28 关户守门同款）。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
@@ -24,8 +26,10 @@ const props = withDefaults(
   defineProps<{
     mode: 'create' | 'opening'
     account?: AccountView | null
+    /** 「＋ 增加下级」入口预填的父账户；非空时类型继承且不可改。 */
+    parent?: AccountView | null
   }>(),
-  { account: null },
+  { account: null, parent: null },
 )
 
 const emit = defineEmits<{
@@ -42,18 +46,29 @@ const submitError = ref('')
 const errorBalances = ref<Array<{ commodity: string; amount: string }>>([])
 const notice = ref('')
 
-const accountType = ref<'Assets' | 'Liabilities' | 'Expenses' | 'Income' | 'Equity'>('Assets')
+const initialType = props.parent !== null && props.parent !== undefined
+  ? props.parent.type
+  : 'Assets'
+const accountType = ref<'Assets' | 'Liabilities' | 'Expenses' | 'Income' | 'Equity'>(initialType)
 const displayName = ref('')
 const openDate = ref(todayString())
 
-// 批 2.5 修 2c：父账户选择（create 模式；可选，选中后 name 自动拼前缀）。
-const parentAccountId = ref<number | null>(null)
+// 批 2.5 修 2c / 0.6.0 S2：父账户选择（create 模式，可选）。
+const parentAccountId = ref<number | null>(
+  props.parent !== null && props.parent !== undefined ? props.parent.id : null,
+)
 const knownAccounts = ref<AccountView[]>([])
 
 const openingAmount = ref('')
 const openingDirection = ref<OpeningDirection>('hold')
 const openingHasExisting = ref(false)
 const openingLoaded = ref(false)
+
+/** 由外部「＋ 增加下级」入口预填父项时，父与类型都不可改。 */
+const parentFixed = computed(() => props.parent !== null && props.parent !== undefined)
+const parentFixedName = computed(() =>
+  props.parent !== null && props.parent !== undefined ? props.parent.name : '',
+)
 
 const ledgerOpeningDate = computed(() => {
   for (const ledger of session.ledgers) {
@@ -76,6 +91,9 @@ const parentOptions = computed(() =>
 )
 
 function resolveParent(): AccountView | null {
+  if (parentFixed.value) {
+    return props.parent === undefined || props.parent === null ? null : props.parent
+  }
   if (parentAccountId.value === null) {
     return null
   }
@@ -85,6 +103,26 @@ function resolveParent(): AccountView | null {
     }
   }
   return null
+}
+
+/**
+ * 按 seed 命名约定生成 Beancount 合法的 ASCII 全名（C-03 / AC-2.3）。
+ * 界面只收中文 display_name，name 用 `父全名:ItemN` / `类型:ItemN` 并避开
+ * 已有账户名，避免「落库成功、导出时才报 Invalid account name」。
+ */
+function makeAsciiName(parent: AccountView | null, type: string): string {
+  const base = parent !== null ? parent.name : type
+  const used = new Set<string>()
+  for (const account of knownAccounts.value) {
+    used.add(account.name)
+  }
+  let n = 1
+  let candidate = `${base}:Item${n}`
+  while (used.has(candidate)) {
+    n += 1
+    candidate = `${base}:Item${n}`
+  }
+  return candidate
 }
 
 function onParentChange(event: Event): void {
@@ -113,6 +151,9 @@ function defaultOpenDate(): string {
 }
 
 function switchType(next: typeof accountType.value): void {
+  if (parentFixed.value) {
+    return
+  }
   accountType.value = next
   openingDirection.value = next === 'Liabilities' ? 'owe' : 'hold'
   parentAccountId.value = null
@@ -202,25 +243,24 @@ async function submit(): Promise<void> {
       }
       await submitOpening(props.account.uuid, resolveCommodity(props.account))
     } else {
-      const name = displayName.value.trim()
-      if (name === '') {
-        submitError.value = '请输入账户 / 分类名称'
+      const label = displayName.value.trim()
+      if (label === '') {
+        submitError.value = '请输入账户 / 分类显示名'
         return
       }
       if (openDate.value > ledgerOpeningDate.value) {
         submitError.value = `开户日（${openDate.value}）不得晚于账本期初日期（${ledgerOpeningDate.value}）`
         return
       }
-      // 批 2.5 修 2c：选中父账户时 name 自动拼接其全名前缀（三层分类）。
       const parent = resolveParent()
-      const fullName =
-        parent !== null ? `${parent.name}:${name}` : `${accountType.value}:${name}`
+      const fullName = makeAsciiName(parent, accountType.value)
       const created = await accountApi.create({
         name: fullName,
-        display_name: name,
+        display_name: label,
         type: accountType.value,
         open_date: openDate.value,
-        parent_uuid: parent !== null ? parent.uuid : undefined,
+        // 0.6.0 S2：显式空串表示根账户（JSON 键缺失会被后端 400 拒绝）。
+        parent_uuid: parent !== null ? parent.uuid : '',
       })
       if (isFundType.value && openingAmount.value.trim() !== '') {
         await submitOpening(created.uuid, resolveCommodity(created as unknown as AccountView))
@@ -268,7 +308,7 @@ onMounted(() => {
   <div class="af-mask" @click.self="close">
     <section class="af-panel" role="dialog" aria-modal="true" :aria-label="mode === 'create' ? '新建账户' : '期初余额'">
       <header class="af-head">
-        <h3>{{ mode === 'create' ? '新建账户' : `期初余额 · ${account !== null ? account.name : ''}` }}</h3>
+        <h3>{{ mode === 'create' ? (parentFixed ? '增加下级' : '新建账户') : `期初余额 · ${account !== null ? account.name : ''}` }}</h3>
         <button class="af-close" type="button" aria-label="关闭" @click="close">✕</button>
       </header>
 
@@ -294,8 +334,8 @@ onMounted(() => {
       <div v-else class="af-body">
         <template v-if="mode === 'create'">
           <label class="af-field">
-            <span>类型</span>
-            <select class="fb-input" :value="accountType" @change="switchType(($event.target as HTMLSelectElement).value as typeof accountType)">
+            <span>类型{{ parentFixed ? '（继承父账户，不可修改）' : '' }}</span>
+            <select class="fb-input" :disabled="parentFixed" :value="accountType" @change="switchType(($event.target as HTMLSelectElement).value as typeof accountType)">
               <option value="Assets">资产（Assets）</option>
               <option value="Liabilities">负债（Liabilities）</option>
               <option value="Expenses">支出分类（Expenses）</option>
@@ -304,16 +344,25 @@ onMounted(() => {
             </select>
           </label>
           <label class="af-field">
-            <span>名称（可含冒号形成三级分类，如 `餐饮:早餐`）</span>
-            <input class="fb-input" v-model="displayName" placeholder="如：招商储蓄 / 餐饮" />
+            <span>显示名（中文，如：招商储蓄 / 早餐）</span>
+            <input class="fb-input" v-model="displayName" placeholder="如：招商储蓄 / 早餐" />
           </label>
+          <p class="af-hint">系统自动生成 Beancount 合法的英文账户全名，中文只作为显示名；无需手工拼冒号层级。</p>
           <label class="af-field">
-            <span>父账户（可选；选中后名称自动拼接其前缀）</span>
-            <select class="fb-input" :value="parentAccountId === null ? '' : String(parentAccountId)" @change="onParentChange">
-              <option value="">无（直接挂在类型根下）</option>
-              <option v-for="acc in parentOptions" :key="acc.id" :value="String(acc.id)">
-                {{ acc.name }}
-              </option>
+            <span>父账户{{ parentFixed ? '（已预填，不可修改）' : '（可选）' }}</span>
+            <select
+              class="fb-input"
+              :disabled="parentFixed"
+              :value="parentAccountId === null ? '' : String(parentAccountId)"
+              @change="onParentChange"
+            >
+              <option v-if="parentFixed" :value="String(parentAccountId)">{{ parentFixedName }}</option>
+              <option v-if="!parentFixed" value="">无（直接挂在类型根下）</option>
+              <template v-if="!parentFixed">
+                <option v-for="acc in parentOptions" :key="acc.id" :value="String(acc.id)">
+                  {{ acc.name }}
+                </option>
+              </template>
             </select>
           </label>
           <label class="af-field">

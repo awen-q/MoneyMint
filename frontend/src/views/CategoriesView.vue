@@ -142,6 +142,16 @@ function onDrop(groupType: string, index: number): void {
   notice.value = '排序已保存（本设备生效；后端排序端点开放后可与多端同步）'
 }
 
+/** 0.6.0 S2：新建分类的可选上级（未关闭的 Expenses / Income 账户）。 */
+const newParentId = ref<number | null>(null)
+
+const parentOptions = computed(() =>
+  accounts.value.filter(
+    (account) =>
+      !isClosed(account) && (account.type === 'Expenses' || account.type === 'Income'),
+  ),
+)
+
 function onNewNameChange(event: Event): void {
   newName.value = (event.target as HTMLInputElement).value
 }
@@ -151,32 +161,78 @@ function onNewTypeChange(event: Event): void {
   newType.value = value === 'Income' ? 'Income' : 'Expenses'
 }
 
-/** 创建二级分类：name = `Expenses:餐饮:早餐`（用户输入可含冒号）。 */
+function onNewParentChange(event: Event): void {
+  const raw = (event.target as HTMLSelectElement).value
+  if (raw === '' || !/^\d+$/.test(raw)) {
+    newParentId.value = null
+    return
+  }
+  const id = Number(raw)
+  newParentId.value = Number.isSafeInteger(id) && id > 0 ? id : null
+}
+
+function resolveNewParent(): AccountView | null {
+  if (newParentId.value === null) {
+    return null
+  }
+  for (const account of accounts.value) {
+    if (account.id === newParentId.value) {
+      return account
+    }
+  }
+  return null
+}
+
+/**
+ * 0.6.0 S2：界面只收中文显示名，name 按 seed 规则生成 ASCII 合法全名，
+ * 避免落库后才报 Invalid account name（C-03）。
+ */
+function makeAsciiCategoryName(parent: AccountView | null, type: string): string {
+  const base = parent !== null ? parent.name : type
+  const used = new Set<string>()
+  for (const account of accounts.value) {
+    used.add(account.name)
+  }
+  let n = 1
+  let candidate = `${base}:Item${n}`
+  while (used.has(candidate)) {
+    n += 1
+    candidate = `${base}:Item${n}`
+  }
+  return candidate
+}
+
+/** 创建分类：同样传 parent_uuid（与 AccountForm 统一，AC-2.5）。 */
 async function createCategory(): Promise<void> {
   if (creating.value) {
     return
   }
   notice.value = ''
-  const name = newName.value.trim()
-  if (name === '') {
+  const label = newName.value.trim()
+  if (label === '') {
     notice.value = '请输入分类名称'
     return
   }
-  if (name.split(':').some((part) => part.trim() === '')) {
+  if (label.split(':').some((part) => part.trim() === '')) {
     notice.value = '分类名称的每一段都不能为空'
     return
   }
+  const parent = resolveNewParent()
+  // 选中上级时类型继承父项，避免父子类型不一致被后端 409 拒绝。
+  const type = parent !== null ? parent.type : newType.value
   creating.value = true
   try {
     const ledgerOpeningDate = ledgerOpening()
     await accountApi.create({
-      name: `${newType.value}:${name}`,
-      display_name: name.split(':').join(' · '),
-      type: newType.value,
+      name: makeAsciiCategoryName(parent, type),
+      display_name: label.split(':').join(' · '),
+      type,
       open_date: ledgerOpeningDate < todayString() ? ledgerOpeningDate : todayString(),
+      parent_uuid: parent !== null ? parent.uuid : '',
     })
     newName.value = ''
-    notice.value = `分类「${newType.value}:${name}」已创建`
+    newParentId.value = null
+    notice.value = `分类「${label}」已创建`
     await load()
   } catch (err) {
     notice.value = err instanceof ApiError ? err.message : '创建失败，请稍后重试'
@@ -274,21 +330,39 @@ onMounted(() => {
       <div class="fb-card cats__card">
         <h3>新建分类</h3>
         <div class="cats__create">
-          <select class="fb-input cats__type" :value="newType" @change="onNewTypeChange">
+          <select
+            class="fb-input cats__type"
+            :value="newType"
+            :disabled="newParentId !== null"
+            @change="onNewTypeChange"
+          >
             <option value="Expenses">支出分类</option>
             <option value="Income">收入分类</option>
+          </select>
+          <select
+            class="fb-input cats__type"
+            :value="newParentId === null ? '' : String(newParentId)"
+            @change="onNewParentChange"
+          >
+            <option value="">无上级（挂在类型根下）</option>
+            <option v-for="option in parentOptions" :key="option.id" :value="String(option.id)">
+              {{ accountLabel(option) }}
+            </option>
           </select>
           <input
             class="fb-input cats__name"
             :value="newName"
-            placeholder="如：餐饮 或 餐饮:早餐"
+            placeholder="中文显示名，如：早餐"
             @change="onNewNameChange"
           />
           <button type="button" class="fb-btn-primary cats__submit" :disabled="creating || session.isViewer" @click="createCategory">
             {{ creating ? '创建中…' : '创建' }}
           </button>
         </div>
-        <p class="cats__hint">最终账户名 = 前缀 + 输入（如 `Expenses:餐饮:早餐`）；拖拽行可排序（会话内生效）。</p>
+        <p class="cats__hint">
+          只填中文显示名，系统自动生成 Beancount 合法的英文全名；选中上级会通过
+          parent_uuid 建立显式父子关系，刷新 / 换端后层级不退化。拖拽行可排序（会话内生效）。
+        </p>
       </div>
 
       <div v-for="group in groups" :key="group.type" class="fb-card cats__card">

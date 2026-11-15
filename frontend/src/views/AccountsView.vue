@@ -2,6 +2,9 @@
 /**
  * P-07 账户列表（批 2）：按 Assets / Liabilities 分组 + 余额小计
  * （口径与首页 balanceAccounts 一致：Σ 后端带符号余额，负债组为负）。
+ *
+ * 0.6.0 S2：账户行新增「＋ 增加下级」入口，打开 AccountForm 并预填父账户，
+ * 提交后 parent_uuid 落库、树形层级刷新不退化（AC-2.1 / AC-2.5）。
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -14,6 +17,7 @@ import { accountLabel } from '@/core/record'
 import { usePrivacyStore } from '@/stores/privacy'
 import { useSessionStore } from '@/stores/session'
 import MoneyText from '@/components/MoneyText.vue'
+import AccountForm from '@/components/AccountForm.vue'
 
 const router = useRouter()
 const session = useSessionStore()
@@ -23,6 +27,10 @@ const accounts = ref<AccountView[]>([])
 const loading = ref(false)
 const loadError = ref('')
 const notice = ref('')
+
+/** 0.6.0 S2：本地挂载新建 / 增加下级表单；parent 非空即「增加下级」。 */
+const showForm = ref(false)
+const formParent = ref<AccountView | null>(null)
 
 /** 批 2.5 修 2b：层级树渲染（parent_uuid 优先 / 冒号兜底；父行小计含子聚合）。 */
 const groups = computed(() =>
@@ -65,7 +73,35 @@ function openCreate(): void {
     return
   }
   notice.value = ''
+  formParent.value = null
+  showForm.value = true
   void router.push({ name: 'accounts', query: { create: '1' } })
+}
+
+/** 0.6.0 S2：账户行「＋ 增加下级」，父项预填、类型继承且置灰。 */
+function openAddChild(account: AccountView): void {
+  if (session.isViewer) {
+    notice.value = '只读成员不能增加下级'
+    return
+  }
+  if (isClosed(account)) {
+    notice.value = '已关户账户不能增加下级'
+    return
+  }
+  notice.value = ''
+  formParent.value = account
+  showForm.value = true
+}
+
+function closeForm(): void {
+  showForm.value = false
+  formParent.value = null
+}
+
+function onFormSaved(): void {
+  closeForm()
+  notice.value = '账户已保存，层级已刷新'
+  void load()
 }
 
 async function load(): Promise<void> {
@@ -131,13 +167,27 @@ onMounted(() => {
               </span>
               <span class="accts__meta">{{ row.account.type }} · {{ row.account.open_date }} · {{ rowBalanceText(row) }}</span>
             </button>
+            <button
+              v-if="!session.isViewer && !isClosed(row.account)"
+              type="button"
+              class="fb-btn-ghost accts__child"
+              @click="openAddChild(row.account)"
+            >＋ 下级</button>
           </li>
         </ul>
       </div>
 
-      <p class="accts__hint fb-muted">点击账户查看详情、设置期初余额或关户；新建账户支持同时录入期初。</p>
+      <p class="accts__hint fb-muted">点击账户查看详情、设置期初余额或关户；「＋ 下级」可在该账户下增加子账户。</p>
       <p v-if="notice" class="accts__notice" role="status">{{ notice }}</p>
     </template>
+
+    <AccountForm
+      v-if="showForm"
+      mode="create"
+      :parent="formParent"
+      @close="closeForm"
+      @saved="onFormSaved"
+    />
   </section>
 </template>
 
@@ -218,6 +268,12 @@ onMounted(() => {
   gap: 3px;
 }
 
+.accts__child {
+  padding: 4px 10px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .accts__name {
   font-size: 13px;
   font-weight: 500;
@@ -262,21 +318,5 @@ onMounted(() => {
   text-align: center;
   font-size: 12px;
   color: var(--fb-blue);
-}
-
-.accts__state {
-  margin-top: 14px;
-  padding: 20px 16px;
-  text-align: center;
-  font-size: 13px;
-  color: var(--fb-sub);
-}
-
-.accts__state--error {
-  color: var(--fb-danger);
-}
-
-.accts__state p {
-  margin: 0 0 12px;
 }
 </style>

@@ -49,7 +49,8 @@ type txn struct {
 func ExportLedger(db *sql.DB, ledgerID int64) (string, error) {
 	// 1. 币种元数据
 	comm := map[string]*CommodityMeta{}
-	rows, err := db.Query(`SELECT symbol, name, "precision" FROM commodities WHERE ledger_id=?`, ledgerID)
+	// 0.6.0 S2：软删币种不得导出（AC-4.4 / C-07）。
+	rows, err := db.Query(`SELECT symbol, name, "precision" FROM commodities WHERE ledger_id=? AND deleted_at IS NULL`, ledgerID)
 	if err != nil {
 		return "", err
 	}

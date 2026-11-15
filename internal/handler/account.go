@@ -38,14 +38,21 @@ func (h *Handler) HandleCreateAccount(w http.ResponseWriter, r *http.Request) {
 		Commodity   string `json:"commodity"`
 		Icon        string `json:"icon"`
 		Color       string `json:"color"`
-		ParentUUID  string `json:"parent_uuid"`
-		SubType     string `json:"sub_type"`
+		ParentUUID  *string `json:"parent_uuid"`
+		SubType     string  `json:"sub_type"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, err)
 		return
 	}
-	created, err := h.svc.CreateAccount(ledgerID, req.Name, req.DisplayName, req.Type, req.OpenDate, req.Commodity, req.Icon, req.Color, req.ParentUUID, req.SubType)
+	// 0.6.0 S2（D-04 / design §1 S2）：用指针区分「JSON 键缺失」与「显式空串」。
+	// 显式 parent_uuid="" 才是根账户；键缺失一律 400，绝不静默降级为根。
+	if req.ParentUUID == nil {
+		writeError(w, domain.Invalidf(
+			"缺少 parent_uuid 字段，创建根账户请显式传 parent_uuid:\"\"，增加下级请传父账户 uuid"))
+		return
+	}
+	created, err := h.svc.CreateAccount(ledgerID, req.Name, req.DisplayName, req.Type, req.OpenDate, req.Commodity, req.Icon, req.Color, *req.ParentUUID, req.SubType)
 	if err != nil {
 		writeError(w, err)
 		return

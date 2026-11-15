@@ -117,8 +117,8 @@ func (e *openingHTTPEnv) decodeMap(wantStatus int, status int, raw []byte) map[s
 // createAccount 通过 HTTP 建账户，返回 id/uuid。
 func (e *openingHTTPEnv) createAccount(ledgerID int64, name, atype, commodity string) (int64, string) {
 	e.t.Helper()
-	status, _, raw := e.do(http.MethodPost, "/api/accounts", e.ownerToken, ledgerID, map[string]any{
-		"name": name, "type": atype, "commodity": commodity,
+	status, _, raw := e.do(http.MethodPost, "/api/accounts", e.ownerToken, ledgerID, 	map[string]any{
+		"name": name, "type": atype, "commodity": commodity, "parent_uuid": "",
 	})
 	if status != http.StatusCreated {
 		e.t.Fatalf("建账户 %s 期望 201，实际 %d: %s", name, status, raw)

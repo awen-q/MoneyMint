@@ -182,7 +182,7 @@ AUTH="Authorization: Bearer $TOKEN"
 
 # 建账户（记下返回的 id）
 curl -s -X POST $B/api/accounts -H "$AUTH" -H 'Content-Type: application/json' \
-  -d '{"name":"Assets:Cash:CNY","type":"Assets","open_date":"2026-08-01","commodity":"CNY"}'
+  -d '{"name":"Assets:Cash:CNY","type":"Assets","open_date":"2026-08-01","commodity":"CNY","parent_uuid":""}'
 
 # 记一笔（postings 用 account_id；借贷必须按币种平衡；client_request_id 可防重复提交）
 curl -s -X POST $B/api/transactions -H "$AUTH" -H 'Content-Type: application/json' \

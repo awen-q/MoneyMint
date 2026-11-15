@@ -28,12 +28,20 @@ export const API_ROUTES = {
   /** DELETE /api/auth/sessions/{sid} */
   sessionBySid: '/api/auth/sessions/{sid}',
 
-  /** GET /api/accounts · POST /api/accounts */
+  /**
+   * GET /api/accounts · POST /api/accounts
+   * 0.6.0 S2 契约变化：POST 必须显式携带 parent_uuid（空串 = 根账户，父 uuid = 增加下级），
+   * JSON 键缺失由后端返回 400；不新增常量，前端两处创建调用点均已显式上送。
+   */
   accounts: '/api/accounts',
   /** GET /api/accounts/{uuid}/opening · POST /api/accounts/{uuid}/opening */
   accountOpening: '/api/accounts/{uuid}/opening',
   /** DELETE /api/accounts/{uuid} */
   accountByUuid: '/api/accounts/{uuid}',
+  /** GET /api/commodities · POST /api/commodities（0.6.0 S2 币种增删） */
+  commodities: '/api/commodities',
+  /** DELETE /api/commodities/{uuid}（0.6.0 S2 软删币种） */
+  commodityByUuid: '/api/commodities/{uuid}',
   /** GET /api/identity/check */
   identityCheck: '/api/identity/check',
 

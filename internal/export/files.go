@@ -174,7 +174,8 @@ func loadLedgerData(db *sql.DB, ledgerID int64) (*ledgerData, error) {
 	}
 
 	// 币种
-	rows, err := db.Query(`SELECT symbol, name, "precision" FROM commodities WHERE ledger_id=?`, ledgerID)
+	// 0.6.0 S2：软删币种不得导出（与 beancount.go 同口径）。
+	rows, err := db.Query(`SELECT symbol, name, "precision" FROM commodities WHERE ledger_id=? AND deleted_at IS NULL`, ledgerID)
 	if err != nil {
 		return nil, err
 	}

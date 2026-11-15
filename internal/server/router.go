@@ -67,6 +67,14 @@ func newRouter(h *handler.Handler, svc *service.Service, webRoot string, corsCfg
 	mux.HandleFunc("/api/accounts/{uuid}", methodSwitch(map[string]http.HandlerFunc{
 		http.MethodDelete: h.HandleDeleteAccount,
 	}))
+	// 币种管理（0.6.0 S2：GET/POST 列表与新建；DELETE 软删）。
+	mux.HandleFunc("/api/commodities", methodSwitch(map[string]http.HandlerFunc{
+		http.MethodGet:  h.HandleListCommodities,
+		http.MethodPost: h.HandleCreateCommodity,
+	}))
+	mux.HandleFunc("/api/commodities/{uuid}", methodSwitch(map[string]http.HandlerFunc{
+		http.MethodDelete: h.HandleDeleteCommodity,
+	}))
 	// 恒等式检查（只读）：首页余额校验提示。
 	mux.HandleFunc("/api/identity/check", methodSwitch(map[string]http.HandlerFunc{
 		http.MethodGet: h.HandleIdentityCheck,

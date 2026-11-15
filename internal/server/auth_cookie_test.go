@@ -157,7 +157,7 @@ func TestAuthCookieAttributesAndCSRF(t *testing.T) {
 	}
 
 	// 无 X-CSRF 的 Cookie 写请求 → 403 csrf_required。
-	accBody := map[string]any{"name": "Expenses:TestFood", "type": "Expenses", "commodity": "CNY"}
+	accBody := map[string]any{"name": "Expenses:TestFood", "type": "Expenses", "commodity": "CNY", "parent_uuid": ""}
 	resp, raw = e.do(c2, http.MethodPost, "/api/accounts", accBody, nil)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("缺少 X-CSRF 期望 403，实际 %d: %s", resp.StatusCode, raw)
@@ -181,7 +181,7 @@ func TestAuthCookieAttributesAndCSRF(t *testing.T) {
 		t.Fatalf("解析账户响应失败: %v %s", err, raw)
 	}
 	resp, raw = e.do(c2, http.MethodPost, "/api/accounts",
-		map[string]any{"name": "Assets:TestCash", "type": "Assets", "commodity": "CNY"},
+		map[string]any{"name": "Assets:TestCash", "type": "Assets", "commodity": "CNY", "parent_uuid": ""},
 		map[string]string{"X-CSRF": "1"})
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("建第二个账户期望 201，实际 %d: %s", resp.StatusCode, raw)
@@ -249,7 +249,7 @@ func TestAuthCookieAttributesAndCSRF(t *testing.T) {
 	// Bearer 请求豁免 CSRF（旧版客户端）。
 	bearer := &http.Client{}
 	resp, raw = e.do(bearer, http.MethodPost, "/api/accounts",
-		map[string]any{"name": "Expenses:TestTransport", "type": "Expenses", "commodity": "CNY"},
+		map[string]any{"name": "Expenses:TestTransport", "type": "Expenses", "commodity": "CNY", "parent_uuid": ""},
 		map[string]string{"Authorization": "Bearer " + token})
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("Bearer 无 X-CSRF 应豁免，期望 201，实际 %d: %s", resp.StatusCode, raw)
@@ -257,7 +257,7 @@ func TestAuthCookieAttributesAndCSRF(t *testing.T) {
 
 	// Cookie 与 Bearer 同时存在（旧版浏览器场景）：仍按 Bearer 豁免，不能打断旧版。
 	resp, raw = e.do(client, http.MethodPost, "/api/accounts",
-		map[string]any{"name": "Expenses:TestFun", "type": "Expenses", "commodity": "CNY"},
+		map[string]any{"name": "Expenses:TestFun", "type": "Expenses", "commodity": "CNY", "parent_uuid": ""},
 		map[string]string{"Authorization": "Bearer " + token})
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("Cookie+Bearer 并存时应豁免 CSRF，期望 201，实际 %d: %s", resp.StatusCode, raw)
@@ -278,7 +278,7 @@ func TestAuthCookieDisabled(t *testing.T) {
 
 	bearer := &http.Client{}
 	resp, raw := e.do(bearer, http.MethodPost, "/api/accounts",
-		map[string]any{"name": "Expenses:TestBearer", "type": "Expenses", "commodity": "CNY"},
+		map[string]any{"name": "Expenses:TestBearer", "type": "Expenses", "commodity": "CNY", "parent_uuid": ""},
 		map[string]string{"Authorization": "Bearer " + token})
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("Bearer 建账户期望 201，实际 %d: %s", resp.StatusCode, raw)

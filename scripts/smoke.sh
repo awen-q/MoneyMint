@@ -103,8 +103,8 @@ mkacct() {
   curl -fsS -m 10 -X POST "$BASE/api/accounts" -H "$AUTH" -H 'Content-Type: application/json' \
     -d "$1"
 }
-A1="$(mkacct '{"name":"Assets:Smoke:Cash","type":"Assets","open_date":"2026-11-01","commodity":"CNY"}')"
-A2="$(mkacct '{"name":"Expenses:Smoke:Food","type":"Expenses","open_date":"2026-11-01","commodity":"CNY"}')"
+A1="$(mkacct '{"name":"Assets:Smoke:Cash","type":"Assets","open_date":"2026-11-01","commodity":"CNY","parent_uuid":""}')"
+A2="$(mkacct '{"name":"Expenses:Smoke:Food","type":"Expenses","open_date":"2026-11-01","commodity":"CNY","parent_uuid":""}')"
 ID1="$(json_num id "$A1")"
 ID2="$(json_num id "$A2")"
 [[ -n "$ID1" && -n "$ID2" ]] || fail "建账户失败：$A1 / $A2"

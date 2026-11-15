@@ -38,7 +38,7 @@ func TestTransactionIdempotency(t *testing.T) {
 	createAccount := func(name, typ string) int64 {
 		t.Helper()
 		resp, raw := e.do(http.DefaultClient, http.MethodPost, "/api/accounts",
-			map[string]any{"name": name, "type": typ, "commodity": "CNY"}, auth)
+			map[string]any{"name": name, "type": typ, "commodity": "CNY", "parent_uuid": ""}, auth)
 		if resp.StatusCode != http.StatusCreated {
 			t.Fatalf("建账户 %s 期望 201，实际 %d: %s", name, resp.StatusCode, raw)
 		}
@@ -172,7 +172,7 @@ func TestTransactionIdempotencyConcurrent(t *testing.T) {
 	createAccount := func(name, typ string) int64 {
 		t.Helper()
 		_, raw := e.do(http.DefaultClient, http.MethodPost, "/api/accounts",
-			map[string]any{"name": name, "type": typ, "commodity": "CNY"}, auth)
+			map[string]any{"name": name, "type": typ, "commodity": "CNY", "parent_uuid": ""}, auth)
 		var out struct {
 			ID int64 `json:"id"`
 		}

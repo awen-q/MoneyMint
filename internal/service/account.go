@@ -1,7 +1,10 @@
 package service
 
 import (
+	"errors"
+	"strings"
 	"time"
+	"unicode"
 
 	"familyledger/internal/domain"
 
@@ -40,6 +43,69 @@ type AccountCreated struct {
 	SubType     string `json:"sub_type,omitempty"`
 }
 
+// accountRoots 是 Beancount 五大根类别（C-03）。
+var accountRoots = map[string]bool{
+	domain.TypeAssets:      true,
+	domain.TypeLiabilities: true,
+	domain.TypeEquity:      true,
+	domain.TypeIncome:      true,
+	domain.TypeExpenses:    true,
+}
+
+// ValidateAccountName 校验账户全名（C-03 / AC-2.3 / AC-2.4 纯函数）。
+//
+// 规则与 internal/seed/accounts.go 的命名约定一致，避免「落库成功、导出时才报
+// Invalid account name」：
+//   - 以 ':' 分段且至少两段；每段非空、段内不含空白（拦 `餐饮::早餐` 与空格）；
+//   - 根段必须是 Assets/Liabilities/Equity/Expenses/Income 之一（大写开头），
+//     且必须与账户 type 一致（小写根 `assets:Cash` 一律拒绝）；
+//   - 根后第一段必须以 ASCII 大写字母或数字开头：`Expenses:Food:早饭` 合法、
+//     `Expenses:餐饮` / `Expenses:food` 非法；
+//   - 第三段起允许中文（作为展示名的落点仍建议用 display_name 列）。
+//
+// 错误一律携带稳定码 account_name_invalid（400）与中文可读原因。
+func ValidateAccountName(name, atype string) error {
+	invalid := func(format string, args ...any) error {
+		return domain.Codedf(domain.ErrInvalid, domain.CodeAccountNameInvalid, format, args...)
+	}
+	if name == "" {
+		return invalid("账户名不能为空")
+	}
+	if atype == "" {
+		return invalid("账户类型不能为空")
+	}
+	parts := strings.Split(name, ":")
+	if len(parts) < 2 {
+		return invalid("账户名需按 Beancount 格式分段（如 Assets:Cash），至少两段")
+	}
+	if !accountRoots[parts[0]] {
+		return invalid("账户名根段 %q 必须是 Assets / Liabilities / Equity / Expenses / Income 之一且大写开头", parts[0])
+	}
+	if parts[0] != atype {
+		return invalid("账户名根段 %s 与账户类型 %s 不一致", parts[0], atype)
+	}
+	for i, part := range parts {
+		if strings.TrimSpace(part) == "" {
+			return invalid("名称每一段都不能为空")
+		}
+		for _, r := range part {
+			if unicode.IsSpace(r) {
+				return invalid("账户名段内不能包含空格：%q", part)
+			}
+		}
+		if i == 1 {
+			first := part[0]
+			upper := first >= 'A' && first <= 'Z'
+			digit := first >= '0' && first <= '9'
+			if !upper && !digit {
+				return invalid(
+					"账户名根后第一段须以大写字母或数字开头（如 Expenses:Food）；%q 非法，中文名称请填在显示名", part)
+			}
+		}
+	}
+	return nil
+}
+
 // ListAccounts 列出账本内账户及其按币种余额。includeClosed=false 仅未关闭账户。
 func (s *Service) ListAccounts(ledgerID int64, includeClosed bool) ([]AccountView, error) {
 	accounts, err := s.repo.ListAccounts(ledgerID, includeClosed)
@@ -75,8 +141,10 @@ func (s *Service) ListAccounts(ledgerID int64, includeClosed bool) ([]AccountVie
 
 // CreateAccount 创建账户（含币种限制时自动补建币种）。
 // icon/color/parentUUID/subType 为展示/层级字段，可选。
-// FR-03：未显式传日期时 open_date = min(账本期初日期, 今日)；
-// 显式日期不得晚于账本期初日期。
+//
+// 0.6.0 S2（D-04 / C-03 / C-04）：新增账户名格式校验、含已关闭账户的重名判定、
+// 以及父账户校验。传了非空 parentUUID 而校验失败一律拒绝，绝不静默忽略降级为根。
+// FR-03：未显式传日期时 open_date = min(账本期初日期, 今日)；显式日期不得晚于账本期初日期。
 func (s *Service) CreateAccount(ledgerID int64, name, displayName, atype, openDate, commodity, icon, color, parentUUID, subType string) (AccountCreated, error) {
 	if name == "" || atype == "" {
 		return AccountCreated{}, domain.Invalidf("name 与 type 必填")
@@ -84,6 +152,36 @@ func (s *Service) CreateAccount(ledgerID int64, name, displayName, atype, openDa
 	if err := validateAccountType(atype); err != nil {
 		return AccountCreated{}, err
 	}
+	if err := ValidateAccountName(name, atype); err != nil {
+		return AccountCreated{}, err
+	}
+	// 重名含已关闭账户：repository.AccountNameExists 只排除软删行，
+	// close 后的同名账户仍占用全局唯一名（C-04，close 后不可重建同名）。
+	if existing, err := s.repo.AccountNameExists(ledgerID, name); err != nil {
+		return AccountCreated{}, err
+	} else if existing != "" {
+		return AccountCreated{}, domain.Codedf(domain.ErrConflict, domain.CodeAccountNameExists,
+			"账户名 %s 已被占用（含已关闭账户），请换一个名称", name)
+	}
+	// 父校验：存在（含跨账本 / 软删判定）、同 type、未关闭。
+	if parentUUID != "" {
+		parent, err := s.repo.AccountByUUID(ledgerID, parentUUID)
+		if err != nil {
+			if errors.Is(err, domain.ErrNotFound) {
+				return AccountCreated{}, domain.Codedf(domain.ErrInvalid, domain.CodeParentNotFound,
+					"父账户不存在、属于其他账本或已删除")
+			}
+			return AccountCreated{}, err
+		}
+		if parent.CloseDate != "" {
+			return AccountCreated{}, domain.Invalidf("父账户已关闭，无法增加下级")
+		}
+		if parent.Type != atype {
+			return AccountCreated{}, domain.Codedf(domain.ErrConflict, domain.CodeParentTypeMismatch,
+				"父账户类型不匹配（父为 %s，子为 %s）", parent.Type, atype)
+		}
+	}
+
 	openingDate, err := s.repo.LedgerOpeningDate(ledgerID)
 	if err != nil {
 		return AccountCreated{}, err
