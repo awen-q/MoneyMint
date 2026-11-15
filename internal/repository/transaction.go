@@ -253,7 +253,7 @@ func (s *Store) CreateTransactionIdempotent(
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	txnID, inserted, err := insertTransactionRowTx(tx, ledgerID, txn, clientRequestID, payloadHash)
+	txnID, inserted, err := insertTransactionRowTx(tx, ledgerID, txn, clientRequestID, payloadHash, "")
 	if err != nil {
 		return IdempotentCreateResult{}, err
 	}
@@ -346,7 +346,7 @@ func (s *Store) saveTransaction(ledgerID int64, txn domain.Transaction, idempote
 
 	// 在线/离线 push 路径都不带 client_request_id：由 service 保证冲正/期初
 	// 沿用 opening_key，不复用本幂等键（语义不同，混用会吞掉合法交易）。
-	txnID, _, err := insertTransactionRowTx(tx, ledgerID, txn, "", "")
+	txnID, _, err := insertTransactionRowTx(tx, ledgerID, txn, "", "", "")
 	if err != nil {
 		return 0, false, err
 	}
@@ -367,7 +367,7 @@ func (s *Store) saveTransaction(ledgerID int64, txn domain.Transaction, idempote
 // clientRequestID 非空时附带部分唯一索引的 upsert 谓词：重复提交时
 // ON CONFLICT DO NOTHING 命中，inserted=false，由调用方回查既有行。
 func insertTransactionRowTx(
-	tx *sql.Tx, ledgerID int64, txn domain.Transaction, clientRequestID, payloadHash string,
+	tx *sql.Tx, ledgerID int64, txn domain.Transaction, clientRequestID, payloadHash, importBatchID string,
 ) (int64, bool, error) {
 	var createdBy any
 	if txn.CreatedBy != 0 {
@@ -376,11 +376,11 @@ func insertTransactionRowTx(
 	res, err := tx.Exec(
 		`INSERT INTO transactions
 		 (ledger_id, uuid, date, flag, description, tags, created_by, reversal_of,
-		  client_request_id, client_payload_hash)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, NULLIF(?,''), NULLIF(?,''), NULLIF(?,''))
+		  client_request_id, client_payload_hash, import_batch_id)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, NULLIF(?,''), NULLIF(?,''), NULLIF(?,''), NULLIF(?,''))
 		 ON CONFLICT(ledger_id, client_request_id) WHERE client_request_id IS NOT NULL DO NOTHING`,
 		ledgerID, txn.UUID, txn.Date, txn.Flag, txn.Description, marshalTags(txn.Tags),
-		createdBy, txn.ReversalOf, clientRequestID, payloadHash,
+		createdBy, txn.ReversalOf, clientRequestID, payloadHash, importBatchID,
 	)
 	if err != nil {
 		return 0, false, fmt.Errorf("写入交易失败: %w", err)

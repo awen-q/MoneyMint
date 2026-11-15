@@ -12,6 +12,7 @@
  */
 import type {
   BeancountParseError,
+  ImportConflict,
   ImportPreviewResult,
   RestorePreviewResult,
   RestoreStats,
@@ -80,7 +81,7 @@ export function formatImportErrors(errors: BeancountParseError[]): string[] {
   return errors.map((e) => `第 ${e.line} 行：${e.msg}`)
 }
 
-/** 导入预检的摘要行（账户/交易/价格/币种计数）。 */
+/** 导入预检的摘要行（0.6.0 S5：新建/复用账户、新建/跳过交易、新建币种）。 */
 export interface ImportSummaryRow {
   label: string
   value: number
@@ -88,9 +89,34 @@ export interface ImportSummaryRow {
 
 export function importSummaryRows(prev: ImportPreviewResult): ImportSummaryRow[] {
   return [
-    { label: '账户', value: prev.accounts },
-    { label: '交易', value: prev.transactions },
-    { label: '价格', value: prev.prices },
-    { label: '币种', value: prev.commodities },
+    { label: '新建账户', value: prev.new_accounts },
+    { label: '复用账户', value: prev.reuse_accounts },
+    { label: '新建交易', value: prev.new_transactions },
+    { label: '跳过交易（已存在）', value: prev.skip_transactions },
+    { label: '新建币种', value: prev.new_commodities },
   ]
+}
+
+/** 预检冲突类型 → 短标签。 */
+export function importConflictTypeLabel(type: string): string {
+  const labels: Record<string, string> = {
+    account_conflict: '账户冲突',
+    commodity_conflict: '币种冲突',
+    undeclared_account: '未声明账户',
+    unbalanced: '借贷不平',
+    pad_balance_unsupported: 'pad/balance 不支持',
+  }
+  return labels[type] ?? '冲突'
+}
+
+/**
+ * 预检冲突列表 → 逐行文案（`[标签] 第 N 行 名称：原因`，保序展示，不去重截断）。
+ */
+export function formatImportConflicts(conflicts: ImportConflict[]): string[] {
+  return conflicts.map((c) => {
+    const line = c.line > 0 ? `第 ${c.line} 行` : ''
+    const name = c.name !== '' ? ` ${c.name}` : ''
+    const where = line !== '' || name !== '' ? `${line}${name}：` : ''
+    return `[${importConflictTypeLabel(c.type)}] ${where}${c.reason}`
+  })
 }

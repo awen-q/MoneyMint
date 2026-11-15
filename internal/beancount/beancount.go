@@ -56,6 +56,7 @@ type Posting struct {
 
 // Transaction 是一笔交易（含其下所有分录与 metadata）。
 type Transaction struct {
+	Line      int       `json:"line"` // 源文件行号（导入借贷平衡校验定位用）
 	Date      string    `json:"date"`
 	Flag      string    `json:"flag"`
 	Payee     string    `json:"payee"`
@@ -63,6 +64,26 @@ type Transaction struct {
 	Tags      []string  `json:"tags"`
 	Note      string    `json:"note"` // 未被 tags 捕获的其他 metadata 拼接
 	Postings  []Posting `json:"postings"`
+}
+
+// PadBalance 是 pad / balance 指令的结构化收集（0.6.0 S5）。
+//
+// 解析器不再把 pad/balance 当作不支持语法直接拒绝（旧行为会把两者塞进 Errors
+// 导致整体拒绝）；改为收集成结构化数据，交由导入层按 target 决定：
+//   - target=current：整体拒绝（import_pad_balance_unsupported），并把每行
+//     的「截至断言日初累计 / 差额」列给用户看；
+//   - target=new：pad 展开为普通 * 交易（差额 = 目标值 − 截至断言日初累计），
+//     balance 转成导入后自检（断言不落库、不导出）。
+//
+// Amount 仅 balance 指令有值（pad 无金额，语义是把账户补平至零）；Commodity
+// 同样仅 balance 有值（pad 不携带计价币种）。
+type PadBalance struct {
+	Line      int    `json:"line"`
+	Type      string `json:"type"` // pad | balance
+	Account   string `json:"account"`
+	Amount    string `json:"amount"`    // 仅 balance
+	Commodity string `json:"commodity"` // 仅 balance
+	Date      string `json:"date"`
 }
 
 // ParseResult 是一次解析的完整结果。Errors 非空表示文件含不支持语法，应整体拒绝。
@@ -73,10 +94,13 @@ type ParseResult struct {
 	Accounts     []Account     `json:"accounts"`
 	Prices       []Price       `json:"prices"`
 	Transactions []Transaction `json:"transactions"`
+	PadBalances  []PadBalance  `json:"pad_balances"`
 	Errors       []ParseError  `json:"errors"`
 }
 
 // unsupportedTop 是列在顶层、直接拒绝的指令（无日期）。
+// 注意：pad / balance 已不再列于此（0.6.0 S5）——改由解析器结构化收集到
+// ParseResult.PadBalances，交由导入层按 target 决定是否拒绝 / 展开。
 var unsupportedTop = map[string]bool{
 	"include":  true,
 	"plugin":   true,
@@ -84,8 +108,6 @@ var unsupportedTop = map[string]bool{
 	"document": true,
 	"event":    true,
 	"custom":   true,
-	"pad":      true,
-	"balance":  true,
 	"pushtag":  true,
 	"poptag":   true,
 }
@@ -141,7 +163,7 @@ func Parse(text string) (*ParseResult, error) {
 					res.Currency = val
 				}
 			}
-		case "include", "plugin", "note", "document", "event", "custom", "pad", "balance", "pushtag", "poptag":
+		case "include", "plugin", "note", "document", "event", "custom", "pushtag", "poptag":
 			res.Errors = append(res.Errors, ParseError{lineNo, fmt.Sprintf("不支持的指令 %q", fields[0])})
 		default:
 			date, rest, ok := splitDate(trimmed)
@@ -210,12 +232,35 @@ func Parse(text string) (*ParseResult, error) {
 				}
 				payee, narration := parseTxnNarration(restFields[1:])
 				res.Transactions = append(res.Transactions, Transaction{
+					Line:      lineNo,
 					Date:      date,
 					Flag:      flag,
 					Payee:     payee,
 					Narration: narration,
 				})
 				curTxn = &res.Transactions[len(res.Transactions)-1]
+			case "pad", "balance":
+				// pad/balance 不再当错误：结构化收集（见 PadBalance 注释）。
+				// 语法：`<date> pad <账户> <来源账户>` / `<date> balance <账户> <金额> <币种>`。
+				if len(restFields) < 2 {
+					res.Errors = append(res.Errors, ParseError{lineNo, fmt.Sprintf("%s 缺少账户名", keyword)})
+					break
+				}
+				pb := PadBalance{
+					Line:    lineNo,
+					Type:    keyword,
+					Date:    date,
+					Account: restFields[1],
+				}
+				if keyword == "balance" {
+					if len(restFields) >= 3 {
+						pb.Amount = restFields[2]
+					}
+					if len(restFields) >= 4 {
+						pb.Commodity = restFields[3]
+					}
+				}
+				res.PadBalances = append(res.PadBalances, pb)
 			default:
 				if unsupportedTop[keyword] {
 					res.Errors = append(res.Errors, ParseError{lineNo, fmt.Sprintf("不支持的指令 %q", keyword)})

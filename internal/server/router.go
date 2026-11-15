@@ -151,14 +151,19 @@ func newRouter(h *handler.Handler, svc *service.Service, webRoot string, corsCfg
 		http.MethodPost: h.HandleBackupRestore,
 	}))
 
-	// 导入（Beancount → 新账本）：登录即可，按当前用户维度新建账本。
-	// 预检（只读）+ 执行；支持 JSON {"text"} 或 multipart file 两种提交形态。
-	// 恢复与导入端点（批 4）。
+	// 导入（Beancount → 当前账本 / 新建账本）：自 S5 起与其他业务端点一致，
+	// 需带 X-Ledger-Id（缺失回退该用户所属最小有效账本），由 middleware 校验
+	// 账本成员身份与 viewer 只读。target 经 ?target=current|new 指定（默认 current）。
+	// 预检（只读）+ 执行 + 批次撤销；支持 JSON {"text"} 或 multipart file 两种提交形态。
 	mux.HandleFunc("/api/import/beancount/preview", methodSwitch(map[string]http.HandlerFunc{
 		http.MethodPost: h.HandleImportPreview,
 	}))
 	mux.HandleFunc("/api/import/beancount", methodSwitch(map[string]http.HandlerFunc{
 		http.MethodPost: h.HandleImport,
+	}))
+	// 批次撤销（0.6.0 S5）：?batch_id= 指定要回滚的导入批次，仅删本批新建实体与本批交易。
+	mux.HandleFunc("/api/import/beancount/undo", methodSwitch(map[string]http.HandlerFunc{
+		http.MethodPost: h.HandleImportUndo,
 	}))
 
 	// 注册开关（B-4）：GET 公开 / POST 仅系统管理员

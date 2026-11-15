@@ -44,13 +44,30 @@ func insertUser(t *testing.T, conn *sql.DB, name string, admin bool) int64 {
 	return id
 }
 
+// insertLedger 直接写入一个账本 + owner 成员（绕过创建流程，仅测试用）。返回其 id。
+func insertLedger(t *testing.T, conn *sql.DB, owner int64, name string) int64 {
+	t.Helper()
+	res, err := conn.Exec(
+		`INSERT INTO ledgers(name, owner_id, default_commodity) VALUES(?, ?, NULL)`, name, owner)
+	if err != nil {
+		t.Fatalf("插入账本 %s: %v", name, err)
+	}
+	id, _ := res.LastInsertId()
+	if _, err := conn.Exec(
+		`INSERT INTO ledger_members(ledger_id, user_id, role, invited_by) VALUES(?, ?, 'owner', ?)`,
+		id, owner, owner); err != nil {
+		t.Fatalf("插入账本成员: %v", err)
+	}
+	return id
+}
+
 // TestImportManualText 验证：解析已知 Beancount 文本 → 预览计数正确 →
-// 单一大事务导入新账本，且重复导入自动加序号、不覆盖。
+// 单一大事务导入新账本（target=new），且重复导入自动加序号、不覆盖。
 func TestImportManualText(t *testing.T) {
 	conn := openTestDB(t)
 	owner := insertUser(t, conn, "importer", false)
-	store := repository.New(conn)
-	svc := New(store)
+	ledgerID := insertLedger(t, conn, owner, "HolderLedger")
+	svc := New(repository.New(conn))
 
 	const text = `option "title" "导入测试账本"
 
@@ -66,40 +83,43 @@ func TestImportManualText(t *testing.T) {
 `
 
 	// 预览
-	prev, err := svc.PreviewImport(owner, text)
+	prev, err := svc.PreviewImport(ledgerID, owner, text, repository.ImportTargetNew)
 	if err != nil {
 		t.Fatalf("PreviewImport: %v", err)
 	}
 	if !prev.Valid {
-		t.Fatalf("有效文本被误判为无效: %+v", prev.Errors)
+		t.Fatalf("有效文本被误判为无效: %+v", prev.Conflicts)
 	}
-	if prev.Accounts != 3 || prev.Transactions != 1 || prev.Commodities != 1 {
+	if prev.NewAccounts != 3 || prev.NewTransactions != 1 || prev.NewCommodities != 1 {
 		t.Fatalf("预览计数错误: accounts=%d txns=%d commodities=%d",
-			prev.Accounts, prev.Transactions, prev.Commodities)
+			prev.NewAccounts, prev.NewTransactions, prev.NewCommodities)
 	}
 	if prev.LedgerName != "导入测试账本" {
 		t.Fatalf("预览账本名应为「导入测试账本」，实际 %q", prev.LedgerName)
 	}
 
 	// 执行导入
-	res, err := svc.ExecuteImport(owner, text)
+	res, err := svc.ExecuteImport(ledgerID, owner, text, repository.ImportTargetNew)
 	if err != nil {
 		t.Fatalf("ExecuteImport: %v", err)
 	}
-	if res.Accounts != 3 || res.Transactions != 1 {
-		t.Fatalf("导入结果计数错误: accounts=%d txns=%d", res.Accounts, res.Transactions)
+	if res.NewAccounts != 3 || res.CreatedTransactions != 1 {
+		t.Fatalf("导入结果计数错误: accounts=%d txns=%d", res.NewAccounts, res.CreatedTransactions)
+	}
+	if res.Mode != repository.ImportTargetNew {
+		t.Fatalf("导入模式应为 new，实际 %q", res.Mode)
 	}
 	assertLedgerCounts(t, conn, res.LedgerID, 3, 1, 2)
 
 	// 重复导入同名 → 自动加序号，且不破坏首个账本
-	prev2, err := svc.PreviewImport(owner, text)
+	prev2, err := svc.PreviewImport(ledgerID, owner, text, repository.ImportTargetNew)
 	if err != nil {
 		t.Fatalf("第二次 PreviewImport: %v", err)
 	}
 	if prev2.LedgerName != "导入测试账本 (2)" {
 		t.Fatalf("重复导入应去重为「导入测试账本 (2)」，实际 %q", prev2.LedgerName)
 	}
-	res2, err := svc.ExecuteImport(owner, text)
+	res2, err := svc.ExecuteImport(ledgerID, owner, text, repository.ImportTargetNew)
 	if err != nil {
 		t.Fatalf("第二次 ExecuteImport: %v", err)
 	}
@@ -110,33 +130,44 @@ func TestImportManualText(t *testing.T) {
 	assertLedgerCounts(t, conn, res.LedgerID, 3, 1, 2)
 }
 
-// TestImportRejectsUnsupported 验证含不支持指令（balance / include）时整体拒绝。
+// TestImportRejectsUnsupported 验证 target=current 含 pad/balance 时整体拒绝
+// （结构化收集后由导入层判定 import_pad_balance_unsupported，而非解析错误）。
 func TestImportRejectsUnsupported(t *testing.T) {
 	conn := openTestDB(t)
 	owner := insertUser(t, conn, "importer", false)
+	ledgerID := insertLedger(t, conn, owner, "HolderLedger")
 	svc := New(repository.New(conn))
 
 	const text = `2024-01-01 balance Assets:Cash 0 CNY
 2024-01-01 open Assets:Cash
 `
-	prev, err := svc.PreviewImport(owner, text)
+	prev, err := svc.PreviewImport(ledgerID, owner, text, repository.ImportTargetCurrent)
 	if err != nil {
 		t.Fatalf("PreviewImport: %v", err)
 	}
 	if prev.Valid {
-		t.Fatalf("含不支持指令应判定为无效")
+		t.Fatalf("含 pad/balance 的 current 导入应判定为无效")
 	}
-	if len(prev.Errors) == 0 {
-		t.Fatalf("应收集到解析错误")
+	if len(prev.Conflicts) == 0 {
+		t.Fatalf("应收集到 pad/balance 不支持冲突")
 	}
-	// 执行也应被服务层拒绝（先解析再校验）
-	if _, err := svc.ExecuteImport(owner, text); err == nil {
-		t.Fatalf("ExecuteImport 应拒绝含不支持语法的文本")
+	hasPad := false
+	for _, c := range prev.Conflicts {
+		if c.Type == "pad_balance_unsupported" {
+			hasPad = true
+		}
+	}
+	if !hasPad {
+		t.Fatalf("应含 pad_balance_unsupported 冲突，实际 %+v", prev.Conflicts)
+	}
+	// 执行也应被服务层拒绝（current 不支持 pad/balance）
+	if _, err := svc.ExecuteImport(ledgerID, owner, text, repository.ImportTargetCurrent); err == nil {
+		t.Fatalf("ExecuteImport 应拒绝含 pad/balance 的 current 导入")
 	}
 }
 
 // TestImportExportRoundTrip 验证「导出 → 导入 → 再导出」闭环：
-// 源账本经 ExportLedger 序列化为 Beancount，再经服务导入为独立新账本，
+// 源账本经 ExportLedger 序列化为 Beancount，再经服务导入为独立新账本（target=new），
 // 再次导出后解析，账户/交易/价格计数与原库一致；若环境装有 bean-check 则额外校验。
 func TestImportExportRoundTrip(t *testing.T) {
 	conn := openTestDB(t)
@@ -158,7 +189,7 @@ func TestImportExportRoundTrip(t *testing.T) {
 		t.Fatalf("源导出文本应可被解析，错误: %+v", parsed.Errors)
 	}
 	svc := New(repository.New(conn))
-	res, err := svc.ExecuteImport(owner, srcText)
+	res, err := svc.ExecuteImport(srcLedger, owner, srcText, repository.ImportTargetNew)
 	if err != nil {
 		t.Fatalf("ExecuteImport: %v", err)
 	}

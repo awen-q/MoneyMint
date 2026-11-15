@@ -40,6 +40,7 @@ import type {
   IdentityCheckResult,
   ImportPreviewResult,
   ImportResult,
+  ImportUndoResult,
   LedgerListResponse,
   LedgerView,
   LoginRequest,
@@ -714,17 +715,28 @@ export const restoreApi = {
 }
 
 /**
- * M2-e 导入（Beancount → 新账本；登录即可，按当前用户维度新建）。
+ * 0.6.0 S5 导入（Beancount → 当前账本 / 新建账本）。
  *
- * preview 只读解析不写库；execute 在服务端单一大事务内建新账本，
- * 同名账本自动加序号、绝不覆盖既有数据。
+ * 自 S5 起导入与其他业务端点一致：必须带 X-Ledger-Id（routes.ts 已把
+ * /api/import 移出 NO_LEDGER_PATHS）。target=current 写入当前账本（同名账户
+ * 复用 + 幂等去重）；target=new 沿用既有新建账本路径并支持 pad/balance 展开。
+ * undo 按批次标识仅回滚本批新建实体与本批交易。
  */
 export const importApi = {
-  preview(text: string): Promise<ImportPreviewResult> {
-    return api.post<ImportPreviewResult>(API_ROUTES.importBeancountPreview, { text })
+  preview(text: string, target: string): Promise<ImportPreviewResult> {
+    return api.post<ImportPreviewResult>(API_ROUTES.importBeancountPreview, { text }, {
+      query: { target },
+    })
   },
-  execute(text: string): Promise<ImportResult> {
-    return api.post<ImportResult>(API_ROUTES.importBeancount, { text })
+  execute(text: string, target: string): Promise<ImportResult> {
+    return api.post<ImportResult>(API_ROUTES.importBeancount, { text }, {
+      query: { target },
+    })
+  },
+  undo(batchId: string): Promise<ImportUndoResult> {
+    return api.post<ImportUndoResult>(API_ROUTES.importBeancountUndo, undefined, {
+      query: { batch_id: batchId },
+    })
   },
 }
 

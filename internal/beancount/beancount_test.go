@@ -92,6 +92,8 @@ option "title" "测试账本"
 }
 
 // TestParseUnsupportedRejected 确认各类不支持语法均被收集为错误。
+// 0.6.0 S5：pad / balance 不再视为不支持语法——结构化收集到 ParseResult.PadBalances，
+// 由导入层按 target 决定拒绝（current）或展开（new）。
 func TestParseUnsupportedRejected(t *testing.T) {
 	src := `option "title" "x"
 
@@ -113,8 +115,8 @@ include "other.bean"
 	if err != nil {
 		t.Fatalf("Parse 不应返回硬错误: %v", err)
 	}
-	if len(res.Errors) != 10 {
-		t.Fatalf("应收集到 10 个错误，实际 %d: %v", len(res.Errors), res.Errors)
+	if len(res.Errors) != 8 {
+		t.Fatalf("应收集到 8 个错误，实际 %d: %v", len(res.Errors), res.Errors)
 	}
 	msgs := map[string]bool{}
 	for _, e := range res.Errors {
@@ -123,8 +125,6 @@ include "other.bean"
 	for _, want := range []string{
 		"不支持的指令 \"plugin\"",
 		"不支持的指令 \"include\"",
-		"不支持的指令 \"pad\"",
-		"不支持的指令 \"balance\"",
 		"不支持的指令 \"note\"",
 		"不支持的指令 \"document\"",
 		"不支持的指令 \"event\"",
@@ -135,6 +135,17 @@ include "other.bean"
 		if !msgs[want] {
 			t.Errorf("缺少预期错误: %q (实际 %v)", want, res.Errors)
 		}
+	}
+	// pad / balance 结构化收集（不再进 Errors）。
+	if len(res.PadBalances) != 2 {
+		t.Fatalf("pad/balance 应结构化收集 2 条，实际 %d: %+v", len(res.PadBalances), res.PadBalances)
+	}
+	pad, bal := res.PadBalances[0], res.PadBalances[1]
+	if pad.Type != "pad" || pad.Line != 7 || pad.Account != "Assets:X" {
+		t.Errorf("pad 结构错误: %+v", pad)
+	}
+	if bal.Type != "balance" || bal.Line != 8 || bal.Account != "Assets:X" || bal.Amount != "10" || bal.Commodity != "CNY" {
+		t.Errorf("balance 结构错误: %+v", bal)
 	}
 }
 

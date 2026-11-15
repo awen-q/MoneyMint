@@ -2,8 +2,8 @@
  * M2 API 客户端契约：multipart 上传（恢复）与 JSON 文本体（导入）。
  *
  * 关键点：FormData 不得被 JSON.stringify，也不得手动设置 Content-Type
- * （浏览器需要自动生成带 boundary 的头）；导入走 JSON {"text"}；
- * restore / import / db 路径均不带 X-Ledger-Id（例外清单）。
+ * （浏览器需要自动生成带 boundary 的头）；导入走 JSON {"text"} + ?target=；
+ * 0.6.0 S5 起导入不再在例外清单内：必须带 X-Ledger-Id（restore / db 仍豁免）。
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
@@ -37,7 +37,7 @@ let calls: FetchCall[] = []
 
 beforeEach(() => {
   setFetchImplementation(null)
-  setLedgerId(null) // restore / import 在例外清单内；若误注入会因缺账本上下文抛错，正好当断言用
+  setLedgerId(null) // restore 在例外清单内；若误注入会因缺账本上下文抛错，正好当断言用
   calls = []
 })
 
@@ -88,19 +88,36 @@ describe('M2-G：restoreApi multipart 契约', () => {
   })
 })
 
-describe('M2-G：importApi JSON 契约', () => {
-  it('preview/execute：JSON {"text"}，未注入 X-Ledger-Id', async () => {
+describe('M2-G：importApi JSON 契约（0.6.0 S5）', () => {
+  it('preview/execute：JSON {"text"} + ?target=，强制注入 X-Ledger-Id', async () => {
     install()
-    const p1 = importApi.preview('option "title" "x"')
+    setLedgerId(7)
+    const p1 = importApi.preview('option "title" "x"', 'current')
     expect(calls.length).toBe(1)
     await p1
 
-    expect(calls[0].url).toBe('/api/import/beancount/preview')
+    expect(calls[0].url).toBe('/api/import/beancount/preview?target=current')
     expect(calls[0].init.body).toBe(JSON.stringify({ text: 'option "title" "x"' }))
-    expect((calls[0].init.headers as unknown as Record<string, string>)['X-Ledger-Id']).toBeUndefined()
+    expect((calls[0].init.headers as unknown as Record<string, string>)['X-Ledger-Id']).toBe('7')
 
-    await importApi.execute('2026-01-01 open Assets:Cash')
-    expect(calls[1].url).toBe('/api/import/beancount')
+    await importApi.execute('2026-01-01 open Assets:Cash', 'new')
+    expect(calls[1].url).toBe('/api/import/beancount?target=new')
     expect(calls[1].init.body).toBe(JSON.stringify({ text: '2026-01-01 open Assets:Cash' }))
+    expect((calls[1].init.headers as unknown as Record<string, string>)['X-Ledger-Id']).toBe('7')
+  })
+
+  it('undo：?batch_id= 携带批次标识，同样注入 X-Ledger-Id', async () => {
+    install()
+    setLedgerId(7)
+    await importApi.undo('imp-abc')
+    expect(calls[0].url).toBe('/api/import/beancount/undo?batch_id=imp-abc')
+    expect((calls[0].init.headers as unknown as Record<string, string>)['X-Ledger-Id']).toBe('7')
+  })
+
+  it('缺账本上下文直接抛错，绝不静默回退（E-08）', async () => {
+    install()
+    setLedgerId(null)
+    await expect(importApi.preview('x', 'current')).rejects.toMatchObject({ code: 'ledger_id_required' })
+    expect(calls.length).toBe(0)
   })
 })

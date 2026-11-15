@@ -72,11 +72,15 @@ describe('M2-C：导入文案', () => {
   const preview: ImportPreviewResult = {
     valid: false,
     title: 'x',
-    ledger_name: 'x',
-    accounts: 0,
-    transactions: 0,
-    prices: 0,
-    commodities: 0,
+    target: 'current',
+    ledger_name: '',
+    new_accounts: 0,
+    reuse_accounts: 0,
+    new_transactions: 0,
+    skip_transactions: 0,
+    new_commodities: 0,
+    pad_balance: [],
+    conflicts: [],
     duplicate: false,
     errors: [
       { line: 3, msg: '不支持的指令 balance' },
@@ -90,9 +94,23 @@ describe('M2-C：导入文案', () => {
     expect(lines).toEqual(['第 3 行：不支持的指令 balance', '第 9 行：不支持的语法 cost 注解'])
   })
 
-  it('importSummaryRows 输出账户/交易/价格/币种', () => {
-    const rows = importSummaryRows({ ...preview, valid: true, accounts: 2, transactions: 5, prices: 1, commodities: 1 })
-    expect(rows.map((r) => `${r.label}${r.value}`)).toEqual(['账户2', '交易5', '价格1', '币种1'])
+  it('importSummaryRows 输出新建/复用账户与交易计数（0.6.0 S5）', () => {
+    const rows = importSummaryRows({
+      ...preview,
+      valid: true,
+      new_accounts: 2,
+      reuse_accounts: 1,
+      new_transactions: 5,
+      skip_transactions: 1,
+      new_commodities: 1,
+    })
+    expect(rows.map((r) => `${r.label}${r.value}`)).toEqual([
+      '新建账户2',
+      '复用账户1',
+      '新建交易5',
+      '跳过交易（已存在）1',
+      '新建币种1',
+    ])
   })
 
   it('mapImportError 覆盖 401/400/5xx', () => {

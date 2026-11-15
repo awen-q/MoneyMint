@@ -88,10 +88,12 @@ export const API_ROUTES = {
   /** POST /api/backup/restore（M2-b，multipart + confirm 确认词，执行全库还原） */
   backupRestore: '/api/backup/restore',
 
-  /** POST /api/import/beancount/preview（M2-e，JSON {"text"}，只读解析预览） */
+  /** POST /api/import/beancount/preview（S5，JSON {"text"} + ?target=current|new，只读预检） */
   importBeancountPreview: '/api/import/beancount/preview',
-  /** POST /api/import/beancount（M2-e，JSON {"text"}，导入为新账本） */
+  /** POST /api/import/beancount（S5，JSON {"text"} + ?target=current|new，执行导入） */
   importBeancount: '/api/import/beancount',
+  /** POST /api/import/beancount/undo（0.6.0 S5，?batch_id=，撤销一次导入批次） */
+  importBeancountUndo: '/api/import/beancount/undo',
 
   /** GET /api/db/instance（批 4 迁移 014：库世代，restore 后变化） */
   dbInstance: '/api/db/instance',
@@ -119,9 +121,8 @@ export const NO_LEDGER_PATHS: readonly string[] = [
   '/api/ledgers',
   '/api/backup',
   '/api/settings',
-  // M2：导入按当前用户新建账本（ledger_id 在响应里），不解析既有账本上下文；
+  // 0.6.0 S5：导入不再豁免账本上下文（target=current 写入当前账本，需带 X-Ledger-Id）；
   // db/instance 是只读库标识。
-  '/api/import',
   '/api/db',
 ]
 

@@ -6,22 +6,28 @@ import (
 	"strings"
 )
 
-// 导入端点（Beancount → 新账本）。与还原不同：导入是「按当前用户」维度操作，
-// 把一份自家导出的 .beancount 文本新建为一个独立账本，属于该用户私有数据，
-// 因此用 requireUserID（登录即可），而非 requireAdmin（全局管理员）。
+// 导入端点（Beancount → 当前账本 / 新建账本）。
 //
-// 两种提交形态都支持，方便前端「粘贴文本」与「上传文件」两种交互：
-//   - Content-Type: application/json 且体为 {"text": "..."}
-//   - multipart/form-data 且字段 file 为 .beancount 文件
-//   - 其他：原始文本请求体
+// 自 S5 起导入不再豁免账本上下文（AC-6.1）：请求必须带 X-Ledger-Id（缺失回退该用户
+// 所属最小有效账本），并由 middleware 校验账本成员身份与 viewer 只读（非 GET 一律 403）。
+// target 经查询参数 ?target=current|new 指定，默认 current（导入到当前账本）；
+// 撤销经 ?batch_id= 指定要回滚的导入批次。
+//
+// 两种提交形态都支持（同 S5 前）：JSON {"text"} / multipart file / 原始文本体。
 
 // HandleImportPreview 解析 Beancount 文本并给出导入预览（只读，不写库）。
 //
-// 返回 200 + {valid, title, ledger_name, accounts, transactions, prices,
-// commodities, duplicate, errors?}。valid=false 且 errors 非空表示文件含
-// 不支持语法，整体拒绝（列出全部错误行号），属预期输入、不视为异常。
+// 返回 200 + {valid, title, target, ledger_name?, new_accounts, reuse_accounts,
+// new_transactions, skip_transactions, new_commodities, pad_balance[], conflicts[],
+// code?, duplicate?, errors?}。valid=false 时：
+//   - errors 非空 = 文件含不支持语法，整体拒绝（列出全部错误行号）；
+//   - conflicts 非空 = 与目标账本存在冲突（账户/币种/pad-balance 不支持等），逐项列出。
 func (h *Handler) HandleImportPreview(w http.ResponseWriter, r *http.Request) {
 	uid, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	ledgerID, ok := requireLedgerID(w, r)
 	if !ok {
 		return
 	}
@@ -29,7 +35,8 @@ func (h *Handler) HandleImportPreview(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	prev, err := h.svc.PreviewImport(uid, text)
+	target := r.URL.Query().Get("target")
+	prev, err := h.svc.PreviewImport(ledgerID, uid, text, target)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -37,12 +44,17 @@ func (h *Handler) HandleImportPreview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, prev)
 }
 
-// HandleImport 执行导入：解析 → 校验 → 单一大事务写入新账本。
+// HandleImport 执行导入：解析 → 校验 → 单一大事务写入（current 当前账本 / new 新建账本）。
 //
-// 成功后返回 {ledger_id, ledger_name, accounts, transactions}。同名账本自动加
-// 序号，绝不覆盖既有数据（RK-M2-05：导入是「新建」，不是「替换」）。
+// 成功后返回 {mode, ledger_id, ledger_name, import_batch_id, created_transactions,
+// skipped_transactions, reused_accounts, new_accounts, new_commodities}。
+// 同名账本自动加序号（target=new），绝不覆盖既有数据（RK-M2-05：导入是「新建」不是「替换」）。
 func (h *Handler) HandleImport(w http.ResponseWriter, r *http.Request) {
 	uid, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	ledgerID, ok := requireLedgerID(w, r)
 	if !ok {
 		return
 	}
@@ -50,7 +62,30 @@ func (h *Handler) HandleImport(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.ExecuteImport(uid, text)
+	target := r.URL.Query().Get("target")
+	res, err := h.svc.ExecuteImport(ledgerID, uid, text, target)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// HandleImportUndo 撤销一次导入（AC-6.9）：仅回滚本批新建实体与本批交易，不动复用实体。
+//
+// 通过 ?batch_id= 指定要撤销的导入批次；批次不存在返回 404（import_batch_not_found）。
+// 撤销是写操作，viewer 只读被 middleware 拦截（非 GET 一律 403）。
+func (h *Handler) HandleImportUndo(w http.ResponseWriter, r *http.Request) {
+	uid, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	ledgerID, ok := requireLedgerID(w, r)
+	if !ok {
+		return
+	}
+	batchID := strings.TrimSpace(r.URL.Query().Get("batch_id"))
+	res, err := h.svc.UndoImportBatch(ledgerID, uid, batchID)
 	if err != nil {
 		writeError(w, err)
 		return

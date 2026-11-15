@@ -706,26 +706,69 @@ export interface BeancountParseError {
   msg: string
 }
 
-/** POST /api/import/beancount/preview（只读解析预览）。 */
+/** 导入预检冲突（0.6.0 S5：逐行号与原因）。 */
+export interface ImportConflict {
+  line: number
+  /** account_conflict | commodity_conflict | undeclared_account | unbalanced | pad_balance_unsupported */
+  type: string
+  name: string
+  reason: string
+}
+
+/** 导入预检中 pad/balance 指令的结构化呈现（含按当前账本重算的差额）。 */
+export interface ImportPadBalancePreview {
+  line: number
+  /** pad | balance */
+  type: string
+  account: string
+  target_amount: string
+  cumulative: string
+  diff: string
+}
+
+/** POST /api/import/beancount/preview（只读解析预检，0.6.0 S5 支持 target=current|new）。 */
 export interface ImportPreviewResult {
   valid: boolean
   title: string
-  /** 实际将使用的账本名（同名自动加序号）。 */
+  /** current（导入到当前账本）| new（新建账本）。 */
+  target: string
+  /** target=new 时实际将使用的账本名（同名自动加序号）。 */
   ledger_name: string
-  accounts: number
-  transactions: number
-  prices: number
-  commodities: number
-  /** 疑似重复导入（同名账本 + 相同交易数）：仅提示，不阻断。 */
+  new_accounts: number
+  reuse_accounts: number
+  new_transactions: number
+  skip_transactions: number
+  new_commodities: number
+  pad_balance: ImportPadBalancePreview[]
+  conflicts: ImportConflict[]
+  /** 冲突汇总稳定码（如 import_account_conflict / import_pad_balance_unsupported）。 */
+  code?: string
+  /** target=new 时疑似重复导入（同名账本 + 相同交易数）：仅提示，不阻断。 */
   duplicate: boolean
   errors?: BeancountParseError[]
   error?: string
 }
 
-/** POST /api/import/beancount（执行结果）。 */
+/** POST /api/import/beancount（执行结果，current / new 两种模式共用）。 */
 export interface ImportResult {
+  /** current | new */
+  mode: string
   ledger_id: number
   ledger_name: string
-  accounts: number
-  transactions: number
+  /** 本次导入批次标识（撤销入口据此定位）。 */
+  import_batch_id: string
+  created_transactions: number
+  skipped_transactions: number
+  reused_accounts: number
+  new_accounts: number
+  new_commodities: number
+}
+
+/** POST /api/import/beancount/undo（0.6.0 S5 批次撤销结果）。 */
+export interface ImportUndoResult {
+  removed_transactions: number
+  removed_postings: number
+  removed_prices: number
+  removed_accounts: number
+  removed_commodities: number
 }

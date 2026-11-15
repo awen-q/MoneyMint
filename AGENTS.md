@@ -200,14 +200,14 @@ python -m pip install beancount    # 激活 .venv 后执行
 | `/api/backup/run` | POST | 登录+**系统管理员** | 手动触发一次备份（进行中 409） |
 | `/api/backup/restore/preview` | POST | 登录+**系统管理员** | **只读预检**：multipart `file`；备份 vs 当前四行覆盖量对比 + schema 版本 + 拒绝原因（如 `future_version` / `not_sqlite`），绝不改数据 |
 | `/api/backup/restore` | POST | 登录+**系统管理员** | 执行还原：multipart `file` + `confirm=RESTORE` 确认词；pre-restore 快照、事务内逐表替换、迁移重跑、成功后轮换 `instance_id` |
-| `/api/import/beancount/preview` | POST | 登录 | **只读解析预检**：JSON `{"text"}` 或 multipart `file`；全量错误行号 / 账户·交易·价格·币种计数 / 疑似重复提示，不落库 |
-| `/api/import/beancount` | POST | 登录 | 执行导入：单一大事务新建账本（含 `sync_log`），同名自动加序号；引用未声明账户整体拒绝 |
+| `/api/import/beancount/preview` | POST | 登录+成员（viewer 可读） | **只读解析预检**：JSON `{"text"}` 或 multipart `file` + `?target=current\|new`（0.6.0 S5）；全量错误行号 / 冲突清单（账户·币种·借贷不平）+ pad/balance 结构化累计 / 疑似重复提示，不落库 |
+| `/api/import/beancount` | POST | 登录+成员（非 viewer） | 执行导入：单一大事务写入（`target=current` 当前账本：同名账户复用 + 确定性幂等去重 + 逐笔借贷平衡；`target=new` 新建账本：同名自动加序号，pad 展开 / balance 自检）；引用未声明账户整体拒绝；返回 `import_batch_id` 供撤销 |
 | `/api/settings/registration` | GET/POST | **GET 公开** / POST 登录+**系统管理员** | 读取 / 修改注册开关（GET 供登录页判断是否显示注册入口） |
 | `/*`（非 `/api/`） | GET/HEAD | 公开 | 前端静态资源 + SPA 回退（`LEDGER_WEB_ROOT`） |
 
 > **在线记账幂等冲突矩阵（迁移 013，已实现）**：新建 → `201 {uuid, idempotent:false}`；同 key 命中未删 → `200 {uuid, idempotent:true}`；命中已软删 → `409 idempotency_key_deleted`（换新 key 重提）；同 key 不同 payload → `409 idempotency_payload_mismatch`。旧客户端不传 `client_request_id` 时保持原行为。冲正沿 `opening_key`，**禁止复用** `client_request_id`。
-> **M2 端点（批 4，已实现）**：`/api/backup/restore/preview`、`/api/backup/restore`、`/api/import/beancount/preview`、`/api/import/beancount`。防误操作靠 **只读预检 + `RESTORE` 确认词 + pre-restore 快照 + 单一大事务**（**未**采用方案早期设想的 `Idempotency-Key` 头 + 通用 `idempotency_keys` 表）；恢复仅系统管理员、导入登录即可，两者均豁免账本上下文。
-> 多账本上下文：业务端点需带 `X-Ledger-Id` 头，服务端缺失时回退「该用户所属、未删、最小 id 账本」（0.6.0 R3，不再硬编码 id=1）；`/api/import/*`、`/api/db/*`、`/api/backup/*` 为 middleware 豁免路径。`viewer` 只读（非 GET 一律 403）、`editor` 可写、`owner` 可管理。**新前端 API 客户端必须强制注入并断言该头，缺失直接抛错，绝不静默回退**（否则交易会记进错误账本）。
+> **M2 端点（批 4，已实现）**：`/api/backup/restore/preview`、`/api/backup/restore`、`/api/import/beancount/preview`、`/api/import/beancount`。防误操作靠 **只读预检 + `RESTORE` 确认词 + pre-restore 快照 + 单一大事务**（**未**采用方案早期设想的 `Idempotency-Key` 头 + 通用 `idempotency_keys` 表）；恢复仅系统管理员、导入自 **0.6.0 S5 起不再豁免账本上下文**（与业务端点同口径：`X-Ledger-Id` + 成员校验 + viewer 只读）。
+> 多账本上下文：业务端点需带 `X-Ledger-Id` 头，服务端缺失时回退「该用户所属、未删、最小 id 账本」（0.6.0 R3，不再硬编码 id=1）；`/api/db/*`、`/api/backup/*` 为 middleware 豁免路径（导入已移出豁免）。`viewer` 只读（非 GET 一律 403）、`editor` 可写、`owner` 可管理。**新前端 API 客户端必须强制注入并断言该头，缺失直接抛错，绝不静默回退**（否则交易会记进错误账本）。
 > 备份端点例外：备份是全库级产物，**不解析 `X-Ledger-Id`、不校验账本成员**，只要求登录态 + `users.is_admin`。账本级 owner ≠ 系统管理员，勿混用。
 > 鉴权范围按 `/api/` 前缀划分：非 `/api/` 一律放行交由静态托管，新增前端路由无需改白名单。
 > CORS：`LEDGER_CORS_ORIGINS` 未设 = 仅同源（不输出 CORS 头）；设为逗号白名单 = 命中回显 `Origin` + `Allow-Credentials: true` + `Vary: Origin`；设为 `*` = 旧行为但不带凭证。Headers 含 `Content-Type, Authorization, X-Ledger-Id, X-CSRF`，Methods 含 `GET,POST,DELETE,PATCH,OPTIONS`，`OPTIONS` 预检 204 不鉴权。
@@ -223,6 +223,7 @@ python -m pip install beancount    # 激活 .venv 后执行
 | `/api/commodities/{uuid}` | DELETE | 登录+成员（非 viewer） | 0.6.0 S2 #6：软删 + `sync_log op=delete`；`200 {ok:true}`；被引用 → `409 commodity_in_use {accounts[],postings,prices,is_default}`（默认币种提示先改账本设置）；重复删幂等 404 |
 | `/api/accounts/{uuid}/balance` | GET | 登录+成员（viewer 可读） | 0.6.0 S4 #2：`?as_of_date=D` → `200 {account_uuid, as_of_date, cumulative:[{commodity,amount}], calibration:{exists, date, version, targets, transaction_uuid, history}}`；累计口径 `date < D`（日初，不含当日）；`404 account_not_found`、`400 balance_date_invalid` |
 | `/api/accounts/{uuid}/balance` | POST | 登录+成员（非 viewer） | 0.6.0 S4 #3：`{as_of_date:"D", targets:[{commodity,target_balance}]}`（带符号）→ `200 {status, account_uuid, transaction_uuid, reversal_uuid?, version, date:"D-1", entries:[{commodity,diff}]}`；普通 `*` 交易、描述「余额校准: 截至D日初」，独立列 `balance_date`/`balance_key`、**不写 `opening_account_uuid` / tags**、不输出 `balance`/`pad` 指令；`400 balance_date_invalid`、`400 balance_date_too_early`、`409 opening_equity_closed`、`409 account_closed`、`404 account_not_found` |
+| `/api/import/beancount/undo` | POST | 登录+成员（非 viewer） | 0.6.0 S5：`?batch_id=` 撤销一次导入批次 → `200 {removed_transactions, removed_postings, removed_prices, removed_accounts, removed_commodities}`；单一大事务硬删本批交易/分录（`transactions.import_batch_id` 精确范围）+ 撤销后孤儿账户/币种/价格（复用实体仍被其他交易引用，不误删；默认币种保留），写 `sync_log op=delete`；不轮换 `instance_id`；批次不存在 `404 import_batch_not_found`。导入端点自 S5 起同样不再豁免账本上下文 |
 
 > 本小节端点已同步 `internal/server/router.go` 与 `frontend/src/api/routes.ts`（沿用 `ledgerById` 常量：同一路径多方法共用一个常量，DELETE 为 0.6.0 新增方法；S2 新增 `commodities` / `commodityByUuid` 两条业务路径常量，均须带 `X-Ledger-Id`）。`GET /api/ledgers` 行级附加 `member_count` / `account_count` / `transaction_count`（P1-03，additive，不新增端点）；请求未带 `X-Ledger-Id` 时回退「该用户所属、未删、最小 id 账本」，不再硬编码 id=1（R3）。
 >
