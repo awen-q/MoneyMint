@@ -189,23 +189,21 @@ func (s *Store) ApplyOpening(ledgerID int64, in OpeningApplyInput) (OpeningApply
 
 	var reversalUUID string
 	if found {
-		reversalUUID, err = insertReversalTx(tx, ledgerID, active, in.AccountUUID, openingReversalDesc, prec)
+		// 0.6.0 S3：冲正生成与原交易标记改走通用内核；SQL 文本、错误上下文、
+		// 并发文案与 sync_log(op=create) 的顺序均保持既有行为不变。
+		src := openingReversalSource(active, in.AccountUUID, openingReversalDesc, prec)
+		reversalUUID, _, err = insertReversalTxnTx(tx, ledgerID, src)
 		if err != nil {
 			return OpeningApplyResult{}, err
 		}
-		res, err := tx.Exec(
-			`UPDATE transactions SET reversed_by=?, updated_at=datetime('now')
-			 WHERE id=? AND (reversed_by IS NULL OR reversed_by='')`,
-			reversalUUID, active.ID,
-		)
-		if err != nil {
-			return OpeningApplyResult{}, fmt.Errorf("标记旧期初已冲正: %w", err)
-		}
-		if n, _ := res.RowsAffected(); n == 0 {
-			return OpeningApplyResult{}, domain.Codedf(domain.ErrConflict,
-				domain.CodeOpeningConflict, "期初已被并发修改，请重试")
-		}
-		if _, err := appendSyncLogOn(tx, ledgerID, domain.EntityTransaction, reversalUUID, domain.OpCreate); err != nil {
+		if err := markReversedTx(tx, ReversalMarkInput{
+			LedgerID:        ledgerID,
+			SourceID:        src.ID,
+			ReversalUUID:    reversalUUID,
+			ExecErrorLabel:  "标记旧期初已冲正",
+			ConflictMessage: openingConflictMessage,
+			AppendSyncLog:   true,
+		}); err != nil {
 			return OpeningApplyResult{}, err
 		}
 	}
@@ -347,23 +345,20 @@ func (s *Store) RebuildAllOpenings(ledgerID int64, newDate string) (int, error) 
 			return 0, err
 		}
 
-		revUUID, err := insertReversalTx(tx, ledgerID, rec, a.account, openingReversalDesc, prec)
+		// 0.6.0 S3：与 ApplyOpening 共用通用冲正内核；错误上下文仍带本次期初 uuid。
+		src := openingReversalSource(rec, a.account, openingReversalDesc, prec)
+		revUUID, _, err := insertReversalTxnTx(tx, ledgerID, src)
 		if err != nil {
 			return 0, err
 		}
-		res, err := tx.Exec(
-			`UPDATE transactions SET reversed_by=?, updated_at=datetime('now')
-			 WHERE id=? AND (reversed_by IS NULL OR reversed_by='')`,
-			revUUID, rec.ID,
-		)
-		if err != nil {
-			return 0, fmt.Errorf("标记期初 %s 已冲正: %w", rec.UUID, err)
-		}
-		if n, _ := res.RowsAffected(); n == 0 {
-			return 0, domain.Codedf(domain.ErrConflict,
-				domain.CodeOpeningConflict, "期初已被并发修改，请重试")
-		}
-		if _, err := appendSyncLogOn(tx, ledgerID, domain.EntityTransaction, revUUID, domain.OpCreate); err != nil {
+		if err := markReversedTx(tx, ReversalMarkInput{
+			LedgerID:        ledgerID,
+			SourceID:        src.ID,
+			ReversalUUID:    revUUID,
+			ExecErrorLabel:  fmt.Sprintf("标记期初 %s 已冲正", rec.UUID),
+			ConflictMessage: openingConflictMessage,
+			AppendSyncLog:   true,
+		}); err != nil {
 			return 0, err
 		}
 
@@ -504,39 +499,21 @@ func insertPostingsTx(tx execer, txnID int64, posts []OpeningPosting) error {
 	return nil
 }
 
-// insertReversalTx 为一条有效期初生成冲正交易：同日期、分录全部取负、
-// reversal_of=原 uuid，opening_account_uuid/version 沿用原交易（仅溯源）。
-func insertReversalTx(tx execer, ledgerID int64, rec OpeningRecord, accountUUID, desc string, precision int) (string, error) {
-	revUUID := uuid.NewString()
-	revID, err := insertTxnTx(tx, ledgerID, txnInsert{
-		UUID:               revUUID,
+// openingReversalSource 把有效期初记录适配成通用冲正内核的输入。
+// 期初专属字段（Tags / opening_* 溯源 / 描述模板 / 精度）在此集中装配，
+// 保证 ApplyOpening 与 RebuildAllOpenings 两条路径的写入值逐项不变。
+func openingReversalSource(rec OpeningRecord, accountUUID, desc string, precision int) ReversalSource {
+	return ReversalSource{
+		ID:                 rec.ID,
+		UUID:               rec.UUID,
 		Date:               rec.Date,
+		Postings:           rec.Postings,
 		Description:        desc,
 		Tags:               []string{"opening", "reversal"},
-		ReversalOf:         rec.UUID,
+		Precision:          precision,
 		OpeningAccountUUID: accountUUID,
 		OpeningVersion:     rec.Version,
-	})
-	if err != nil {
-		return "", err
 	}
-	posts := make([]OpeningPosting, 0, len(rec.Postings))
-	for _, p := range rec.Postings {
-		neg, err := parseDecimalRat(p.Amount)
-		if err != nil {
-			return "", fmt.Errorf("冲正金额非法 %q: %w", p.Amount, err)
-		}
-		posts = append(posts, OpeningPosting{
-			AccountID: p.AccountID,
-			Commodity: p.Commodity,
-			Amount:    neg.Neg(neg).FloatString(precision),
-			Position:  p.Position,
-		})
-	}
-	if err := insertPostingsTx(tx, revID, posts); err != nil {
-		return "", err
-	}
-	return revUUID, nil
 }
 
 // activeOpeningTx 在事务内读取账户有效期初。
