@@ -284,7 +284,7 @@ func TestImportCurrentUndo(t *testing.T) {
 	const text = `option "title" "导入"
 2024-03-01 open Assets:Cash
 2024-03-01 open Expenses:Food
-2024-03-01 price USD CNY 7.2
+2024-03-01 price USD 7.2 CNY
 2024-03-02 * "导入支出"
   Assets:Cash 80 CNY
   Expenses:Food -80 CNY

@@ -64,6 +64,9 @@ type ImportResult struct {
 	ReusedAccounts      int    `json:"reused_accounts"`
 	NewAccounts         int    `json:"new_accounts"`
 	NewCommodities      int    `json:"new_commodities"`
+	// NewPrices 是本批实际新建价格行数（QA DEF-2：价格幂等，重复导入跳过不重插；
+	// additive 字段，旧客户端可忽略）。
+	NewPrices int `json:"new_prices,omitempty"`
 }
 
 // ImportUndoResult 是批次撤销结果（硬删本批新建实体 + 本批交易，不动复用实体）。
@@ -156,6 +159,7 @@ func (s *Service) ExecuteImport(ledgerID, userID int64, text, target string) (*I
 		ReusedAccounts:      res.ReusedAccounts,
 		NewAccounts:         res.NewAccounts,
 		NewCommodities:      res.NewCommodities,
+		NewPrices:           res.NewPrices,
 	}, nil
 }
 

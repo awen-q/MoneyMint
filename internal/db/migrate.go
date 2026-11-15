@@ -30,6 +30,7 @@ var migrations = []struct {
 	{"013_txn_idempotency", migrate013},
 	{"014_db_instance_id", migrate014},
 	{"015_ledger_ops", migrate015},
+	{"016_import_batch_manifest", migrate016},
 }
 
 // migrate011：sessions 增加设备信息（M3 会话列表与吊销）。

@@ -33,7 +33,15 @@
 ### Changed
 
 - 迁移至 **015_ledger_ops**：`ledgers` / `commodities` 增 `deleted_at`；`transactions` 增 `balance_date` / `balance_key` / `import_batch_id` + 两个部分索引（`idx_txn_balance_key` / `idx_txn_import_batch`）。
+- 迁移至 **016_import_batch_manifest**：新增 `import_batch_entities(ledger_id, batch_id, entity_type, entity_uuid)` 清单表 + `(ledger_id,batch_id)` 索引与 `(batch_id,entity_type,entity_uuid)` 唯一索引。导入事务内为「本批新建（非复用）」的账户 / 币种 / 价格逐条登记，批次撤销改为按清单精确删，取代「撤销后零引用」的全账本扫描（0.6.0 未发布前 QA 回归发现的高危越界删除，见 Fixed）。016 之前的历史批次无清单行，撤销安全降级为只删交易与分录。导入结果 additive 新增 `new_prices`（本批实际新建价格行数）。
+- 导入价格幂等：同一 `(ledger_id, commodity, currency, date, rate)` 已存在即跳过不重插（重复导入同一文件 prices 行数不变），计数如实。
 - 账本列表响应对已删账本不可见；账本删除不写 `sync_log`、不轮换库世代 `instance_id`（删除的是账本，不是库）。
+
+### Fixed（0.6.0 发布前 QA 第一轮回归修复，并入本条目）
+
+- **【高危】批次撤销越界硬删既有实体**：原实现用「撤销后零引用」全账本扫描判定孤儿，且 postings 子查询未按 ledger 定界——种子账户无分录的账本上撤销会误删全部既有种子账户（QA 复现 `removed_accounts=35`），无期初账本上连默认币种也会被删，并以 `sync_log op=delete` 扩散到其他端。根治为迁移 016 manifest 方案：撤销只按清单精确删；仍被本批之外分录引用的实体（如后续批次按 name 复用的账户）保留不删、不写 delete 事件；引用检查 join transactions 按 ledger 定界、软删引用计入（与 `CommodityUsage` 保守口径一致）；默认币种额外兜底保护。
+- **价格重复插行 + 撤销永不清理**：价格 INSERT 增加存在性幂等检查（重复导入同一文件 prices 行数不变）；本批新建价格进 manifest，撤销按清单删（`removed_prices` 等于本批实建数，不再依赖过保守的引用分析）。
+- **软删币种并发恢复竞态误报 404**：`POST /api/commodities` 命中软删行后、恢复事务前被并发请求抢先恢复时，原实现返回 404；现回落为 409 `commodity_exists`（该币种实际已存在），404 只保留给「真不存在」。并发下无数据损坏（表级 UNIQUE 恒 1 行），仅修正错误码语义。
 
 ### Verified
 

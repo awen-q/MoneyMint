@@ -67,6 +67,9 @@ type ImportResult struct {
 	ReusedAccounts    int    `json:"reused_accounts"`
 	NewAccounts       int    `json:"new_accounts"`
 	NewCommodities    int    `json:"new_commodities"`
+	// NewPrices 是本批实际新建价格行数（QA DEF-2：价格幂等后与 p.Prices 去重结果一致；
+	// additive 字段，0.6.0 新增，旧客户端可忽略）。
+	NewPrices int `json:"new_prices,omitempty"`
 }
 
 // ImportUndoResult 是批次撤销结果（硬删本批新建实体 + 本批交易）。
@@ -205,12 +208,17 @@ func (s *Store) importIntoLedgerOn(
 		if _, err := appendSyncLogOn(tx, ledgerID, domain.EntityAccount, auuid, domain.OpCreate); err != nil {
 			return nil, err
 		}
+		// 本批新建（非复用）账户登记 manifest（QA DEF-1：撤销据此精确删）。
+		if err := appendBatchEntityTx(tx, ledgerID, batchID, "account", auuid); err != nil {
+			return nil, err
+		}
 		newAccounts++
 	}
 	result.NewAccounts = newAccounts
 	result.ReusedAccounts = reuseAccounts
 
 	// 2) 币种：文件声明的 + 价格涉及的，全部确保存在（按精度声明新建）。
+	//    「本批新建」的币种一律登记进 manifest（QA DEF-1：撤销据此精确删）。
 	for _, c := range p.Commodities {
 		sym := c.Symbol
 		if sym == "" {
@@ -228,24 +236,45 @@ func (s *Store) importIntoLedgerOn(
 			return nil, cerr
 		}
 		if created {
+			// created=true 即本事务全新 INSERT（既有行 / 软删行不会走到这里），
+			// 回读 uuid 登记 manifest。
+			var cu string
+			if err := tx.QueryRow(
+				`SELECT uuid FROM commodities WHERE ledger_id=? AND symbol=? AND deleted_at IS NULL`,
+				ledgerID, sym,
+			).Scan(&cu); err != nil {
+				return nil, err
+			}
+			if err := appendBatchEntityTx(tx, ledgerID, batchID, "commodity", cu); err != nil {
+				return nil, err
+			}
 			result.NewCommodities++
 		}
 	}
 	for _, pr := range p.Prices {
-		if pr.Commodity != "" {
-			if err := ensureCommodityOn(tx, ledgerID, pr.Commodity); err != nil {
-				return nil, err
-			}
+		if err := ensureCommodityBatchOn(tx, ledgerID, pr.Commodity, batchID); err != nil {
+			return nil, err
 		}
-		if pr.Currency != "" {
-			if err := ensureCommodityOn(tx, ledgerID, pr.Currency); err != nil {
-				return nil, err
-			}
+		if err := ensureCommodityBatchOn(tx, ledgerID, pr.Currency, batchID); err != nil {
+			return nil, err
 		}
 	}
 
-	// 3) 价格
+	// 3) 价格（QA DEF-2：幂等——按 (ledger_id, commodity, currency, date, rate)
+	//    存在性检查，命中即跳过不重插；rate 为 TEXT 全等比对，重复导入同一文件
+	//    时字面量一致必然命中。计数如实：跳过的不进 manifest、不写 create 事件）。
 	for _, pr := range p.Prices {
+		var dup int
+		if err := tx.QueryRow(
+			`SELECT count(*) FROM prices
+			 WHERE ledger_id=? AND commodity=? AND currency=? AND date=? AND rate=?`,
+			ledgerID, pr.Commodity, pr.Currency, pr.Date, pr.Amount,
+		).Scan(&dup); err != nil {
+			return nil, err
+		}
+		if dup > 0 {
+			continue
+		}
 		puuid := uuid.NewString()
 		if _, err := tx.Exec(
 			`INSERT INTO prices(ledger_id, uuid, commodity, currency, date, rate, source)
@@ -257,6 +286,10 @@ func (s *Store) importIntoLedgerOn(
 		if _, err := appendSyncLogOn(tx, ledgerID, domain.EntityPrice, puuid, domain.OpCreate); err != nil {
 			return nil, err
 		}
+		if err := appendBatchEntityTx(tx, ledgerID, batchID, "price", puuid); err != nil {
+			return nil, err
+		}
+		result.NewPrices++
 	}
 
 	// 4) 交易 + 分录（逐笔借贷平衡校验 + 确定性幂等去重）。
@@ -268,10 +301,10 @@ func (s *Store) importIntoLedgerOn(
 					"第 %d 行交易引用了未声明的账户 %s", t.Line, ps.Account)
 			}
 		}
-		// 确保各分录币种存在。
+		// 确保各分录币种存在（本批新建的登记 manifest）。
 		for _, ps := range t.Postings {
 			if ps.Commodity != "" {
-				if err := ensureCommodityOn(tx, ledgerID, ps.Commodity); err != nil {
+				if err := ensureCommodityBatchOn(tx, ledgerID, ps.Commodity, batchID); err != nil {
 					return nil, err
 				}
 			}
@@ -354,14 +387,28 @@ func (s *Store) expandPadBalanceOn(
 	if err != nil {
 		return err
 	}
-	// 权益对手方（与期初同源的 Equity:Opening-Balances）。
+	// 权益对手方（与期初同源的 Equity:Opening-Balances）。若由本批首次补种，
+	// 该账户同样属于「本批新建」，登记 manifest（target=new 撤销时一并精确删）。
 	equityDate := p.Title
 	if equityDate == "" {
 		equityDate = defaultOpeningDateOn(tx, ledgerID)
 	}
+	_, _, equityFound, _, _, _, err := accountByNameTx(tx, ledgerID, domain.OpeningEquityName)
+	if err != nil {
+		return err
+	}
 	equityID, err := ensureOpeningEquityTx(tx, ledgerID, equityDate)
 	if err != nil {
 		return fmt.Errorf("展开 pad/balance 准备权益账户: %w", err)
+	}
+	if !equityFound {
+		var eu string
+		if err := tx.QueryRow(`SELECT uuid FROM accounts WHERE id=?`, equityID).Scan(&eu); err != nil {
+			return err
+		}
+		if err := appendBatchEntityTx(tx, ledgerID, batchID, "account", eu); err != nil {
+			return err
+		}
 	}
 
 	for _, pb := range p.PadBalances {
@@ -744,9 +791,18 @@ func (s *Store) fillPadBalancePreviewNew(a *ImportAnalysis, p *beancount.ParseRe
 // UndoImportBatch 撤销一次导入（AC-6.9）：单一大事务，只回滚本批新建实体，
 // 不动复用的既有账户 / 币种 / 价格；硬删本批交易与其分录，并写 sync_log op=delete。
 //
-// 实体识别：交易 / 分录 / 价格通过 (ledger_id, import_batch_id) 精确范围；账户 / 币种
-// 因无 batch 列，采用「撤销后孤儿」判定——导入新建的账户 / 币种在移除本批交易后不再
-// 被任何分录 / 价格引用，则一并硬删（复用的既有实体仍被其他交易引用，不会被误删）。
+// 实体识别（QA DEF-1 根治，迁移 016 manifest 方案）：
+//   - 交易 / 分录通过 (ledger_id, import_batch_id) 精确范围；
+//   - 价格 / 账户 / 币种按 import_batch_entities 清单精确删——导入事务内已把
+//     「本批新建（非复用）」实体逐条登记，撤销不再做任何「孤儿判定」全账本扫描；
+//   - 护栏：清单内实体若仍被本批之外的数据引用（如后续批次按 name 复用了本批
+//     新建的账户），保留不删、不计入 removed_*、不写 sync_log op=delete；
+//   - 引用检查一律 join transactions 按 ledger 定界，且不过滤 deleted_at
+//     （软删引用计入，与 S2 CommodityUsage 的保守口径一致）；
+//   - 默认币种（ledgers.default_commodity）加一道兜底保护，绝不删。
+//
+// 兼容性：016 之前的历史批次无清单行，撤销只删交易与分录，实体一律保留
+// （安全降级：宁可不删，不误删）。撤销完成后本批 manifest 行一并清理。
 // 不轮换 instance_id（非 restore）。批次不存在返回 import_batch_not_found（404）。
 func (s *Store) UndoImportBatch(ledgerID int64, batchID string) (*ImportUndoResult, error) {
 	tx, err := s.db.Begin()
@@ -814,19 +870,28 @@ func (s *Store) UndoImportBatch(ledgerID int64, batchID string) (*ImportUndoResu
 		}
 	}
 
-	// 5) 孤儿价格硬删（导入新建、撤销后 commodity 与 currency 均未被任何分录引用）。
-	removedPrices, err := s.deleteOrphanPricesOn(tx, ledgerID)
+	// 5) 价格：按 manifest 精确删（本批新建；QA DEF-2：不再做引用分析）。
+	removedPrices, err := s.deleteBatchPricesOn(tx, ledgerID, batchID)
 	if err != nil {
 		return nil, err
 	}
-	// 6) 孤儿账户 / 币种硬删（导入新建、撤销后无任何分录 / 价格引用的实体）。
-	removedAccounts, err := s.deleteOrphanAccountsOn(tx, ledgerID)
+	// 6) 账户：按 manifest 精确删（护栏：仍被本批之外分录引用则保留）。
+	removedAccounts, err := s.deleteBatchAccountsOn(tx, ledgerID, batchID)
 	if err != nil {
 		return nil, err
 	}
-	removedCommodities, err := s.deleteOrphanCommoditiesOn(tx, ledgerID)
+	// 7) 币种：按 manifest 精确删（护栏：外部分录 / 剩余价格 / 账户限定 / 默认币种）。
+	//    顺序在价格与账户之后，护栏看到的是清理后的剩余引用。
+	removedCommodities, err := s.deleteBatchCommoditiesOn(tx, ledgerID, batchID)
 	if err != nil {
 		return nil, err
+	}
+	// 8) 清理本批 manifest 行（撤销完成后清单使命结束）。
+	if _, err := tx.Exec(
+		`DELETE FROM import_batch_entities WHERE ledger_id=? AND batch_id=?`,
+		ledgerID, batchID,
+	); err != nil {
+		return nil, fmt.Errorf("清理批次清单: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -841,123 +906,194 @@ func (s *Store) UndoImportBatch(ledgerID int64, batchID string) (*ImportUndoResu
 	}, nil
 }
 
-// deleteOrphanPricesOn 硬删撤销后零引用的价格：commodity 与 currency 都未被任何分录
-// 引用时，该价格已无存在意义（导入新建或临时 FX 记录），一并硬删 + sync_log op=delete。
-// 仍被某笔分录引用的币种对应价格保留（不误删既有 FX 记录）。
-func (s *Store) deleteOrphanPricesOn(tx *sql.Tx, ledgerID int64) (int, error) {
-	rows, err := tx.Query(
-		`SELECT id, uuid FROM prices
-		 WHERE ledger_id=?
-		   AND commodity NOT IN (SELECT DISTINCT commodity FROM postings)
-		   AND currency NOT IN (SELECT DISTINCT commodity FROM postings)`,
-		ledgerID,
-	)
-	if err != nil {
-		return 0, err
+// ---------------------------------------------------------------------------
+// 批次撤销的 manifest 精确删（迁移 016，QA DEF-1/DEF-2 取代旧孤儿扫描）
+// ---------------------------------------------------------------------------
+
+// appendBatchEntityTx 把一个「本批新建」实体登记进 import_batch_entities（同事务）。
+// INSERT OR IGNORE + 唯一索引 (batch_id, entity_type, entity_uuid)：同一批次重复登记
+// 不阻断导入。batchID 为空（异常路径）时静默跳过——宁缺清单，不可错登记。
+func appendBatchEntityTx(tx execer, ledgerID int64, batchID, entityType, entityUUID string) error {
+	if batchID == "" || entityUUID == "" {
+		return nil
 	}
-	orphans := []struct{ id int64; uuid string }{}
-	for rows.Next() {
-		var o struct{ id int64; uuid string }
-		if err := rows.Scan(&o.id, &o.uuid); err != nil {
-			rows.Close()
-			return 0, err
-		}
-		orphans = append(orphans, o)
+	if _, err := tx.Exec(
+		`INSERT OR IGNORE INTO import_batch_entities(ledger_id, batch_id, entity_type, entity_uuid)
+		 VALUES(?, ?, ?, ?)`,
+		ledgerID, batchID, entityType, entityUUID,
+	); err != nil {
+		return fmt.Errorf("登记批次实体 %s/%s: %w", entityType, entityUUID, err)
 	}
-	if err := rows.Err(); err != nil {
-		return 0, err
-	}
-	rows.Close()
-	for _, o := range orphans {
-		if _, err := tx.Exec(`DELETE FROM prices WHERE id=?`, o.id); err != nil {
-			return 0, fmt.Errorf("删除孤儿价格: %w", err)
-		}
-		if _, err := appendSyncLogOn(tx, ledgerID, domain.EntityPrice, o.uuid, domain.OpDelete); err != nil {
-			return 0, err
-		}
-	}
-	return len(orphans), nil
+	return nil
 }
 
-// deleteOrphanAccountsOn 硬删撤销后零分录引用的账户 + sync_log op=delete。
-func (s *Store) deleteOrphanAccountsOn(tx *sql.Tx, ledgerID int64) (int, error) {
+// batchEntityUUIDsTx 取某批次某类实体的 manifest uuid 清单（按登记顺序）。
+func batchEntityUUIDsTx(tx execer, ledgerID int64, batchID, entityType string) ([]string, error) {
 	rows, err := tx.Query(
-		`SELECT id, uuid FROM accounts
-		 WHERE ledger_id=? AND id NOT IN (SELECT DISTINCT account_id FROM postings)`,
-		ledgerID,
+		`SELECT entity_uuid FROM import_batch_entities
+		 WHERE ledger_id=? AND batch_id=? AND entity_type=? ORDER BY id`,
+		ledgerID, batchID, entityType,
 	)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	orphans := []struct{ id int64; uuid string }{}
+	defer rows.Close()
+	uuids := []string{}
 	for rows.Next() {
-		var o struct{ id int64; uuid string }
-		if err := rows.Scan(&o.id, &o.uuid); err != nil {
-			rows.Close()
-			return 0, err
+		var u string
+		if err := rows.Scan(&u); err != nil {
+			return nil, err
 		}
-		orphans = append(orphans, o)
+		uuids = append(uuids, u)
 	}
-	if err := rows.Err(); err != nil {
-		return 0, err
-	}
-	rows.Close()
-	for _, o := range orphans {
-		if _, err := tx.Exec(`DELETE FROM accounts WHERE id=?`, o.id); err != nil {
-			return 0, fmt.Errorf("删除孤儿账户: %w", err)
-		}
-		if _, err := appendSyncLogOn(tx, ledgerID, domain.EntityAccount, o.uuid, domain.OpDelete); err != nil {
-			return 0, err
-		}
-	}
-	return len(orphans), nil
+	return uuids, rows.Err()
 }
 
-// deleteOrphanCommoditiesOn 硬删撤销后零引用（无分录且无价格）的币种 + sync_log op=delete。
-func (s *Store) deleteOrphanCommoditiesOn(tx *sql.Tx, ledgerID int64) (int, error) {
-	rows, err := tx.Query(
-		`SELECT id, uuid, symbol FROM commodities
-		 WHERE ledger_id=?
-		   AND symbol NOT IN (SELECT DISTINCT commodity FROM postings)
-		   AND symbol NOT IN (SELECT DISTINCT commodity FROM prices WHERE ledger_id=?)
-		   AND symbol NOT IN (SELECT DISTINCT currency FROM prices WHERE ledger_id=?)`,
-		ledgerID, ledgerID, ledgerID,
-	)
+// deleteBatchPricesOn 按 manifest 硬删本批新建价格（QA DEF-2：价格只来自本批清单，
+// 不做引用分析——导入价格均为 source='import' 的文件声明，撤批即随批走）。
+// 行不存在（并发已清）时跳过，不计入、不写事件。
+func (s *Store) deleteBatchPricesOn(tx *sql.Tx, ledgerID int64, batchID string) (int, error) {
+	uuids, err := batchEntityUUIDsTx(tx, ledgerID, batchID, "price")
 	if err != nil {
 		return 0, err
 	}
-	orphans := []struct{ id int64; uuid string; symbol string }{}
-	for rows.Next() {
-		var o struct{ id int64; uuid string; symbol string }
-		if err := rows.Scan(&o.id, &o.uuid, &o.symbol); err != nil {
-			rows.Close()
-			return 0, err
+	removed := 0
+	for _, u := range uuids {
+		res, err := tx.Exec(`DELETE FROM prices WHERE ledger_id=? AND uuid=?`, ledgerID, u)
+		if err != nil {
+			return 0, fmt.Errorf("删除批次价格: %w", err)
 		}
-		orphans = append(orphans, o)
-	}
-	if err := rows.Err(); err != nil {
-		return 0, err
-	}
-	rows.Close()
-	// 不删默认币种：若 symbol 与账本 default_commodity 相同，保留（避免破坏账本设置）。
-	var defaultCommodity string
-	if err := tx.QueryRow(`SELECT COALESCE(default_commodity,'') FROM ledgers WHERE id=?`, ledgerID).Scan(&defaultCommodity); err != nil {
-		return 0, err
-	}
-	count := 0
-	for _, o := range orphans {
-		if o.symbol != "" && o.symbol == defaultCommodity {
+		if n, _ := res.RowsAffected(); n == 0 {
 			continue
 		}
-		if _, err := tx.Exec(`DELETE FROM commodities WHERE id=?`, o.id); err != nil {
-			return 0, fmt.Errorf("删除孤儿币种: %w", err)
-		}
-		if _, err := appendSyncLogOn(tx, ledgerID, domain.EntityCommodity, o.uuid, domain.OpDelete); err != nil {
+		if _, err := appendSyncLogOn(tx, ledgerID, domain.EntityPrice, u, domain.OpDelete); err != nil {
 			return 0, err
 		}
-		count++
+		removed++
 	}
-	return count, nil
+	return removed, nil
+}
+
+// deleteBatchAccountsOn 按 manifest 硬删本批新建账户（QA DEF-1 根治）。
+//
+// 护栏：账户仍被任何分录引用则保留不删——典型场景是后续批次（或在线记账）按
+// name 复用了本批新建的账户。此时本批交易与分录已在同事务先删，剩余命中即
+// 「本批之外」的引用；不过滤 deleted_at（软删交易的分录计入引用，保守口径），
+// join transactions 把范围定界在本账本内。被保留的账户不计入 removed_accounts、
+// 不写 sync_log op=delete。
+func (s *Store) deleteBatchAccountsOn(tx *sql.Tx, ledgerID int64, batchID string) (int, error) {
+	uuids, err := batchEntityUUIDsTx(tx, ledgerID, batchID, "account")
+	if err != nil {
+		return 0, err
+	}
+	removed := 0
+	for _, u := range uuids {
+		var id int64
+		err := tx.QueryRow(`SELECT id FROM accounts WHERE ledger_id=? AND uuid=?`, ledgerID, u).Scan(&id)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue // 行已不在：不计入、不写事件
+		}
+		if err != nil {
+			return 0, err
+		}
+		var refs int
+		if err := tx.QueryRow(
+			`SELECT count(*) FROM postings p JOIN transactions t ON t.id=p.transaction_id
+			 WHERE t.ledger_id=? AND p.account_id=?`,
+			ledgerID, id,
+		).Scan(&refs); err != nil {
+			return 0, err
+		}
+		if refs > 0 {
+			continue // 仍被外部引用：保留（复用方交易不受影响）
+		}
+		res, err := tx.Exec(`DELETE FROM accounts WHERE ledger_id=? AND uuid=?`, ledgerID, u)
+		if err != nil {
+			return 0, fmt.Errorf("删除批次账户: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			continue
+		}
+		if _, err := appendSyncLogOn(tx, ledgerID, domain.EntityAccount, u, domain.OpDelete); err != nil {
+			return 0, err
+		}
+		removed++
+	}
+	return removed, nil
+}
+
+// deleteBatchCommoditiesOn 按 manifest 硬删本批新建币种（QA DEF-1 根治）。
+//
+// 四道护栏（任一命中即保留）：
+//  0. symbol = ledgers.default_commodity（默认币种兜底保护，绝不删）；
+//  1. 仍被任何分录引用（本批分录已删；软删计入；join transactions 定界本账本）；
+//  2. 仍被任何剩余价格引用（本批价格已先删，剩余即外部价格）；
+//  3. 仍被账户限定币种引用（commodity_restriction；本批删除的账户已先行清理，
+//     剩余命中即保留账户的限定）。
+//
+// 被保留的币种不计入 removed_commodities、不写 sync_log op=delete。
+func (s *Store) deleteBatchCommoditiesOn(tx *sql.Tx, ledgerID int64, batchID string) (int, error) {
+	uuids, err := batchEntityUUIDsTx(tx, ledgerID, batchID, "commodity")
+	if err != nil {
+		return 0, err
+	}
+	var defaultCommodity string
+	if err := tx.QueryRow(
+		`SELECT COALESCE(default_commodity,'') FROM ledgers WHERE id=?`, ledgerID,
+	).Scan(&defaultCommodity); err != nil {
+		return 0, err
+	}
+	removed := 0
+	for _, u := range uuids {
+		var symbol string
+		err := tx.QueryRow(
+			`SELECT symbol FROM commodities WHERE ledger_id=? AND uuid=?`, ledgerID, u,
+		).Scan(&symbol)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue // 行已不在：不计入、不写事件
+		}
+		if err != nil {
+			return 0, err
+		}
+		if symbol != "" && symbol == defaultCommodity {
+			continue // 护栏 0：默认币种
+		}
+		var postingRefs, priceRefs, acctRefs int
+		if err := tx.QueryRow(
+			`SELECT count(*) FROM postings p JOIN transactions t ON t.id=p.transaction_id
+			 WHERE t.ledger_id=? AND p.commodity=?`,
+			ledgerID, symbol,
+		).Scan(&postingRefs); err != nil {
+			return 0, err
+		}
+		if err := tx.QueryRow(
+			`SELECT count(*) FROM prices WHERE ledger_id=? AND (commodity=? OR currency=?)`,
+			ledgerID, symbol, symbol,
+		).Scan(&priceRefs); err != nil {
+			return 0, err
+		}
+		if err := tx.QueryRow(
+			`SELECT count(*) FROM accounts WHERE ledger_id=? AND commodity_restriction=?`,
+			ledgerID, symbol,
+		).Scan(&acctRefs); err != nil {
+			return 0, err
+		}
+		if postingRefs > 0 || priceRefs > 0 || acctRefs > 0 {
+			continue // 护栏 1~3：仍被引用，保留
+		}
+		res, err := tx.Exec(`DELETE FROM commodities WHERE ledger_id=? AND uuid=?`, ledgerID, u)
+		if err != nil {
+			return 0, fmt.Errorf("删除批次币种: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			continue
+		}
+		if _, err := appendSyncLogOn(tx, ledgerID, domain.EntityCommodity, u, domain.OpDelete); err != nil {
+			return 0, err
+		}
+		removed++
+	}
+	return removed, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -1076,6 +1212,53 @@ func ensureCommodityWithMetaTx(tx execer, ledgerID int64, symbol, name string, p
 		return false, err
 	}
 	return true, nil
+}
+
+// commodityExistsTx 判断账本内该 symbol 是否已有行（含软删——ensureCommodityOn
+// 对软删行抑制复活的判定口径，本函数与其共用）。
+func commodityExistsTx(tx execer, ledgerID int64, symbol string) (bool, error) {
+	var n int
+	if err := tx.QueryRow(
+		`SELECT count(*) FROM commodities WHERE ledger_id=? AND symbol=?`,
+		ledgerID, symbol,
+	).Scan(&n); err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// ensureCommodityBatchOn 导入路径专用：确保币种存在，并把「本批新建」的币种登记进
+// manifest（QA DEF-1：撤销据此精确删，取代孤儿扫描）。
+//   - 调 ensureCommodityOn 前先查行数（含软删）：无任何行时 ensureCommodityOn 必然
+//     全新 INSERT → 回读 uuid 登记 manifest；
+//   - 既有活跃 / 软删行：ensureCommodityOn 跳过（软删行抑制复活，AC-4.4），
+//     不属本批新建，不登记。
+func ensureCommodityBatchOn(tx execer, ledgerID int64, symbol, batchID string) error {
+	if symbol == "" {
+		return nil
+	}
+	existed, err := commodityExistsTx(tx, ledgerID, symbol)
+	if err != nil {
+		return err
+	}
+	if existed {
+		return nil
+	}
+	if err := ensureCommodityOn(tx, ledgerID, symbol); err != nil {
+		return err
+	}
+	var cu string
+	if err := tx.QueryRow(
+		`SELECT uuid FROM commodities WHERE ledger_id=? AND symbol=? AND deleted_at IS NULL`,
+		ledgerID, symbol,
+	).Scan(&cu); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			// 并发竞态兜底：判定后行又被他人建（理论上单写者不会发生），不登记。
+			return nil
+		}
+		return err
+	}
+	return appendBatchEntityTx(tx, ledgerID, batchID, "commodity", cu)
 }
 
 // transactionImbalance 返回一笔交易按币种的分组差额；ok=false 表示金额非法。

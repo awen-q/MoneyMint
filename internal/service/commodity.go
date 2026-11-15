@@ -111,6 +111,27 @@ func (s *Service) CreateCommodity(ledgerID int64, symbol, name string, precision
 	if found {
 		restored, err := s.repo.RestoreCommodity(ledgerID, symbol, name, precision)
 		if err != nil {
+			// QA DEF-3：事务外读到软删行后，RestoreCommodity 事务内按
+			// deleted_at IS NOT NULL 重读却已无行——并发下输了竞态（该行已被
+			// 其他请求恢复 / 重建为活跃行）。此刻币种实际已存在，语义回落为
+			// 409 commodity_exists（与分支 1 同码）；404 只保留给「真不存在」。
+			// 并发下无数据损坏（表级 UNIQUE 恒 1 行），仅修正错误码语义。
+			if errors.Is(err, domain.ErrNotFound) {
+				existingUUID, gerr := s.repo.CommoditySymbolExists(ledgerID, symbol)
+				if gerr != nil {
+					return CommodityView{}, gerr
+				}
+				details := map[string]any{}
+				if existingUUID != "" {
+					details["uuid"] = existingUUID
+				}
+				return CommodityView{}, &domain.CodedError{
+					Code:     domain.CodeCommodityExists,
+					Message:  fmt.Sprintf("币种 %s 已存在", symbol),
+					Details:  details,
+					Sentinel: domain.ErrConflict,
+				}
+			}
 			return CommodityView{}, err
 		}
 		return CommodityView{
