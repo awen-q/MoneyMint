@@ -65,6 +65,7 @@ import type {
   SyncPushResponse,
   TransactionCreated,
   TransactionListResponse,
+  TransactionUpdated,
   TrashListResponse,
   UpdateLedgerRequest,
   UpdateMemberRequest,
@@ -596,6 +597,19 @@ export const transactionApi = {
   restore(transactionUuid: string): Promise<OkResponse> {
     return api.post<OkResponse>(
       formatApiPath(API_ROUTES.transactionRestore, { uuid: transactionUuid }),
+    )
+  },
+  /**
+   * 修改交易（0.6.0 S6）：PATCH，服务端「冲正 + 新建」三步事务，绝不原地改。
+   * 仅在线调用（离线编辑会被 409 / 网络失败兜底），载荷与 create 镜像
+   * （account_id 引用，禁 uuid/created_by/ledger_id 字段）。
+   * 已冲正 409 txn_already_reversed；期初/校准/冲正 409 txn_not_editable；
+   * viewer/非本人 403 txn_edit_forbidden。
+   */
+  update(transactionUuid: string, body: CreateTransactionRequest): Promise<TransactionUpdated> {
+    return api.patch<TransactionUpdated>(
+      formatApiPath(API_ROUTES.transactionByUuid, { uuid: transactionUuid }),
+      body,
     )
   },
 }

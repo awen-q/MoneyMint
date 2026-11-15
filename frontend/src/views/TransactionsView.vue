@@ -351,6 +351,10 @@ onMounted(() => {
             <li v-for="txn in group.items" :key="txn.id" class="txn__row">
               <button type="button" class="txn__row-main" @click="openDetail(txn)">
                 <span class="txn__row-desc">
+                  <!-- 0.6.0 S6 AC-5.5：冲正徽章仅依赖 reversed_by / reversal_of，
+                       已冲正（失效原交易）优先于「冲正」（冲正交易本身）。 -->
+                  <span v-if="(txn.reversed_by ?? '') !== ''" class="txn__badge txn__badge--reversed">已冲正</span>
+                  <span v-else-if="(txn.reversal_of ?? '') !== ''" class="txn__badge">冲正</span>
                   <span v-if="kindOf(txn) === 'transfer'" class="txn__badge">转账</span>
                   <span v-else-if="kindOf(txn) === 'opening'" class="txn__badge">期初</span>
                   {{ txn.description }}
@@ -607,6 +611,12 @@ onMounted(() => {
   font-size: 10px;
   font-weight: 600;
   vertical-align: middle;
+}
+
+/* 0.6.0 S6 AC-5.5：已冲正（失效原交易）徽章，警示色。 */
+.txn__badge--reversed {
+  background: var(--fb-warn-soft);
+  color: var(--fb-warn);
 }
 
 .txn__empty {

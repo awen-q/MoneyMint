@@ -96,6 +96,7 @@ func newRouter(h *handler.Handler, svc *service.Service, webRoot string, corsCfg
 		http.MethodPost: h.HandleRestoreTransaction,
 	}))
 	mux.HandleFunc("/api/transactions/{uuid}", methodSwitch(map[string]http.HandlerFunc{
+		http.MethodPatch:  h.HandleUpdateTransaction, // 0.6.0 S6：修改 = 冲正 + 新建
 		http.MethodDelete: h.HandleDeleteTransaction,
 	}))
 

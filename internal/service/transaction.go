@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"familyledger/internal/domain"
+	"familyledger/internal/repository"
 
 	"github.com/google/uuid"
 )
@@ -23,6 +24,9 @@ type PostingView struct {
 }
 
 // TransactionView 是交易列表项的返回视图。
+//
+// 0.6.0 S5/S6 additive：reversed_by / reversal_of / can_edit 为冲正与编辑所需，
+// 仅在线列表透出（禁止进 sync/pull loadEntity，AC-5.2）；omitempty 缺省即省略。
 type TransactionView struct {
 	ID            int64         `json:"id"`
 	UUID          string        `json:"uuid"` // 批 2：列表透出 uuid（前端软删依赖）
@@ -31,6 +35,9 @@ type TransactionView struct {
 	Description   string        `json:"description"`
 	CreatedByName string        `json:"created_by_name"` // 记账人显示名；无创建者时为空串
 	Postings      []PostingView `json:"postings"`
+	ReversedBy    string        `json:"reversed_by,omitempty"` // 非空 = 已被冲正（失效原交易）
+	ReversalOf    string        `json:"reversal_of,omitempty"` // 非空 = 本身是冲正交易
+	CanEdit       bool          `json:"can_edit,omitempty"`    // 服务端按请求用户计算的编辑许可（AC-5.2）
 }
 
 // TransactionCreated 是创建交易的返回。
@@ -47,7 +54,11 @@ type TransactionCreated struct {
 }
 
 // ListTransactions 列出账本内所有未删除交易（含分录，内联账户名）。
-func (s *Service) ListTransactions(ledgerID int64) ([]TransactionView, error) {
+//
+// userID 用于服务端按请求用户计算 can_edit（AC-5.2）：已冲正 / 期初 / 校准 /
+// 冲正交易一律不可编辑；owner 可改全账本，editor 仅可改自己记的账。
+func (s *Service) ListTransactions(ledgerID, userID int64) ([]TransactionView, error) {
+	role, _ := s.repo.RoleOf(ledgerID, userID) // 非成员为空串 → can_edit 全 false
 	txns, err := s.repo.ListTransactions(ledgerID)
 	if err != nil {
 		return nil, err
@@ -62,6 +73,9 @@ func (s *Service) ListTransactions(ledgerID int64) ([]TransactionView, error) {
 			Description:   t.Description,
 			CreatedByName: t.CreatedByName,
 			Postings:      make([]PostingView, 0, len(t.Postings)),
+			ReversedBy:    t.ReversedBy,
+			ReversalOf:    t.ReversalOf,
+			CanEdit:       computeCanEdit(t, role, userID),
 		}
 		for _, p := range t.Postings {
 			v.Postings = append(v.Postings, PostingView{
@@ -74,6 +88,23 @@ func (s *Service) ListTransactions(ledgerID int64) ([]TransactionView, error) {
 		out = append(out, v)
 	}
 	return out, nil
+}
+
+// computeCanEdit 是 can_edit 的唯一判定口径（AC-5.2 / AC-5.3，服务端权威）：
+// D-15 已冲正判定优先于角色；期初 / 校准 / 冲正交易走专用端点不可编辑；
+// owner 可改全账本（created_by=0 由 owner 兜底），editor 仅可改自己记的账。
+// 前端显隐不是安全边界，PATCH 由 UpdateTransaction 独立复核。
+func computeCanEdit(t domain.Transaction, role string, userID int64) bool {
+	if t.ReversedBy != "" {
+		return false
+	}
+	if t.OpeningAccountUUID != "" || t.BalanceKey != "" || t.ReversalOf != "" {
+		return false
+	}
+	if role == domain.RoleOwner {
+		return true
+	}
+	return role == domain.RoleEditor && t.CreatedBy != 0 && t.CreatedBy == userID
 }
 
 // CreateTransaction 创建一笔不可变交易（在线，postings 用 account_id 引用）。
@@ -106,22 +137,17 @@ func (s *Service) CreateTransactionIdempotent(
 	return s.createTransaction(ledgerID, key, date, flag, description, postings, createdBy, tags)
 }
 
-// createTransaction 是 CreateTransaction / CreateTransactionIdempotent 的公共实现。
-func (s *Service) createTransaction(
-	ledgerID int64, clientRequestID, date, flag, description string,
-	postings []PostingInput, createdBy int64, tags []string,
-) (TransactionCreated, error) {
+// validateTxnPayload 是在线创建与修改交易共用的载荷校验（N-02：同一口径）：
+// 禁 opening 标签（期初只能走专用端点）、至少 2 条分录、引用账户未关闭（AC-28
+// 服务端半边）、逐币种借贷平衡（big.Rat 定点）。
+func (s *Service) validateTxnPayload(ledgerID int64, postings []PostingInput, tags []string) error {
 	if containsTag(tags, "opening") {
-		return TransactionCreated{}, domain.Codedf(domain.ErrInvalid, domain.CodeOpeningViaAPIOnly,
+		return domain.Codedf(domain.ErrInvalid, domain.CodeOpeningViaAPIOnly,
 			"期初余额请通过账户期初专用端点设置")
 	}
 	if len(postings) < 2 {
-		return TransactionCreated{}, domain.Invalidf("一笔交易至少需要 2 条分录")
+		return domain.Invalidf("一笔交易至少需要 2 条分录")
 	}
-	// AC-28 服务端半边：在线记账不允许使用已关户账户（close_date 非空即 409
-	// account_closed，错误构造与期初路径同款）。前端已过滤（AC-28 守门），
-	// 这里兜底防绕过。注意：离线 sync push 走 SavePushTransaction，不经过
-	// 本函数（离线优先语义：离线记账不受阻，补录由 push 独立裁决）。
 	seenAccounts := make(map[int64]bool, len(postings))
 	for _, p := range postings {
 		if seenAccounts[p.AccountID] {
@@ -130,14 +156,22 @@ func (s *Service) createTransaction(
 		seenAccounts[p.AccountID] = true
 		acc, err := s.repo.AccountByID(ledgerID, p.AccountID)
 		if err != nil {
-			return TransactionCreated{}, err
+			return err
 		}
 		if acc.CloseDate != "" {
 			msg := fmt.Sprintf("账户已关闭，不能记账: %s", acc.Name)
-			return TransactionCreated{}, domain.Codedf(domain.ErrConflict, domain.CodeAccountClosed, "%s", msg)
+			return domain.Codedf(domain.ErrConflict, domain.CodeAccountClosed, "%s", msg)
 		}
 	}
-	if err := validateBalance(postings); err != nil {
+	return validateBalance(postings)
+}
+
+// createTransaction 是 CreateTransaction / CreateTransactionIdempotent 的公共实现。
+func (s *Service) createTransaction(
+	ledgerID int64, clientRequestID, date, flag, description string,
+	postings []PostingInput, createdBy int64, tags []string,
+) (TransactionCreated, error) {
+	if err := s.validateTxnPayload(ledgerID, postings, tags); err != nil {
 		return TransactionCreated{}, err
 	}
 	if flag == "" {
@@ -260,6 +294,8 @@ type TrashPostingView struct {
 }
 
 // TrashItemView 是回收站条目视图（在普通交易视图上加删除时间）。
+// 0.6.0 S6 additive：can_restore 由服务端按请求用户角色计算（viewer 恒 false，
+// 仍可查看回收站），前端据此显隐恢复按钮。
 type TrashItemView struct {
 	UUID          string             `json:"uuid"`
 	Date          string             `json:"date"`
@@ -269,10 +305,14 @@ type TrashItemView struct {
 	DeletedAt     string             `json:"deleted_at"`
 	CreatedByName string             `json:"created_by_name"`
 	Postings      []TrashPostingView `json:"postings"`
+	CanRestore    bool               `json:"can_restore,omitempty"`
 }
 
 // ListDeletedTransactions 列出回收站（已软删交易），按删除时间倒序。
-func (s *Service) ListDeletedTransactions(ledgerID int64) ([]TrashItemView, error) {
+// viewer 仍可查看回收站（GET 放行），can_restore=false 仅隐藏恢复按钮。
+func (s *Service) ListDeletedTransactions(ledgerID, userID int64) ([]TrashItemView, error) {
+	role, _ := s.repo.RoleOf(ledgerID, userID)
+	canRestore := role == domain.RoleOwner || role == domain.RoleEditor
 	txns, err := s.repo.ListDeletedTransactions(ledgerID)
 	if err != nil {
 		return nil, err
@@ -288,6 +328,7 @@ func (s *Service) ListDeletedTransactions(ledgerID int64) ([]TrashItemView, erro
 			DeletedAt:     t.DeletedAt,
 			CreatedByName: t.CreatedByName,
 			Postings:      make([]TrashPostingView, 0, len(t.Postings)),
+			CanRestore:    canRestore,
 		}
 		for _, p := range t.Postings {
 			display := p.AccountDisplay
@@ -310,7 +351,15 @@ func (s *Service) ListDeletedTransactions(ledgerID int64) ([]TrashItemView, erro
 //
 // 恢复前校验引用账户：已关闭账户不允许再被记账引用，若交易的任一科目已关闭，
 // 直接拒绝并告知是哪个账户，而不是恢复出一条账本内不可再创建的脏数据。
-func (s *Service) RestoreTransaction(ledgerID int64, uuid string) error {
+// userID 用于服务端角色复核（viewer 只读，AC-5.8；与 middleware 双保险）。
+func (s *Service) RestoreTransaction(ledgerID, userID int64, uuid string) error {
+	role, err := s.LedgerRole(userID, ledgerID)
+	if err != nil {
+		return err
+	}
+	if role == "" || role == domain.RoleViewer {
+		return domain.ErrForbidden
+	}
 	closed, err := s.repo.ClosedAccountsOfTransaction(ledgerID, uuid)
 	if err != nil {
 		return err
@@ -328,8 +377,11 @@ func (s *Service) RestoreTransaction(ledgerID int64, uuid string) error {
 	return nil
 }
 
-// DeleteTransaction 软删一笔交易。
-func (s *Service) DeleteTransaction(ledgerID int64, uuid string) error {
+// DeleteTransaction 软删一笔交易（userID 按 design §3.2 统一签名传入；
+// 删除为账本级写操作、无 creator 限制，viewer 写拦截由 middleware 承担，
+// 行为与 S6 前一致）。
+func (s *Service) DeleteTransaction(ledgerID, userID int64, uuid string) error {
+	_ = userID
 	deleted, err := s.repo.SoftDeleteTransaction(ledgerID, uuid)
 	if err != nil {
 		return err
@@ -338,4 +390,113 @@ func (s *Service) DeleteTransaction(ledgerID int64, uuid string) error {
 		return domain.ErrNotFound
 	}
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// 修改交易（0.6.0 S6 / T13：修改 = 冲正 + 新建，绝不原地改）
+// ---------------------------------------------------------------------------
+
+// TxnUpdateInput 是修改交易的请求载荷，按在线 create 契约镜像
+// （date / flag / description / tags / postings），design 未另行定义。
+// 禁止修改 uuid / created_by / ledger_id（AC-5.6）：三者由服务端掌控，
+// 新交易 uuid 由服务端新生成、created_by 固定为当前请求用户。
+type TxnUpdateInput struct {
+	Date        string
+	Flag        string
+	Description string
+	Tags        []string
+	Postings    []PostingInput
+}
+
+// TransactionUpdated 是修改交易的响应（三 uuid，无 version 字段，AC-5.1）。
+type TransactionUpdated struct {
+	OriginalUUID string `json:"original_uuid"`
+	ReversalUUID string `json:"reversal_uuid"`
+	NewUUID      string `json:"new_uuid"`
+}
+
+// UpdateTransaction 修改一笔交易：判定（已冲正 → 不可编辑 → 权限）通过后，
+// 在单一大事务内「冲正原交易 + 新建改后交易」（AC-5.1，design §4.1）。
+//
+// 判定顺序（D-15：已冲正判定优先于角色）：
+//  1. reversed_by 非空 → 409 txn_already_reversed（响应不带 latest_uuid——无版本链）；
+//  2. 期初 / 校准 / 冲正交易 → 409 txn_not_editable（走各自专用端点）；
+//  3. 权限：owner 改全账本；created_by==uid 且非 viewer 可改；否则 403
+//     txn_edit_forbidden（created_by=0 由 owner 兜底；服务端独立校验防绕过）。
+//
+// 幂等兜底（AC-5.6）：不落 edit_key / 不复用 client_request_id，重试命中的
+// 请求会因原交易已处于冲正态直接 409 txn_already_reversed，绝不产生第二套冲正。
+func (s *Service) UpdateTransaction(
+	ledgerID, userID int64, txnUUID string, in TxnUpdateInput,
+) (TransactionUpdated, error) {
+	orig, err := s.repo.TransactionByUUID(ledgerID, txnUUID)
+	if err != nil {
+		return TransactionUpdated{}, err // ErrNotFound → 404
+	}
+
+	// 1) D-15：已冲正判定优先于角色。
+	if orig.ReversedBy != "" {
+		return TransactionUpdated{}, domain.Codedf(domain.ErrConflict, domain.CodeTxnAlreadyReversed,
+			"该交易已被冲正，请修改最新版本")
+	}
+	// 2) 期初 / 校准 / 冲正交易走专用端点。
+	if orig.OpeningAccountUUID != "" || orig.BalanceKey != "" || orig.ReversalOf != "" {
+		return TransactionUpdated{}, domain.Codedf(domain.ErrConflict, domain.CodeTxnNotEditable,
+			"期初 / 冲正 / 校准交易不能修改")
+	}
+	// 3) 权限（服务端独立校验，前端显隐不是安全边界，AC-5.3）。
+	role, err := s.LedgerRole(userID, ledgerID)
+	if err != nil {
+		return TransactionUpdated{}, err
+	}
+	if role == "" || role == domain.RoleViewer {
+		return TransactionUpdated{}, domain.Codedf(domain.ErrForbidden, domain.CodeTxnEditForbidden,
+			"无权修改该交易")
+	}
+	if role != domain.RoleOwner && orig.CreatedBy != userID {
+		return TransactionUpdated{}, domain.Codedf(domain.ErrForbidden, domain.CodeTxnEditForbidden,
+			"只能修改自己记的账，或由账本 owner 修改")
+	}
+
+	// 4) 载荷校验（与在线创建同一口径，N-02）。
+	if err := s.validateTxnPayload(ledgerID, in.Postings, in.Tags); err != nil {
+		return TransactionUpdated{}, err
+	}
+	date := strings.TrimSpace(in.Date)
+	if date == "" {
+		date = time.Now().Format("2006-01-02")
+	}
+	flag := in.Flag
+	if flag == "" {
+		flag = "*"
+	}
+	postings := make([]domain.Posting, 0, len(in.Postings))
+	for i, p := range in.Postings {
+		postings = append(postings, domain.Posting{
+			AccountID: p.AccountID,
+			Commodity: p.Commodity,
+			Amount:    p.Amount,
+			Position:  i,
+		})
+	}
+
+	res, err := s.repo.UpdateTransaction(repository.TransactionUpdateInput{
+		LedgerID:     ledgerID,
+		OriginalUUID: txnUUID,
+		NewUUID:      uuid.NewString(),
+		Date:         date,
+		Flag:         flag,
+		Description:  in.Description,
+		Tags:         append([]string(nil), in.Tags...),
+		Postings:     postings,
+		CreatedBy:    userID,
+	})
+	if err != nil {
+		return TransactionUpdated{}, err
+	}
+	return TransactionUpdated{
+		OriginalUUID: res.OriginalUUID,
+		ReversalUUID: res.ReversalUUID,
+		NewUUID:      res.NewUUID,
+	}, nil
 }

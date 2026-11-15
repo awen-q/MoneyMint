@@ -441,6 +441,12 @@ export interface TransactionView {
   /** 标签（迁移 005 起后端已持久化；报表 #tag 下钻用，旧响应可能缺失）。 */
   tags?: string[]
   postings: PostingView[]
+  /** 非空 = 已被冲正（失效原交易；0.6.0 S6，徽章数据源）。 */
+  reversed_by?: string
+  /** 非空 = 本身是冲正交易（0.6.0 S6）。 */
+  reversal_of?: string
+  /** 服务端按请求用户计算的编辑许可（0.6.0 S6 AC-5.2；false 时省略）。 */
+  can_edit?: boolean
 }
 
 /** GET /api/transactions */
@@ -469,6 +475,13 @@ export interface TransactionCreated {
   postings: number
 }
 
+/** PATCH /api/transactions/{uuid} 响应（0.6.0 S6：修改 = 冲正 + 新建；无 version）。 */
+export interface TransactionUpdated {
+  original_uuid: TransactionUUID
+  reversal_uuid: TransactionUUID
+  new_uuid: TransactionUUID
+}
+
 /** 回收站分录视图（account 为 Beancount 全名，account_display 为展示名）。 */
 export interface TrashPostingView {
   account: string
@@ -487,6 +500,8 @@ export interface TrashItemView {
   deleted_at: ISODateTime
   created_by_name: string
   postings: TrashPostingView[]
+  /** 服务端按请求用户角色计算（viewer false；0.6.0 S6 AC-5.8，false 时省略）。 */
+  can_restore?: boolean
 }
 
 /** GET /api/transactions/trash */

@@ -189,7 +189,7 @@ func TestAccountTransactionBalanceExport(t *testing.T) {
 	}
 
 	// 列表接口
-	txns, err := svc.ListTransactions(lid)
+	txns, err := svc.ListTransactions(lid, 1)
 	if err != nil {
 		t.Fatalf("list txns: %v", err)
 	}
@@ -247,13 +247,13 @@ func TestDeleteSemantics(t *testing.T) {
 	}, 1)
 
 	// 删除交易（幂等）
-	if err := svc.DeleteTransaction(lid, created.UUID); err != nil {
+	if err := svc.DeleteTransaction(lid, 1, created.UUID); err != nil {
 		t.Fatalf("delete txn: %v", err)
 	}
-	if err := svc.DeleteTransaction(lid, created.UUID); !errors.Is(err, domain.ErrNotFound) {
+	if err := svc.DeleteTransaction(lid, 1, created.UUID); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("重复删除应返回 ErrNotFound，实际 %v", err)
 	}
-	if txns, _ := svc.ListTransactions(lid); len(txns) != 0 {
+	if txns, _ := svc.ListTransactions(lid, 1); len(txns) != 0 {
 		t.Fatalf("删除后交易应为 0，实际 %d", len(txns))
 	}
 
@@ -271,7 +271,7 @@ func TestDeleteSemantics(t *testing.T) {
 		t.Fatalf("close account: %v", err)
 	}
 	// close 后引用交易应保留（不再连带软删）
-	if txns, _ := svc.ListTransactions(lid); len(txns) != 2 {
+	if txns, _ := svc.ListTransactions(lid, 1); len(txns) != 2 {
 		t.Fatalf("关账户后其引用交易应保留（close 语义），实际 %d 笔", len(txns))
 	}
 	// 已关闭账户默认列表不出现，include_closed 才出现且带 close_date
@@ -378,14 +378,14 @@ func TestTrashRestore(t *testing.T) {
 	}, 1)
 
 	// 未删除时回收站为空
-	if trash, err := svc.ListDeletedTransactions(lid); err != nil || len(trash) != 0 {
+	if trash, err := svc.ListDeletedTransactions(lid, 1); err != nil || len(trash) != 0 {
 		t.Fatalf("未删除时回收站应为空，实际 %d（err=%v）", len(trash), err)
 	}
 
-	if err := svc.DeleteTransaction(lid, created.UUID); err != nil {
+	if err := svc.DeleteTransaction(lid, 1, created.UUID); err != nil {
 		t.Fatalf("delete txn: %v", err)
 	}
-	trash, err := svc.ListDeletedTransactions(lid)
+	trash, err := svc.ListDeletedTransactions(lid, 1)
 	if err != nil {
 		t.Fatalf("list trash: %v", err)
 	}
@@ -398,21 +398,21 @@ func TestTrashRestore(t *testing.T) {
 	if len(trash[0].Postings) != 2 {
 		t.Fatalf("回收站条目应保留分录，实际 %d 条", len(trash[0].Postings))
 	}
-	if txns, _ := svc.ListTransactions(lid); len(txns) != 0 {
+	if txns, _ := svc.ListTransactions(lid, 1); len(txns) != 0 {
 		t.Fatalf("已删除交易不应出现在正常列表，实际 %d", len(txns))
 	}
 
 	// 恢复：回到正常列表、回收站清空、重复恢复幂等返回 NotFound
-	if err := svc.RestoreTransaction(lid, created.UUID); err != nil {
+	if err := svc.RestoreTransaction(lid, 1, created.UUID); err != nil {
 		t.Fatalf("restore txn: %v", err)
 	}
-	if txns, _ := svc.ListTransactions(lid); len(txns) != 1 {
+	if txns, _ := svc.ListTransactions(lid, 1); len(txns) != 1 {
 		t.Fatalf("恢复后正常列表应有 1 条，实际 %d", len(txns))
 	}
-	if trash, _ := svc.ListDeletedTransactions(lid); len(trash) != 0 {
+	if trash, _ := svc.ListDeletedTransactions(lid, 1); len(trash) != 0 {
 		t.Fatalf("恢复后回收站应为空，实际 %d", len(trash))
 	}
-	if err := svc.RestoreTransaction(lid, created.UUID); !errors.Is(err, domain.ErrNotFound) {
+	if err := svc.RestoreTransaction(lid, 1, created.UUID); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("重复恢复应返回 ErrNotFound，实际 %v", err)
 	}
 
@@ -433,13 +433,13 @@ func TestTrashRestore(t *testing.T) {
 	}
 
 	// 引用已关闭账户的交易不允许恢复（否则账本内出现不可再创建的脏数据）
-	if err := svc.DeleteTransaction(lid, created.UUID); err != nil {
+	if err := svc.DeleteTransaction(lid, 1, created.UUID); err != nil {
 		t.Fatalf("delete again: %v", err)
 	}
 	if err := svc.DeleteAccount(lid, cash.UUID); err != nil {
 		t.Fatalf("close account: %v", err)
 	}
-	err = svc.RestoreTransaction(lid, created.UUID)
+	err = svc.RestoreTransaction(lid, 1, created.UUID)
 	if err == nil {
 		t.Fatalf("引用已关闭账户的交易不应允许恢复")
 	}
@@ -541,7 +541,7 @@ func TestTransactionCreatedByName(t *testing.T) {
 	}
 
 	// GET /api/transactions 视图也应含 created_by_name
-	views, err := svc.ListTransactions(lid)
+	views, err := svc.ListTransactions(lid, 1)
 	if err != nil {
 		t.Fatalf("list transactions: %v", err)
 	}
@@ -772,7 +772,7 @@ func TestCreateTransactionRejectsClosedAccount(t *testing.T) {
 	}
 
 	// 关户校验必须拦在落库之前：交易不得写入。
-	txns, err := svc.ListTransactions(lid)
+	txns, err := svc.ListTransactions(lid, 1)
 	if err != nil {
 		t.Fatalf("list txns: %v", err)
 	}

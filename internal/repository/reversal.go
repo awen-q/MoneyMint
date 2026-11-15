@@ -126,6 +126,9 @@ type ReversalMarkInput struct {
 	// AppendSyncLog 控制是否在同一事务内追加 sync_log op=create。
 	// 期初与 S4 校准两条路径均为 true；S6 可自行编排 sync_log。
 	AppendSyncLog bool
+	// ConflictCode 覆盖 CAS 竞态（RowsAffected==0）时的错误码；
+	// 空串保持既有 opening_conflict（期初 / 校准路径逐字不变），S6 传 txn_already_reversed。
+	ConflictCode string
 }
 
 // markReversedTx 把原交易标记为已冲正（CAS 并发保护），并在同一事务内
@@ -144,7 +147,11 @@ func markReversedTx(tx execer, in ReversalMarkInput) error {
 		return fmt.Errorf("%s: %w", in.ExecErrorLabel, err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return domain.Codedf(domain.ErrConflict, domain.CodeOpeningConflict, "%s", in.ConflictMessage)
+		code := in.ConflictCode
+		if code == "" {
+			code = domain.CodeOpeningConflict
+		}
+		return domain.Codedf(domain.ErrConflict, code, "%s", in.ConflictMessage)
 	}
 	if in.AppendSyncLog {
 		if _, err := appendSyncLogOn(tx, in.LedgerID, domain.EntityTransaction, in.ReversalUUID, domain.OpCreate); err != nil {

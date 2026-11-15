@@ -16,7 +16,8 @@ func (h *Handler) HandleListTransactions(w http.ResponseWriter, r *http.Request)
 		writeError(w, domain.ErrForbidden)
 		return
 	}
-	txns, err := h.svc.ListTransactions(ledgerID)
+	uid, _ := auth.UserID(r.Context())
+	txns, err := h.svc.ListTransactions(ledgerID, uid)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -79,6 +80,61 @@ func (h *Handler) HandleCreateTransaction(w http.ResponseWriter, r *http.Request
 	writeJSON(w, status, created)
 }
 
+// HandleUpdateTransaction 修改交易（0.6.0 S6，PATCH）：修改 = 冲正 + 新建，绝不原地改。
+//
+// 载荷与在线 create 镜像：{date, flag, description, tags, postings}（postings 用
+// account_id）。响应 {original_uuid, reversal_uuid, new_uuid}（无 version——D-15
+// 砍掉版本链）。判定与权限在 service 层独立校验（AC-5.3）：
+// 已冲正 409 txn_already_reversed、期初/校准/冲正 409 txn_not_editable、
+// viewer/非本人 403 txn_edit_forbidden。
+func (h *Handler) HandleUpdateTransaction(w http.ResponseWriter, r *http.Request) {
+	ledgerID, ok := auth.LedgerID(r.Context())
+	if !ok {
+		writeError(w, domain.ErrForbidden)
+		return
+	}
+	uid, ok := auth.UserID(r.Context())
+	if !ok {
+		writeError(w, domain.ErrUnauthorized)
+		return
+	}
+	var req struct {
+		Date        string   `json:"date"`
+		Flag        string   `json:"flag"`
+		Description string   `json:"description"`
+		Tags        []string `json:"tags"`
+		Postings    []struct {
+			AccountID int64  `json:"account_id"`
+			Commodity string `json:"commodity"`
+			Amount    string `json:"amount"`
+		} `json:"postings"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, err)
+		return
+	}
+	postings := make([]service.PostingInput, 0, len(req.Postings))
+	for _, p := range req.Postings {
+		postings = append(postings, service.PostingInput{
+			AccountID: p.AccountID,
+			Commodity: p.Commodity,
+			Amount:    p.Amount,
+		})
+	}
+	res, err := h.svc.UpdateTransaction(ledgerID, uid, r.PathValue("uuid"), service.TxnUpdateInput{
+		Date:        req.Date,
+		Flag:        req.Flag,
+		Description: req.Description,
+		Tags:        req.Tags,
+		Postings:    postings,
+	})
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
 // HandleListTrash 列出回收站内的交易（已软删，按删除时间倒序）。
 func (h *Handler) HandleListTrash(w http.ResponseWriter, r *http.Request) {
 	ledgerID, ok := auth.LedgerID(r.Context())
@@ -86,7 +142,8 @@ func (h *Handler) HandleListTrash(w http.ResponseWriter, r *http.Request) {
 		writeError(w, domain.ErrForbidden)
 		return
 	}
-	items, err := h.svc.ListDeletedTransactions(ledgerID)
+	uid, _ := auth.UserID(r.Context())
+	items, err := h.svc.ListDeletedTransactions(ledgerID, uid)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -101,7 +158,8 @@ func (h *Handler) HandleRestoreTransaction(w http.ResponseWriter, r *http.Reques
 		writeError(w, domain.ErrForbidden)
 		return
 	}
-	if err := h.svc.RestoreTransaction(ledgerID, r.PathValue("uuid")); err != nil {
+	uid, _ := auth.UserID(r.Context())
+	if err := h.svc.RestoreTransaction(ledgerID, uid, r.PathValue("uuid")); err != nil {
 		if err == domain.ErrNotFound {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "交易不存在或未被删除"})
 			return
@@ -119,7 +177,8 @@ func (h *Handler) HandleDeleteTransaction(w http.ResponseWriter, r *http.Request
 		writeError(w, domain.ErrForbidden)
 		return
 	}
-	if err := h.svc.DeleteTransaction(ledgerID, r.PathValue("uuid")); err != nil {
+	uid, _ := auth.UserID(r.Context())
+	if err := h.svc.DeleteTransaction(ledgerID, uid, r.PathValue("uuid")); err != nil {
 		if err == domain.ErrNotFound {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "交易不存在或已删除"})
 			return

@@ -1,24 +1,30 @@
 <script setup lang="ts">
 /**
- * P-05 交易详情（批 2）
+ * P-05 交易详情（批 2；0.6.0 S6 增加编辑入口）
  *
  * - 通过 query `id` 从流水列表定位交易，展示全部分录（复式可视性）；
  * - 软删走 `DELETE /api/transactions/{uuid}`（列表已透出 uuid），
- *   删除前二次确认，删除后可在回收站恢复。
+ *   删除前二次确认，删除后可在回收站恢复；
+ * - 编辑入口（AC-5.4）：不按 navigator.onLine 显隐——在线 GET 成功 → 按
+ *   服务端 can_edit；离线 → 按钮保留、禁用态 + 固定文案「修改需联网」；
+ *   已冲正 → 固定文案「该交易已被冲正，请修改最新版本」（不复用离线文案）；
+ *   修改走 RecordSheet 编辑态（PATCH 冲正 + 新建），仅在线。
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { accountApi, transactionApi } from '@/api/client'
 import { ApiError } from '@/api/errors'
 import type { AccountView, TransactionView } from '@/api/types'
 import { accountLabel, displayEntryOf, transactionKind, transferRoute } from '@/core/record'
+import { useRecordSheetStore } from '@/stores/recordSheet'
 import { useSessionStore } from '@/stores/session'
 import MoneyText from '@/components/MoneyText.vue'
 
 const route = useRoute()
 const router = useRouter()
 const session = useSessionStore()
+const sheet = useRecordSheetStore()
 
 const accounts = ref<AccountView[]>([])
 const transactions = ref<TransactionView[]>([])
@@ -128,6 +134,62 @@ function goBack(): void {
   void router.back()
 }
 
+// ---------- 0.6.0 S6 编辑入口（AC-5.4 / AC-5.2） ----------
+
+/** 在线状态：仅用于禁用态与固定文案，绝不用于隐藏编辑入口。 */
+const online = ref(true)
+
+function syncOnline(): void {
+  online.value = navigator.onLine
+}
+
+const editState = computed<'ready' | 'reversed' | 'offline' | 'forbidden'>(() => {
+  const t = txn.value
+  if (t !== null && (t.reversed_by ?? '') !== '') {
+    return 'reversed' // D-15：已冲正判定优先于角色，文案固定
+  }
+  if (!online.value) {
+    return 'offline'
+  }
+  return t !== null && t.can_edit === true ? 'ready' : 'forbidden'
+})
+
+const editDisabled = computed(() => editState.value !== 'ready')
+
+const editHint = computed<string>(() => {
+  switch (editState.value) {
+    case 'reversed':
+      // 固定文案（AC-5.4）：不得复用离线文案。
+      return '该交易已被冲正，请修改最新版本'
+    case 'offline':
+      // 固定文案（AC-5.4）。
+      return '修改需联网'
+    case 'forbidden':
+      return '当前账号无权修改该交易'
+    default:
+      return '修改 = 冲正 + 新建：保存后原交易保留，账目以新交易为准'
+  }
+})
+
+function onEdit(): void {
+  if (txn.value === null || editDisabled.value) {
+    return
+  }
+  sheet.openEdit(txn.value)
+}
+
+onMounted(() => {
+  syncOnline()
+  window.addEventListener('online', syncOnline)
+  window.addEventListener('offline', syncOnline)
+  void load()
+})
+
+onUnmounted(() => {
+  window.removeEventListener('online', syncOnline)
+  window.removeEventListener('offline', syncOnline)
+})
+
 watch(
   () => session.ledgerId,
   () => {
@@ -137,9 +199,13 @@ watch(
   },
 )
 
-onMounted(() => {
-  void load()
-})
+// 编辑保存成功后刷新详情（RecordSheet 编辑态经 store.notifyChanged 推进 savedEpoch）。
+watch(
+  () => sheet.savedEpoch,
+  () => {
+    void load()
+  },
+)
 </script>
 
 <template>
@@ -156,6 +222,8 @@ onMounted(() => {
           :signed="kind !== 'transfer'"
         />
         <div class="detail__meta">
+          <span v-if="(txn.reversed_by ?? '') !== ''" class="detail__badge">已冲正</span>
+          <span v-else-if="(txn.reversal_of ?? '') !== ''" class="detail__badge">冲正</span>
           <span v-if="kind === 'transfer'" class="detail__badge">转账</span>
           <span v-else-if="kind === 'opening'" class="detail__badge">期初</span>
           {{ txn.description }} · {{ meta }}
@@ -181,6 +249,17 @@ onMounted(() => {
             <MoneyText :amount="posting.amount" :commodity="posting.commodity" size="sm" />
           </li>
         </ul>
+      </div>
+
+      <!-- 0.6.0 S6 编辑入口（AC-5.4）：按钮保留、禁用态 + 固定文案，绝不按在线状态隐藏。 -->
+      <div class="fb-card detail__card">
+        <button
+          type="button"
+          class="detail__edit"
+          :disabled="editDisabled"
+          @click="onEdit"
+        >修改这笔交易</button>
+        <p class="detail__hint" :class="{ 'detail__hint--warn': editDisabled }">{{ editHint }}</p>
       </div>
 
       <div class="fb-card detail__card">
@@ -318,6 +397,29 @@ onMounted(() => {
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
+}
+
+/* 0.6.0 S6：编辑按钮与禁用文案（修改 = 冲正 + 新建）。 */
+.detail__edit {
+  width: 100%;
+  height: 44px;
+  border: none;
+  border-radius: var(--fb-radius-input);
+  background: var(--fb-primary, #4c6ef5);
+  color: var(--fb-white);
+  font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.detail__edit:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.detail__hint--warn {
+  color: var(--fb-warn);
 }
 
 .detail__delete:disabled {

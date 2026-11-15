@@ -19,7 +19,7 @@ import {
   type TransactionCreateResult,
 } from '@/api/client'
 import { ApiError } from '@/api/errors'
-import type { AccountView, CreateTransactionRequest, TxnFlag } from '@/api/types'
+import type { AccountView, CreateTransactionRequest, TransactionView, TxnFlag } from '@/api/types'
 import { currencySymbol, formatMoney, Money } from '@/core/Money'
 import {
   accountLabel,
@@ -56,6 +56,8 @@ const props = withDefaults(
 const emit = defineEmits<{
   (event: 'close'): void
   (event: 'saved', result: TransactionCreateResult): void
+  /** 0.6.0 S6：编辑保存成功（修改 = 冲正 + 新建），参数为被改交易 uuid。 */
+  (event: 'updated', originalUuid: string): void
 }>()
 
 const session = useSessionStore()
@@ -70,6 +72,29 @@ const submitError = ref('')
 const notice = ref('')
 const showSuccess = ref(false)
 const lastResult = ref<TransactionCreateResult | null>(null)
+
+// ---------- 0.6.0 S6：编辑态（修改 = 冲正 + 新建） ----------
+/** 非空即编辑态（store.openEdit 注入）；新建入口 open() 会清空。 */
+const editingTxn = computed<TransactionView | null>(() => sheet.editingTxn)
+/** 非空即编辑态（store.openEdit 注入）；新建入口 open() 会清空。
+ *  用 != null 宽松判定：旧测试替身 / 异常环境下 editingTxn 为 undefined 时按新建态处理。 */
+const isEditing = computed(() => editingTxn.value != null)
+
+/** 进入编辑态后，待账户列表就绪即预填（日期 / 描述 / 标签 / 分录走高级双录）。 */
+function prefillFromEditTxn(): void {
+  const txn = editingTxn.value
+  if (txn === null) {
+    return
+  }
+  form.date = txn.date
+  form.description = txn.description
+  form.tags = Array.isArray(txn.tags) ? txn.tags.slice() : []
+  form.advancedPostings = txn.postings.map((posting) => ({
+    accountId: posting.account_id,
+    amount: posting.amount,
+  }))
+  advancedMode.value = true
+}
 
 const form = reactive<RecordForm>({
   kind: 'expense',
@@ -340,6 +365,12 @@ async function loadAccounts(): Promise<void> {
   try {
     const res = await accountApi.list()
     accounts.value = Array.isArray(res.accounts) ? res.accounts : []
+    if (isEditing.value) {
+      // 编辑态：以被改交易为准预填，不做新建默认预选（keep 原分录账户）。
+      prefillFromEditTxn()
+      loading.value = false
+      return
+    }
     applyDefaultAccounts()
     if (form.fundAccountId === null && fundAccounts.value.length > 0) {
       form.fundAccountId = fundAccounts.value[0].id
@@ -686,6 +717,34 @@ async function submit(continueAfter: boolean): Promise<void> {
     })),
   }
   const payloadJson = JSON.stringify(payload)
+
+  // ---------- 编辑态（0.6.0 S6）：PATCH 冲正+新建，仅在线、无幂等键、无离线兜底 ----------
+  if (isEditing.value) {
+    const target = editingTxn.value
+    if (target === null) {
+      submitError.value = '编辑会话已失效，请重新进入'
+      return
+    }
+    submitting.value = true
+    try {
+      await transactionApi.update(target.uuid, payload)
+      sheet.notifyChanged()
+      emit('updated', target.uuid)
+      showSuccess.value = true
+      notice.value = '修改已保存：原交易已冲正，账目以新交易为准'
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'network_error') {
+        // AC-5.4 固定文案：修改仅在线，绝不复用离线记账兜底文案。
+        submitError.value = '修改需联网，请恢复网络后重试'
+      } else {
+        submitError.value = err instanceof ApiError ? err.message : '修改失败，请稍后重试'
+      }
+    } finally {
+      submitting.value = false
+    }
+    return
+  }
+
   if (
     idempotencyKey === null ||
     (lastPayloadJson !== '' && lastPayloadJson !== payloadJson)
@@ -804,11 +863,12 @@ onMounted(() => {
   void loadAccounts()
 })
 
-// 草稿按账本命名空间暂存，刷新可恢复（AC-32）。
+// 草稿按账本命名空间暂存，刷新可恢复（AC-32）。编辑态不写草稿：
+// 编辑内容属于既有交易，覆盖新建草稿会造成数据串味。
 watch(
   () => JSON.stringify(snapshot()),
   () => {
-    if (session.ledgerId !== null && !showSuccess.value) {
+    if (session.ledgerId !== null && !showSuccess.value && !isEditing.value) {
       writeDraft(session.ledgerId, snapshot())
     }
   },
@@ -830,9 +890,14 @@ watch(
   <div class="rs-mask" :class="containerClass" @click.self="close">
     <section class="rs-panel" role="dialog" aria-modal="true" aria-label="记一笔">
       <header class="rs-head">
-        <h3>记一笔</h3>
+        <h3>{{ isEditing ? '修改交易' : '记一笔' }}</h3>
         <button class="rs-close" type="button" aria-label="关闭" @click="close">✕</button>
       </header>
+
+      <!-- 0.6.0 S6 编辑态提示：修改 = 冲正 + 新建（服务端三步事务），仅在线。 -->
+      <p v-if="isEditing && !showSuccess" class="rs-editbanner" role="status">
+        正在修改「{{ editingTxn?.description }}」：保存后原交易将被冲正，账目以新交易为准（需联网）。
+      </p>
 
       <!-- 保存结果：返回 / 再记一笔 / 复制上一笔（AC-14） -->
       <div v-if="showSuccess" class="rs-success">
@@ -845,8 +910,8 @@ watch(
         </p>
         <div class="rs-success__actions">
           <button class="fb-btn-ghost" type="button" @click="close">返回</button>
-          <button class="fb-btn-ghost" type="button" @click="copyLast">复制上一笔</button>
-          <button class="fb-btn-primary" type="button" @click="again">再记一笔</button>
+          <button v-if="!isEditing" class="fb-btn-ghost" type="button" @click="copyLast">复制上一笔</button>
+          <button v-if="!isEditing" class="fb-btn-primary" type="button" @click="again">再记一笔</button>
         </div>
       </div>
 
@@ -1074,6 +1139,17 @@ watch(
   margin: 0;
   font-size: 16px;
   font-weight: 700;
+}
+
+/* 0.6.0 S6 编辑态提示条：修改 = 冲正 + 新建（仅在线）。 */
+.rs-editbanner {
+  margin: 0;
+  padding: 8px 18px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--fb-warn);
+  background: var(--fb-warn-soft);
+  border-bottom: 1px solid var(--fb-line);
 }
 
 .rs-close {

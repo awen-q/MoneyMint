@@ -39,6 +39,19 @@ vi.mock('@/stores/privacy', () => ({
   usePrivacyStore: () => ({ enabled: false }),
 }))
 
+// 0.6.0 S6：详情页新增编辑入口（recordSheet 编辑态）；基线用例不触达，替身即可。
+vi.mock('@/stores/recordSheet', () => ({
+  useRecordSheetStore: () => ({
+    editingTxn: null,
+    savedEpoch: 0,
+    openEdit: vi.fn(),
+    open: vi.fn(),
+    close: vi.fn(),
+    notifySaved: vi.fn(),
+    notifyChanged: vi.fn(),
+  }),
+}))
+
 const ACCOUNTS = {
   accounts: [
     { id: 1, uuid: 'a-1', name: 'Assets:Cash', display_name: '招商储蓄', type: 'Assets', open_date: '2026-01-01', sort_order: 0 },

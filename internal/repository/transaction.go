@@ -32,8 +32,8 @@ func (s *Store) listTransactions(ledgerID int64, deleted bool) ([]domain.Transac
 		order = "t.deleted_at DESC, t.id DESC"
 	}
 	rows, err := s.db.Query(
-		`SELECT t.id, t.uuid, t.date, t.flag, t.description, t.tags, t.created_by,
-		        u.display_name AS created_by_name, t.deleted_at,
+		`SELECT t.id, t.uuid, t.date, t.flag, t.description, t.tags, COALESCE(t.created_by, 0),
+		        COALESCE(u.display_name, '') AS created_by_name, t.deleted_at,
 		        COALESCE(t.reversal_of, ''), COALESCE(t.opening_account_uuid, ''),
 		        COALESCE(t.opening_version, 0), COALESCE(t.opening_key, ''),
 		        COALESCE(t.reversed_by, '')
@@ -130,22 +130,174 @@ func (s *Store) MarkTransactionReversed(ledgerID int64, uuid, reversalUUID strin
 	return n > 0, nil
 }
 
+// TransactionUpdateInput 是修改交易（冲正 + 新建）的落库输入。
+// 权限与「不可编辑」判定在 service 层完成；本方法在同一事务内做 CAS 终审。
+type TransactionUpdateInput struct {
+	LedgerID     int64
+	OriginalUUID string
+	NewUUID      string // service 预生成（新交易绝不复用原 uuid）
+	Date         string
+	Flag         string
+	Description  string
+	Tags         []string
+	Postings     []domain.Posting
+	CreatedBy    int64
+}
+
+// TransactionUpdateResult 是修改交易的落库结果（三 uuid，无 version 字段）。
+type TransactionUpdateResult struct {
+	OriginalUUID string
+	ReversalUUID string
+	NewUUID      string
+}
+
+// UpdateTransaction 修改交易（0.6.0 S6，design §4.1）：单一大事务内完成
+//
+//  1. 事务内重读原交易并 CAS 终审（已冲正 → 409 txn_already_reversed）；
+//  2. 内核生成冲正交易（分录逐条取负、reversal_of=原 uuid）→ sync_log op=create；
+//  3. UPDATE 原交易 SET reversed_by（保留不软删，导出净效果=改后交易）→ sync_log op=update；
+//  4. 新建改后交易（新 uuid、普通交易、created_by=uid）→ sync_log op=create。
+//
+// 任一步失败整体回滚（AC-5.1）。原交易不软删（export 以 deleted_at IS NULL 过滤，
+// 软删会破坏净效果）。禁止复用 client_request_id（AGENTS §7：幂等由「重试命中
+// 已冲正判定 → 409」兜底），新交易 clientRequestID 传空串。
+func (s *Store) UpdateTransaction(in TransactionUpdateInput) (*TransactionUpdateResult, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// 1) 事务内重读原交易（并发终审：service 判定后到本事务之间原交易可能被冲正）。
+	var origID int64
+	var origDate, origDesc, reversedBy, openingUUID, balanceKey, reversalOf string
+	var origTags sql.NullString
+	err = tx.QueryRow(
+		`SELECT id, date, description, tags,
+		        COALESCE(reversed_by, ''), COALESCE(opening_account_uuid, ''),
+		        COALESCE(balance_key, ''), COALESCE(reversal_of, '')
+		 FROM transactions
+		 WHERE ledger_id=? AND uuid=? AND deleted_at IS NULL`,
+		in.LedgerID, in.OriginalUUID,
+	).Scan(&origID, &origDate, &origDesc, &origTags,
+		&reversedBy, &openingUUID, &balanceKey, &reversalOf)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, domain.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if reversedBy != "" {
+		return nil, domain.Codedf(domain.ErrConflict, domain.CodeTxnAlreadyReversed,
+			"该交易已被冲正，请修改最新版本")
+	}
+	// service 已拦截，这里兜底：期初 / 校准 / 冲正交易一律不可编辑。
+	if openingUUID != "" || balanceKey != "" || reversalOf != "" {
+		return nil, domain.Codedf(domain.ErrConflict, domain.CodeTxnNotEditable,
+			"期初 / 冲正 / 校准交易不能修改")
+	}
+
+	// 2) 冲正交易（S3 内核）：多币种精度映射由账本币种表提供，缺省 2 位。
+	posts, err := loadAllPostingsOn(tx, origID)
+	if err != nil {
+		return nil, err
+	}
+	precMap, err := commodityPrecisionMapOn(tx, in.LedgerID)
+	if err != nil {
+		return nil, err
+	}
+	revUUID, _, err := insertReversalTxnTx(tx, in.LedgerID, ReversalSource{
+		ID:                   origID,
+		UUID:                 in.OriginalUUID,
+		Date:                 origDate,
+		Postings:             posts,
+		Description:          "冲正: " + origDesc,
+		PrecisionByCommodity: precMap,
+	})
+	if err != nil {
+		return nil, err
+	}
+	// 冲正交易的 create 事件：由本方法显式写入（内核 markReversedTx 关闭 AppendSyncLog）。
+	if _, err := appendSyncLogOn(tx, in.LedgerID, domain.EntityTransaction, revUUID, domain.OpCreate); err != nil {
+		return nil, err
+	}
+
+	// 3) 标记原交易已冲正（CAS；保留不软删）。sync_log op=update 指向原交易 uuid。
+	if err := markReversedTx(tx, ReversalMarkInput{
+		LedgerID:        in.LedgerID,
+		SourceID:        origID,
+		ReversalUUID:    revUUID,
+		ExecErrorLabel:  "标记原交易已冲正",
+		ConflictMessage: "该交易已被冲正，请修改最新版本",
+		ConflictCode:    domain.CodeTxnAlreadyReversed,
+		AppendSyncLog:   false,
+	}); err != nil {
+		return nil, err
+	}
+	if _, err := appendSyncLogOn(tx, in.LedgerID, domain.EntityTransaction, in.OriginalUUID, domain.OpUpdate); err != nil {
+		return nil, err
+	}
+
+	// 4) 新建改后交易（新 uuid、普通交易、created_by=uid、不复用幂等键）。
+	newTxn := domain.Transaction{
+		UUID:        in.NewUUID,
+		Date:        in.Date,
+		Flag:        in.Flag,
+		Description: in.Description,
+		Tags:        in.Tags,
+		CreatedBy:   in.CreatedBy,
+		Postings:    in.Postings,
+	}
+	newID, inserted, err := insertTransactionRowTx(tx, in.LedgerID, newTxn, "", "", "")
+	if err != nil {
+		return nil, err
+	}
+	if !inserted {
+		// 新 uuid 撞车（uuid.NewString() 理论上不可能），按冲突处理并整体回滚。
+		return nil, domain.Codedf(domain.ErrConflict, domain.CodeTxnNotEditable,
+			"新交易标识冲突，请重试")
+	}
+	for _, p := range in.Postings {
+		if err := ensureCommodityOn(tx, in.LedgerID, p.Commodity); err != nil {
+			return nil, err
+		}
+	}
+	if err := insertPostingRowsTx(tx, newID, in.Postings); err != nil {
+		return nil, err
+	}
+	if _, err := appendSyncLogOn(tx, in.LedgerID, domain.EntityTransaction, in.NewUUID, domain.OpCreate); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &TransactionUpdateResult{
+		OriginalUUID: in.OriginalUUID,
+		ReversalUUID: revUUID,
+		NewUUID:      in.NewUUID,
+	}, nil
+}
+
 // TransactionByUUID 按 uuid 查询单笔未删除交易（含分录，引用账户 uuid）。
+// 0.6.0 S6：补读 balance_date / balance_key（additive），供「交易不可编辑」判定。
 func (s *Store) TransactionByUUID(ledgerID int64, uuid string) (domain.Transaction, error) {
 	var t domain.Transaction
 	var tags sql.NullString
 	err := s.db.QueryRow(
-		`SELECT t.id, t.uuid, t.date, t.flag, t.description, t.tags, t.created_by,
-		        u.display_name AS created_by_name,
+		`SELECT t.id, t.uuid, t.date, t.flag, t.description, t.tags, COALESCE(t.created_by, 0),
+		        COALESCE(u.display_name, '') AS created_by_name,
 		        COALESCE(t.reversal_of, ''), COALESCE(t.opening_account_uuid, ''),
 		        COALESCE(t.opening_version, 0), COALESCE(t.opening_key, ''),
-		        COALESCE(t.reversed_by, '')
+		        COALESCE(t.reversed_by, ''),
+		        COALESCE(t.balance_date, ''), COALESCE(t.balance_key, '')
 		 FROM transactions t
 		 LEFT JOIN users u ON t.created_by = u.id
 		 WHERE t.ledger_id=? AND t.uuid=? AND t.deleted_at IS NULL`,
 		ledgerID, uuid,
 	).Scan(&t.ID, &t.UUID, &t.Date, &t.Flag, &t.Description, &tags, &t.CreatedBy, &t.CreatedByName,
-		&t.ReversalOf, &t.OpeningAccountUUID, &t.OpeningVersion, &t.OpeningKey, &t.ReversedBy)
+		&t.ReversalOf, &t.OpeningAccountUUID, &t.OpeningVersion, &t.OpeningKey, &t.ReversedBy,
+		&t.BalanceDate, &t.BalanceKey)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Transaction{}, domain.ErrNotFound
 	}

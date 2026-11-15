@@ -97,12 +97,15 @@ onMounted(() => {
             <span class="trash__meta">{{ item.date }} · 删除于 {{ item.deleted_at }} · {{ item.created_by_name }}</span>
             <span class="trash__meta trash__postings">{{ sumPostings(item) }}</span>
           </span>
+          <!-- 0.6.0 S6 AC-5.8：恢复按钮按服务端 can_restore 显隐（viewer 仍可查看回收站）。 -->
           <button
+            v-if="item.can_restore === true"
             type="button"
             class="fb-btn-ghost trash__restore"
             :disabled="busyUuid !== null"
             @click="restore(item)"
           >{{ busyUuid === item.uuid ? '恢复中…' : '恢复' }}</button>
+          <span v-else class="trash__norestore">只读成员不能恢复</span>
         </li>
       </ul>
     </div>
@@ -168,6 +171,12 @@ onMounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.trash__norestore {
+  font-size: 11px;
+  color: var(--fb-sub);
+  flex-shrink: 0;
 }
 
 .trash__restore {
