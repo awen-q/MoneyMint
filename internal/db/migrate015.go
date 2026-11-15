@@ -10,7 +10,7 @@ const migration015Name = "015_ledger_ops"
 
 // migrate015：0.6.0 账本操作所需的全部新列，合并为单个迁移一次落库。
 //
-// 设计口径（docs/0.5.2-design.md §2）：
+// 设计口径（docs/0.6.0-design.md §2）：
 //   - ledgers.deleted_at：账本软删，查询层一律过滤；
 //   - commodities.deleted_at：币种软删，抑制自动复活；
 //   - transactions.balance_date / balance_key：余额校准元数据（不写 opening_account_uuid）；
