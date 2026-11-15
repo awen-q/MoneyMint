@@ -37,12 +37,25 @@ type ReversalSource struct {
 	Precision          int
 	OpeningAccountUUID string
 	OpeningVersion     int64
+
+	// PrecisionByCommodity 是可选的多币种精度映射（0.6.0 S4）。
+	// 不传（nil）时全部按 Precision 统一格式化，与 T08 原行为逐字一致；
+	// 传入时按分录 commodity 取对应精度，保证多币种冲正不丢精度（AC-3.3）。
+	PrecisionByCommodity map[string]int
 }
 
 // negateReversalPostings 把分录金额逐条取负并按给定精度格式化（纯函数）。
 // 走 parseDecimalRat + big.Rat.Neg + FloatString，定点十进制、禁止浮点；
 // precision <= 0 时按 2 处理，与 negateDecimal 同款兜底。
 func negateReversalPostings(posts []OpeningPosting, precision int) ([]OpeningPosting, error) {
+	return negateReversalPostingsByCommodity(posts, precision, nil)
+}
+
+// negateReversalPostingsByCommodity 是取负的统一实现：byCommodity 命中该币种时
+// 用其精度，否则回落到 precision。nil 映射等价于 T08 原有单一精度行为。
+func negateReversalPostingsByCommodity(
+	posts []OpeningPosting, precision int, byCommodity map[string]int,
+) ([]OpeningPosting, error) {
 	if precision <= 0 {
 		precision = 2
 	}
@@ -52,10 +65,16 @@ func negateReversalPostings(posts []OpeningPosting, precision int) ([]OpeningPos
 		if err != nil {
 			return nil, fmt.Errorf("冲正金额非法 %q: %w", p.Amount, err)
 		}
+		prec := precision
+		if byCommodity != nil {
+			if byPrec, ok := byCommodity[p.Commodity]; ok && byPrec > 0 {
+				prec = byPrec
+			}
+		}
 		out = append(out, OpeningPosting{
 			AccountID: p.AccountID,
 			Commodity: p.Commodity,
-			Amount:    neg.Neg(neg).FloatString(precision),
+			Amount:    neg.Neg(neg).FloatString(prec),
 			Position:  p.Position,
 		})
 	}
@@ -66,7 +85,7 @@ func negateReversalPostings(posts []OpeningPosting, precision int) ([]OpeningPos
 // reversal_of = 原交易 uuid，返回新交易 uuid 与自增 id。
 //
 // SQL 完全复用既有 insertTxnTx / insertPostingsTx（含 NULLIF 与 flag='*'），
-// 金额一律走 negateReversalPostings 的 big.Rat 定点运算，禁止浮点。
+// 金额一律走 big.Rat 定点运算，禁止浮点。
 // 不复用 client_request_id（013 幂等键语义不同），不写任何版本链字段。
 func insertReversalTxnTx(tx execer, ledgerID int64, src ReversalSource) (string, int64, error) {
 	revUUID := uuid.NewString()
@@ -82,7 +101,8 @@ func insertReversalTxnTx(tx execer, ledgerID int64, src ReversalSource) (string,
 	if err != nil {
 		return "", 0, err
 	}
-	posts, err := negateReversalPostings(src.Postings, src.Precision)
+	posts, err := negateReversalPostingsByCommodity(
+		src.Postings, src.Precision, src.PrecisionByCommodity)
 	if err != nil {
 		return "", 0, err
 	}
@@ -104,7 +124,7 @@ type ReversalMarkInput struct {
 	// ConflictMessage 是 RowsAffected()==0 时随 CodeOpeningConflict 返回的中文文案。
 	ConflictMessage string
 	// AppendSyncLog 控制是否在同一事务内追加 sync_log op=create。
-	// 期初两条路径均为 true（顺序与既有实现一致）；S4/S6 可自行编排 sync_log。
+	// 期初与 S4 校准两条路径均为 true；S6 可自行编排 sync_log。
 	AppendSyncLog bool
 }
 

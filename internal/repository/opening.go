@@ -453,7 +453,9 @@ func (s *Store) RebuildAllOpenings(ledgerID int64, newDate string) (int, error) 
 
 // ---- 内部辅助 ----
 
-// txnInsert 是期初/冲正交易的最小写入参数。
+// txnInsert 是期初 / 冲正 / 校准交易的最小写入参数。
+// 0.6.0 S4：BalanceDate / BalanceKey 为校准专属的可选独立列（015 已落库），
+// 期初与冲正调用留空，SQL 用 NULLIF 写 NULL，既有行为逐字不变。
 type txnInsert struct {
 	UUID               string
 	Date               string
@@ -463,21 +465,27 @@ type txnInsert struct {
 	OpeningAccountUUID string
 	OpeningVersion     int64
 	OpeningKey         string
+	BalanceDate        string
+	BalanceKey         string
 }
 
-// insertTxnTx 插入一条期初/冲正交易（不含分录）。
+// insertTxnTx 插入一条期初/冲正/校准交易（不含分录）。
 //
 // 注意：期初/冲正的身份由 opening_key（部分唯一索引）承载，
-// 不复用 013 引入的 client_request_id——两者语义不同（幂等键是「同一次客户端提交」，
-// opening_key 是「某账户某版本的期初」），混用会吞掉合法的再次期初调整。
+// 校准由 balance_key（015 部分唯一索引）承载，二者互不复用；
+// 也不复用 013 引入的 client_request_id——幂等键是「同一次客户端提交」，
+// opening_key / balance_key 是「某账户某版本」，混用会吞掉合法的再次调整。
 func insertTxnTx(tx execer, ledgerID int64, t txnInsert) (int64, error) {
 	res, err := tx.Exec(
 		`INSERT INTO transactions
 		 (ledger_id, uuid, date, flag, description, tags,
-		  opening_account_uuid, opening_version, opening_key, reversal_of)
-		 VALUES (?, ?, ?, '*', ?, ?, NULLIF(?,''), ?, NULLIF(?,''), NULLIF(?,''))`,
+		  opening_account_uuid, opening_version, opening_key, reversal_of,
+		  balance_date, balance_key)
+		 VALUES (?, ?, ?, '*', ?, ?, NULLIF(?,''), ?, NULLIF(?,''), NULLIF(?,''),
+		         NULLIF(?,''), NULLIF(?,''))`,
 		ledgerID, t.UUID, t.Date, t.Description, marshalTags(t.Tags),
 		t.OpeningAccountUUID, t.OpeningVersion, t.OpeningKey, t.ReversalOf,
+		t.BalanceDate, t.BalanceKey,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("写入期初交易: %w", err)

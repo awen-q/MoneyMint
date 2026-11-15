@@ -122,8 +122,8 @@ const CODE_MESSAGES: Readonly<Record<string, string>> = {
   commodity_exists: '该币种已存在',
   commodity_in_use: '该币种已被账户、交易或价格引用，不能删除',
   // ---- 0.6.0 余额校准（S4）----
-  balance_date_invalid: '指定日期不合法或超出允许范围',
-  balance_date_too_early: '指定日期过早，无法在开户日 / 账本期初日之后生成补平分录',
+  balance_date_invalid: '指定日期不合法或超出允许范围，须不早于 max(账户开户日, 账本期初日期) 且不晚于今日',
+  balance_date_too_early: '指定日期过早，无法在 max(账户开户日, 账本期初日期) 之后生成补平分录',
   opening_equity_closed: '期初余额权益账户已关闭，无法生成校准分录，请先恢复该账户',
   // ---- 0.6.0 交易修改（S6）----
   txn_edit_forbidden: '只能修改自己记的账，或由账本 owner 修改',

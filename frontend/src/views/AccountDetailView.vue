@@ -6,18 +6,26 @@
  * - 已关户账户展示 close_date 且不出现写入口；
  * - 关户前二次确认列出「受影响交易笔数」（affectedTransactionCount）；
  * - 服务端 409（余额非 0）时渲染 `ApiError.balances` 差额明细表，不只弹文案。
+ *
+ * 0.6.0 S4 余额校准（AC-3.1 / AC-3.6 / AC-3.7）：
+ * - Assets / Liabilities / Equity 三类账户提供校准入口；
+ * - 预检文案统一「截至 D 日初（前一日日终）当前累计 / 目标 / 将自动补记 ±差额」；
+ * - 二次确认在 D 之后已有交易时明确提示「此操作会改变 D 之后的所有余额」；
+ * - 展示校准版本历史 v1/v2（含操作人、时间、差额原因）。
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { accountApi, transactionApi } from '@/api/client'
-import { ApiError } from '@/api/errors'
-import type { AccountView, TransactionView } from '@/api/types'
+import { accountApi, balanceApi, transactionApi } from '@/api/client'
+import { ApiError, codeMessage } from '@/api/errors'
+import type { AccountView, BalancePreview, BalanceResult, TransactionView } from '@/api/types'
 import { affectedTransactionCount, balanceOf, isClosed } from '@/core/accounts'
+import { balanceDiff, hasTransactionsAfter, isPlainDecimal, previewText } from '@/core/balance'
 import {
   accountLabel,
   accountRunningBalances,
   postingAmountForAccount,
+  todayString,
   transactionKind,
 } from '@/core/record'
 import { useSessionStore } from '@/stores/session'
@@ -38,6 +46,19 @@ const showCloseConfirm = ref(false)
 const showOpeningForm = ref(false)
 const closeError = ref('')
 const closeBalances = ref<Array<{ commodity: string; amount: string }>>([])
+
+// ---- 0.6.0 S4 余额校准 ----
+const showBalancePanel = ref(false)
+const showBalanceConfirm = ref(false)
+const balanceAsOf = ref(todayString())
+const balanceCommodity = ref(session.defaultCommodity)
+const balanceTarget = ref('')
+const balancePreview = ref<BalancePreview | null>(null)
+const balanceResult = ref<BalanceResult | null>(null)
+const balanceLoading = ref(false)
+const balanceSubmitting = ref(false)
+const balanceError = ref('')
+const balanceNotice = ref('')
 
 const accountId = computed<number | null>(() => {
   const raw = route.params.id
@@ -93,6 +114,70 @@ const closed = computed(() => account.value !== null && isClosed(account.value))
 const canManage = computed(
   () => account.value !== null && !closed.value && !session.isViewer,
 )
+
+/** 校准仅对未关户的 Assets / Liabilities / Equity 开放（AC-3.1）。 */
+const canCalibrate = computed(() => {
+  if (account.value === null || closed.value || session.isViewer) {
+    return false
+  }
+  const kind = account.value.type
+  return kind === 'Assets' || kind === 'Liabilities' || kind === 'Equity'
+})
+
+const balanceCommodityOptions = computed(() => {
+  if (balanceCodes.value.length > 0) {
+    return balanceCodes.value
+  }
+  return [session.defaultCommodity]
+})
+
+/** 当前选中币种的日初累计（容忍旧响应缺字段）。 */
+const cumulativeForSelected = computed(() => {
+  const view = balancePreview.value
+  if (view === null || !Array.isArray(view.cumulative)) {
+    return '0.00'
+  }
+  for (const item of view.cumulative) {
+    if (item.commodity === balanceCommodity.value) {
+      return item.amount
+    }
+  }
+  return '0.00'
+})
+
+/** 预检统一文案（AC-3.1）。 */
+const balancePreviewText = computed(() => {
+  if (balancePreview.value === null || !isPlainDecimal(balanceTarget.value)) {
+    return ''
+  }
+  return previewText(balanceAsOf.value, cumulativeForSelected.value, balanceTarget.value)
+})
+
+/** D 之后是否已有交易（AC-3.7 二次确认提示）。 */
+const laterTxns = computed(() => {
+  const dates: string[] = []
+  for (const txn of transactions.value) {
+    dates.push(txn.date)
+  }
+  return hasTransactionsAfter(balanceAsOf.value, dates)
+})
+
+const balanceHistory = computed(() => {
+  const view = balancePreview.value
+  if (view === null || view.calibration === undefined || !Array.isArray(view.calibration.history)) {
+    return []
+  }
+  return view.calibration.history
+})
+
+/** 稳定错误码优先走集中映射，具体中文原因由后端 error 补充。 */
+function balanceMessageOf(err: unknown): string {
+  if (err instanceof ApiError) {
+    const mapped = err.code === undefined ? '' : codeMessage(err.code)
+    return mapped !== '' ? mapped : err.message
+  }
+  return '余额校准失败，请稍后重试'
+}
 
 /** 账户侧 journal（批 2.5 修 4a）：行金额取该账户自身分录的原值原符号。 */
 function rowPosting(txn: TransactionView): { amount: string; commodity: string } {
@@ -163,6 +248,68 @@ async function load(): Promise<void> {
     loadError.value = err instanceof ApiError ? err.message : '账户详情加载失败'
   } finally {
     loading.value = false
+  }
+}
+
+/** 预检：GET /api/accounts/{uuid}/balance?as_of_date=D。 */
+async function loadBalancePreview(): Promise<void> {
+  if (account.value === null) {
+    return
+  }
+  balanceLoading.value = true
+  balanceError.value = ''
+  try {
+    balancePreview.value = await balanceApi.preview(account.value.uuid, balanceAsOf.value)
+  } catch (err) {
+    balancePreview.value = null
+    balanceError.value = balanceMessageOf(err)
+  } finally {
+    balanceLoading.value = false
+  }
+}
+
+function openBalancePanel(): void {
+  if (!canCalibrate.value) {
+    notice.value = '仅未关户的资产 / 负债 / 权益账户可校准余额'
+    return
+  }
+  notice.value = ''
+  balanceError.value = ''
+  balanceNotice.value = ''
+  showBalancePanel.value = true
+  void loadBalancePreview()
+}
+
+function openBalanceConfirm(): void {
+  if (!isPlainDecimal(balanceTarget.value)) {
+    balanceError.value = '请输入合法的定点十进制目标余额（可带负号）'
+    return
+  }
+  balanceError.value = ''
+  showBalanceConfirm.value = true
+}
+
+async function confirmBalance(): Promise<void> {
+  if (account.value === null || balanceSubmitting.value) {
+    return
+  }
+  balanceSubmitting.value = true
+  balanceError.value = ''
+  try {
+    const result = await balanceApi.set(account.value.uuid, {
+      as_of_date: balanceAsOf.value,
+      targets: [{ commodity: balanceCommodity.value, target_balance: balanceTarget.value.trim() }],
+    })
+    balanceResult.value = result
+    showBalanceConfirm.value = false
+    balanceNotice.value = result.status === 'updated'
+      ? `已生成 v${result.version} 校准（旧版本仅标记失效，不删除）`
+      : `已生成校准交易（落账日 ${result.date}）`
+    await Promise.all([load(), loadBalancePreview()])
+  } catch (err) {
+    balanceError.value = balanceMessageOf(err)
+  } finally {
+    balanceSubmitting.value = false
   }
 }
 
@@ -265,12 +412,92 @@ onMounted(() => {
     <template v-else-if="account !== null">
       <div class="fb-card acctd__card">
         <button type="button" class="acctd__action" :disabled="!canManage" @click="openOpening">期初余额设置</button>
+        <button type="button" class="acctd__action acctd__action--ghost" :disabled="!canCalibrate" @click="openBalancePanel">余额校准</button>
         <button type="button" class="acctd__action acctd__action--ghost" @click="openInGlobalTxns">在全局流水中查看本账户</button>
         <button type="button" class="acctd__action acctd__action--danger" :disabled="!canManage" @click="openCloseConfirm">
           关闭账户（Beancount close）
         </button>
         <p v-if="notice" class="acctd__notice" role="status">{{ notice }}</p>
         <p v-if="closed" class="acctd__hint">已关户账户保留全部历史交易，仅只读。</p>
+      </div>
+
+      <div v-if="showBalancePanel" class="fb-card acctd__card acctd__balance-panel">
+        <h3>余额校准</h3>
+        <p class="acctd__hint">口径为「截至 D 日初（前一日日终）」：累计只统计 D 之前的交易，补平分录自动落在 D-1。</p>
+        <div class="acctd__balance-fields">
+          <label class="acctd__field">
+            <span>指定日期 D</span>
+            <input v-model="balanceAsOf" class="fb-input" type="date" />
+          </label>
+          <label class="acctd__field">
+            <span>币种</span>
+            <select v-model="balanceCommodity" class="fb-input">
+              <option v-for="code in balanceCommodityOptions" :key="code" :value="code">{{ code }}</option>
+            </select>
+          </label>
+          <label class="acctd__field">
+            <span>目标余额（可带负号）</span>
+            <input v-model="balanceTarget" class="fb-input" type="text" placeholder="如 12350.00" />
+          </label>
+          <button class="fb-btn-ghost" type="button" :disabled="balanceLoading" @click="loadBalancePreview">刷新预检</button>
+        </div>
+
+        <p v-if="balanceLoading" class="acctd__hint">正在加载预检…</p>
+        <p v-if="balancePreviewText" class="acctd__preview">{{ balancePreviewText }} {{ balanceCommodity }}</p>
+        <p v-if="balanceError" class="acctd__warn acctd__warn--error" role="alert">{{ balanceError }}</p>
+        <p v-if="balanceNotice" class="acctd__notice" role="status">{{ balanceNotice }}</p>
+
+        <div v-if="balancePreview !== null && balancePreview.cumulative.length > 0" class="acctd__diff">
+          <p class="acctd__diff-label">各币种日初累计：</p>
+          <p v-for="item in balancePreview.cumulative" :key="item.commodity" class="acctd__hint">
+            {{ item.commodity }} {{ item.amount }}
+          </p>
+        </div>
+
+        <div v-if="balanceHistory.length > 0" class="acctd__diff">
+          <p class="acctd__diff-label">校准版本历史：</p>
+          <ul class="acctd__list">
+            <li v-for="item in balanceHistory" :key="item.transaction_uuid" class="acctd__row">
+              <span class="acctd__row-info">
+                <span class="acctd__row-desc">{{ item.version }} · {{ item.reversed ? '已失效（被新版本冲正）' : '当前生效' }}</span>
+                <span class="acctd__row-meta">
+                  {{ item.created_at }} · {{ item.created_by_name || '—' }}
+                  <template v-if="item.entries && item.entries.length > 0">
+                    · 差额 <template v-for="entry in item.entries" :key="entry.commodity">{{ entry.commodity }} {{ entry.amount }} </template>
+                  </template>
+                </span>
+              </span>
+            </li>
+          </ul>
+        </div>
+
+        <div class="acctd__confirm-actions">
+          <button type="button" class="fb-btn-ghost" @click="showBalancePanel = false">收起</button>
+          <button
+            type="button"
+            class="fb-btn-primary"
+            :disabled="balanceSubmitting || balancePreviewText === ''"
+            @click="openBalanceConfirm"
+          >生成校准交易</button>
+        </div>
+      </div>
+
+      <div v-if="showBalanceConfirm" class="fb-card acctd__card acctd__confirm">
+        <h3>确认生成校准交易</h3>
+        <p class="acctd__warn">{{ balancePreviewText }} {{ balanceCommodity }}</p>
+        <p v-if="laterTxns" class="acctd__warn acctd__warn--error">
+          此操作会改变 D 之后的所有余额，请确认目标值无误。
+        </p>
+        <p class="acctd__hint">
+          将新增一笔普通交易（日期 {{ balanceAsOf }} 的前一日），差额记入 Equity:Opening-Balances；
+          同一日期再次设置会冲正旧校准并生成新版本，不覆盖原交易。
+        </p>
+        <div class="acctd__confirm-actions">
+          <button type="button" class="fb-btn-ghost" @click="showBalanceConfirm = false">取消</button>
+          <button type="button" class="fb-btn-primary" :disabled="balanceSubmitting" @click="confirmBalance">
+            {{ balanceSubmitting ? '生成中…' : '确认生成' }}
+          </button>
+        </div>
       </div>
 
       <div v-if="showCloseConfirm" class="fb-card acctd__card acctd__confirm">
@@ -487,6 +714,44 @@ onMounted(() => {
 
 .acctd__confirm-actions > button {
   flex: 1;
+}
+
+.acctd__balance-panel {
+  border: 1px solid var(--fb-line);
+}
+
+.acctd__balance-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.acctd__field {
+  flex: 1;
+  min-width: 120px;
+  font-size: 12px;
+  color: var(--fb-sub);
+}
+
+.acctd__field span {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.acctd__field .fb-input {
+  width: 100%;
+}
+
+.acctd__preview {
+  margin: 12px 0 0;
+  padding: 8px 12px;
+  border-radius: var(--fb-radius-input);
+  background: var(--fb-green-soft);
+  color: var(--fb-green);
+  font-size: 12px;
+  line-height: 1.7;
 }
 
 .acctd__list {

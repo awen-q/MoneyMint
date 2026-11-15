@@ -64,6 +64,11 @@ func newRouter(h *handler.Handler, svc *service.Service, webRoot string, corsCfg
 		http.MethodGet:  h.HandleGetOpening,
 		http.MethodPost: h.HandleSetOpening,
 	}))
+	// 余额校准（0.6.0 S4：GET 预检 viewer 可读 / POST 非 viewer）。
+	mux.HandleFunc("/api/accounts/{uuid}/balance", methodSwitch(map[string]http.HandlerFunc{
+		http.MethodGet:  h.HandleGetBalance,
+		http.MethodPost: h.HandleSetBalance,
+	}))
 	mux.HandleFunc("/api/accounts/{uuid}", methodSwitch(map[string]http.HandlerFunc{
 		http.MethodDelete: h.HandleDeleteAccount,
 	}))

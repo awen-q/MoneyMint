@@ -36,6 +36,8 @@ export const API_ROUTES = {
   accounts: '/api/accounts',
   /** GET /api/accounts/{uuid}/opening · POST /api/accounts/{uuid}/opening */
   accountOpening: '/api/accounts/{uuid}/opening',
+  /** GET /api/accounts/{uuid}/balance · POST /api/accounts/{uuid}/balance（0.6.0 S4 余额校准） */
+  accountBalance: '/api/accounts/{uuid}/balance',
   /** DELETE /api/accounts/{uuid} */
   accountByUuid: '/api/accounts/{uuid}',
   /** GET /api/commodities · POST /api/commodities（0.6.0 S2 币种增删） */

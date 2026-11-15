@@ -27,6 +27,9 @@ import type {
   ChangePasswordResponse,
   CreateAccountRequest,
   CreateLedgerRequest,
+  BalancePreview,
+  BalanceResult,
+  SetBalanceRequest,
   CommodityCreated,
   CommodityListResponse,
   CreateCommodityRequest,
@@ -542,6 +545,24 @@ export const openingApi = {
   set(accountUuid: string, body: SetOpeningRequest): Promise<OpeningResult> {
     return api.post<OpeningResult>(
       formatApiPath(API_ROUTES.accountOpening, { uuid: accountUuid }),
+      body,
+    )
+  },
+}
+
+/** 余额校准端点（0.6.0 S4；业务端点，必须携带 X-Ledger-Id）。 */
+export const balanceApi = {
+  /** 预检：截至 D 日初累计 + 既有校准 + 版本历史（viewer 可读）。 */
+  preview(accountUuid: string, asOfDate: string): Promise<BalancePreview> {
+    return api.get<BalancePreview>(
+      formatApiPath(API_ROUTES.accountBalance, { uuid: accountUuid }),
+      { query: { as_of_date: asOfDate } },
+    )
+  },
+  /** 设置 / 修正校准（冲正旧 + 新建，单事务）。 */
+  set(accountUuid: string, body: SetBalanceRequest): Promise<BalanceResult> {
+    return api.post<BalanceResult>(
+      formatApiPath(API_ROUTES.accountBalance, { uuid: accountUuid }),
       body,
     )
   },

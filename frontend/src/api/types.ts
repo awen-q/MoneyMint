@@ -296,6 +296,77 @@ export interface CommodityInUseDetails {
   is_default?: boolean
 }
 
+// ---------- 余额校准（0.6.0 S4）----------
+
+/** 按币种的金额（预检累计 / 历史差额）。 */
+export interface BalanceAmount {
+  commodity: string
+  amount: string
+}
+
+/** 既有校准的目标余额（带符号）。 */
+export interface BalanceTargetAmount {
+  commodity: string
+  signed_amount: string
+}
+
+/** 校准版本历史项（v1/v2、操作人、时间、差额原因）。 */
+export interface BalanceHistoryItem {
+  version: string
+  transaction_uuid: string
+  created_at?: string
+  created_by_name?: string
+  reversed: boolean
+  entries?: BalanceAmount[]
+}
+
+/** GET 预检中的既有校准信息；字段可选以容忍旧响应。 */
+export interface BalanceCalibrationView {
+  exists: boolean
+  date?: string
+  version?: number
+  targets?: BalanceTargetAmount[]
+  transaction_uuid?: string
+  history?: BalanceHistoryItem[]
+}
+
+/** GET /api/accounts/{uuid}/balance?as_of_date=D 响应。 */
+export interface BalancePreview {
+  account_uuid: string
+  as_of_date: string
+  cumulative: BalanceAmount[]
+  calibration: BalanceCalibrationView
+}
+
+/** POST 请求的单币种目标余额（带符号定点十进制字符串）。 */
+export interface BalanceTargetRequest {
+  commodity: string
+  target_balance: string
+}
+
+/** POST /api/accounts/{uuid}/balance 请求体。 */
+export interface SetBalanceRequest {
+  as_of_date: string
+  targets: BalanceTargetRequest[]
+}
+
+/** 本次补记的按币种差额。 */
+export interface BalanceEntry {
+  commodity: string
+  diff: string
+}
+
+/** POST 响应。 */
+export interface BalanceResult {
+  status: 'created' | 'updated'
+  account_uuid: string
+  transaction_uuid: string
+  reversal_uuid?: string
+  version: number
+  date: string
+  entries: BalanceEntry[]
+}
+
 // ---------- 期初 ----------
 
 /** GET /api/accounts/{uuid}/opening */
