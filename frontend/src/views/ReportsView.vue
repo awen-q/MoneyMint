@@ -8,8 +8,8 @@
  * - 收支统计**分录级**且按币种过滤，转账（纯 Assets/Liabilities）天然剔除；
  * - 聚合全在 `core/reports.ts` 用 decimal.js 定点完成，禁止跨币种求和；
  * - 净资产走 `computeBalanceSummary` 的 ΣAssets + ΣLiabilities，负债保留负号。
- * 数据源为在线账户 / 交易列表（新版尚无批 5 的 IndexedDB 本地真相源），
- * 因此报表需要联网；离线内核落地后由它接管数据源。
+ * 数据源为在线账户 / 交易列表：IndexedDB 只承担离线提交队列的本地持久化
+ * （单事务原子写），不是本地真相源；查看流水 / 余额 / 报表与改账均需在线。
  */
 import { computed, onMounted, ref, watch } from 'vue'
 

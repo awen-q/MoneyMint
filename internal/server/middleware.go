@@ -75,7 +75,7 @@ func cors(opt corsOptions, next http.Handler) http.Handler {
 //   - 处于「必须先改密」状态时，除自服务端点外一律 428
 //   - 认证自服务端点（me/logout/change-password/refresh）仅需登录态
 //   - 账本管理端点（/api/ledgers）仅需登录态（具体权限在 service 层校验）
-//   - 业务端点按 X-Ledger-Id（缺失回退默认账本）解析账本，校验成员身份，
+//   - 业务端点按 X-Ledger-Id（缺失回退该用户所属最小有效账本）解析账本，校验成员身份，
 //     viewer 只读（非 GET 一律 403），通过后注入 user id + ledger id + role 到 context
 //
 // 鉴权范围按 /api/ 前缀划分（而非逐一列白名单）：这样新增前端路由、
@@ -184,13 +184,27 @@ func authMiddleware(h *handler.Handler, svc *service.Service, next http.Handler)
 		}
 
 		// 业务端点：解析账本上下文。
-		ledgerID := ledgerIDFromRequest(r)
+		ledgerID, err := ledgerIDFromRequest(r, uid, svc)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "解析账本上下文失败"})
+			return
+		}
 		role, err := svc.LedgerRole(uid, ledgerID)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "查询账本角色失败"})
 			return
 		}
 		if role == "" {
+			// 软删账本一律 403，并带稳定码 ledger_deleted，便于前端区分
+			// 「账本已删除」与「等待 owner 邀请」两种无权限场景。
+			deleted, derr := svc.LedgerDeleted(ledgerID)
+			if derr == nil && deleted {
+				writeJSON(w, http.StatusForbidden, map[string]string{
+					"error": "该账本已删除",
+					"code":  domain.CodeLedgerDeleted,
+				})
+				return
+			}
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "无权访问该账本，请等待 owner 邀请"})
 			return
 		}
@@ -226,15 +240,17 @@ func csrfRequired(h *handler.Handler, r *http.Request) bool {
 	return true
 }
 
-// ledgerIDFromRequest 从 X-Ledger-Id 头解析账本 id；缺失或非法时回退默认账本，
-// 保证未升级的旧客户端仍可访问首个账本。
-func ledgerIDFromRequest(r *http.Request) int64 {
+// ledgerIDFromRequest 从 X-Ledger-Id 头解析账本 id；缺失或非法时回退
+// 「该用户所属、未软删、最小 id」的账本（R3 / AC-1.6），不再硬编码
+// domain.DefaultLedgerID=1——否则删掉原 id=1 后，未带该头的旧客户端 / curl
+// 会把请求全部打到已删账本上，出现全量 403。
+func ledgerIDFromRequest(r *http.Request, userID int64, svc *service.Service) (int64, error) {
 	if v := r.Header.Get("X-Ledger-Id"); v != "" {
 		if id, err := strconv.ParseInt(v, 10, 64); err == nil && id > 0 {
-			return id
+			return id, nil
 		}
 	}
-	return domain.DefaultLedgerID
+	return svc.MinActiveLedgerID(userID)
 }
 
 // writeJSON 输出 JSON 响应（中间件专用）。

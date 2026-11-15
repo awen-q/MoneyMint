@@ -48,7 +48,7 @@ export const API_ROUTES = {
 
   /** GET /api/ledgers · POST /api/ledgers */
   ledgers: '/api/ledgers',
-  /** PATCH /api/ledgers/{id} */
+  /** PATCH /api/ledgers/{id} · DELETE /api/ledgers/{id}（0.6.0 S1：owner 软删账本） */
   ledgerById: '/api/ledgers/{id}',
   /** GET /api/ledger/members · POST /api/ledger/members */
   ledgerMembers: '/api/ledger/members',

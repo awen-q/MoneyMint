@@ -54,6 +54,33 @@ const (
 	CodeIdempotencyKeyDeleted = "idempotency_key_deleted"
 	// CodeIdempotencyPayloadMismatch：同一幂等键被用于内容不同的交易。
 	CodeIdempotencyPayloadMismatch = "idempotency_payload_mismatch"
+
+	// ---- 0.6.0 稳定错误码（设计 §5.1 字典；只登记常量，具体场景由各切片使用）----
+	// 账本删除（S1 / D-03）
+	CodeLedgerHasMembers = "ledger_has_members"
+	CodeLastLedger       = "last_ledger"
+	CodeLedgerDeleted    = "ledger_deleted"
+	// 账户增加下级与名称校验（S2 / C-03）
+	CodeAccountNameInvalid = "account_name_invalid"
+	CodeAccountNameExists  = "account_name_exists"
+	CodeParentNotFound     = "parent_not_found"
+	CodeParentTypeMismatch = "parent_type_mismatch"
+	// 币种增删（S2 / D-06）
+	CodeCommodityExists = "commodity_exists"
+	CodeCommodityInUse  = "commodity_in_use"
+	// 余额校准（S4 / D-05 / Q-11）
+	CodeBalanceDateInvalid  = "balance_date_invalid"
+	CodeBalanceDateTooEarly = "balance_date_too_early"
+	CodeOpeningEquityClosed = "opening_equity_closed"
+	// 交易修改与权限收紧（S6 / D-09 / D-15）
+	CodeTxnEditForbidden   = "txn_edit_forbidden"
+	CodeTxnNotEditable     = "txn_not_editable"
+	CodeTxnAlreadyReversed = "txn_already_reversed"
+	// 导入当前账本（S5 / D-10 / D-11）
+	CodeImportPadBalance      = "import_pad_balance_unsupported"
+	CodeImportUnbalanced      = "import_unbalanced"
+	CodeImportAccountConflict = "import_account_conflict"
+	CodeImportBatchNotFound   = "import_batch_not_found"
 )
 
 // CodedError 是携带稳定错误码与结构化明细的业务错误。

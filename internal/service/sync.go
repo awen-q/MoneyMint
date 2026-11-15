@@ -169,9 +169,14 @@ func (s *Service) loadEntity(ledgerID int64, typ, uuid string) (json.RawMessage,
 			"created_by_name": nullIfEmpty(t.CreatedByName),
 			"postings":       postings,
 		}
-		// 冲正关系随 pull 下发（设计 §3.4.7）；无冲正关系时不输出该字段。
+		// 冲正关系随 pull 下发（设计 §3.4.7）；无值时不输出该字段。
+		// A-02：reversed_by 是「原交易已被冲正」标记，与 reversed_of 同款
+		// 「无值不输出」，保证已冲正状态随 pull 在多端一致展示。
 		if t.ReversalOf != "" {
 			payload["reversed_of"] = t.ReversalOf
+		}
+		if t.ReversedBy != "" {
+			payload["reversed_by"] = t.ReversedBy
 		}
 		return json.Marshal(payload)
 	default:
@@ -231,14 +236,16 @@ func (s *Service) SyncPush(ledgerID, userID int64, req PushRequest) (PushResultO
 	}
 
 	// 分拣顺序：先所有 create（被引用实体先落库），再所有 delete（交易），
-	// 最后所有 close（账户关闭 = Beancount close，0.4-A 起）。
+	// 然后 close（账户关闭 = Beancount close，0.4-A 起），最后 update
+	// （账户排序 0.4-C / 交易冲正标记 0.6.0 A-01）。不新增 op 类型、不升协议版本。
 	for _, pass := range []struct{ op, typ string }{
 		{domain.OpCreate, domain.EntityCommodity},
 		{domain.OpCreate, domain.EntityAccount},
 		{domain.OpCreate, domain.EntityTransaction},
 		{domain.OpDelete, domain.EntityTransaction},
 		{domain.OpClose, domain.EntityAccount},
-		{domain.OpUpdate, domain.EntityAccount}, // 0.4-C 账户排序等字段更新
+		{domain.OpUpdate, domain.EntityAccount},     // 0.4-C 账户排序等字段更新
+		{domain.OpUpdate, domain.EntityTransaction}, // 0.6.0 A-01 交易 reversed_by 标记
 	} {
 		for i, c := range req.Changes {
 			op := c.Op
@@ -516,12 +523,18 @@ func (s *Service) closeAccountCheckedResult(ledgerID int64, uuid string) (pushAp
 	return pushApplyResult{accepted: closed}, nil
 }
 
-// applyUpdateEntity 处理 op=update 的推送（0.4-C 起，仅账户排序等字段更新）。
-// 前端已知账户 uuid，无需自然键合并；只更新已存在账户的 sort_order（当前唯一可更新字段）。
+// applyUpdateEntity 处理 op=update 的推送。
+//
+//   - 账户（0.4-C 起）：只更新已存在账户的 sort_order（当前唯一可更新字段）；
+//   - 交易（0.6.0 A-01）：仅接受 reversed_by 非空的「已冲正」标记更新，
+//     其余字段一律拒绝，避免 append-only 交易被离线端伪造原地修改。
+//     不新增 op 类型、不升协议版本；服务端三步修改事务会自行写 sync_log，
+//     本分支只兜底旧客户端 / 运维工具重放 op=update 的场景，故不写 sync_log。
 func (s *Service) applyUpdateEntity(ledgerID int64, typ string, raw json.RawMessage) (pushApplyResult, error) {
 	var e struct {
-		UUID      string `json:"uuid"`
-		SortOrder int64  `json:"sort_order"`
+		UUID       string `json:"uuid"`
+		SortOrder  int64  `json:"sort_order"`
+		ReversedBy string `json:"reversed_by"`
 	}
 	if err := json.Unmarshal(raw, &e); err != nil {
 		return pushApplyResult{}, err
@@ -535,6 +548,28 @@ func (s *Service) applyUpdateEntity(ledgerID int64, typ string, raw json.RawMess
 			return pushApplyResult{}, err
 		}
 		return pushApplyResult{accepted: true}, nil
+	case domain.EntityTransaction:
+		// 显式拒绝 date / flag / description / postings 等任何其它字段：
+		// 未知字段不静默忽略，防止「看起来是标记更新、实际夹带改账」。
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			return pushApplyResult{}, err
+		}
+		for key := range fields {
+			if key != "uuid" && key != "reversed_by" {
+				return pushApplyResult{}, domain.Invalidf(
+					"transaction update 仅支持 reversed_by，拒绝字段 %s", key)
+			}
+		}
+		if e.ReversedBy == "" {
+			return pushApplyResult{}, domain.Invalidf("transaction update 仅支持 reversed_by 非空标记")
+		}
+		marked, err := s.repo.MarkTransactionReversed(ledgerID, e.UUID, e.ReversedBy)
+		if err != nil {
+			return pushApplyResult{}, err
+		}
+		// 已处于冲正态 / 目标不存在：幂等跳过，不报错、不写 sync_log。
+		return pushApplyResult{accepted: marked}, nil
 	default:
 		return pushApplyResult{}, fmt.Errorf("不支持更新实体类型 %q", typ)
 	}

@@ -63,7 +63,7 @@ python -m pip install beancount    # 激活 .venv 后执行
 ├── schema.sql            # 初始核心表 DDL（含 Beancount 映射注释）
 ├── cmd/server/main.go    # 后端入口
 ├── internal/             # 后端分层：config → domain → db → repository → service → handler → server
-│   ├── db/{db,migrate}.go   # 开库 + schema 迁移（当前至 014）；迁移框架见 §4
+│   ├── db/{db,migrate}.go   # 开库 + schema 迁移（当前至 015）；迁移框架见 §4
 │   ├── repository/       # 全部 SQL 集中于此（account/transaction/member/sync/session/user/ledger/opening/import）
 │   ├── service/          # 业务：校验/事务编排/余额/自然键合并/同步协议/成员权限/恢复/导入
 │   ├── handler/          # 薄 HTTP 适配层
@@ -85,7 +85,7 @@ python -m pip install beancount    # 激活 .venv 后执行
 
 **前端架构（Vue 3 SPA，唯一前端）**：
 - `core/Money.ts`：`decimal.js` 定点金额唯一入口（只收 string 构造、`ROUND_HALF_UP`、`toString()` 固定 `toFixed()`）；另有 `core/{accounts,calendar,csv,filters,opening,ordering,record,storage,m2}.ts` 核心领域逻辑（全部带 `.test.ts`）。
-- `core/sync/`：离线同步内核——`models.ts`（本地实体/死信分类，`DEAD_CODES` 与后端稳定码同源）、`localStore.ts`（Memory 实现）、`idbStore.ts`（IndexedDB 真相源，单事务原子写）、`engine.ts`（SyncEngine：pull→push 重映射→pull、库世代隔离、指数退避、CAS 多标签页租约）+ 9 份真实契约样本（`fixtures/`，其中 6 份被 `engine.test.ts` 引用）。
+- `core/sync/`：离线同步内核——`models.ts`（本地实体/死信分类，`DEAD_CODES` 与后端稳定码同源）、`localStore.ts`（Memory 实现）、`idbStore.ts`（离线提交队列的本地持久化，单事务原子写）、`engine.ts`（SyncEngine：pull→push 重映射→pull、库世代隔离、指数退避、CAS 多标签页租约）+ 9 份真实契约样本（`fixtures/`，其中 6 份被 `engine.test.ts` 引用）。
 - `api/{types,routes,errors,client}.ts`：36 端点手写 TS 类型 / 路由常量 / `ApiError` / 类型化 fetch 客户端（401 single-flight / 428 / `X-Ledger-Id` 断言 / FormData 上传；**不生成** OpenAPI）。
 - `stores/`：`session / privacy / recordSheet / sync`；views 20 页 + components（AppLayout / RecordSheet / SyncBadge 等）。
 - `vite.config.ts`：`base: './'`、`build.target: 'es2015'`、`@vitejs/plugin-legacy`（`targets: Safari >= 14`）、`outDir: 'dist'`、`server.proxy['/api'] → 127.0.0.1:8080`、alias `@`、`define.__APP_VERSION__` 读 package.json。
@@ -109,13 +109,14 @@ python -m pip install beancount    # 激活 .venv 后执行
 - `transactions`(id, ledger_id, uuid UNIQUE, date, flag[*|!], description, version, created_by, deleted_at, **client_request_id**)
 - `postings`(id, transaction_id, account_id, commodity, amount 有符号, position)
 
-**迁移（`internal/db/migrate.go`，追加式、幂等、记录 `schema_migrations`；当前至 **014**）**：
+**迁移（`internal/db/migrate.go`，追加式、幂等、记录 `schema_migrations`；当前至 **015**）**：
 - 001_sync：补 `accounts/commodities/prices` 的 `uuid`+`updated_at`；建 `sync_log`(id 自增即全局水位)；重建 `sync_checkpoints`；建 `sessions`。
 - 002_delete_semantics：交易/账户加 `deleted_at`（软删）；账户重建部分唯一索引 `(ledger_id,name) WHERE deleted_at IS NULL`；旧库 owner 密码置为初始默认值。
 - 003~009：账户显示名 / 视觉与层级字段、交易 `tags`、关户语义、账户排序、`users.is_admin`、`app_settings`。
 - 010~012：强制改密、会话设备信息、期初余额（`opening_key` 等）。
 - **013_txn_idempotency（M7 批 1）**：`transactions.client_request_id TEXT` + 部分唯一索引 `UNIQUE(ledger_id, client_request_id) WHERE client_request_id IS NOT NULL`；配套 `migrate013_test.go` 与 `server/idempotency_test.go`。
 - **014_db_instance_id（M7 批 4，已实现）**：`db_instance` 单例表存库世代 UUID；`GetInstanceID` / `RotateInstanceID`；`GET /api/db/instance` 供登录用户读取；`health` / `sync/pull` / `sync/push` 响应追加 `instance_id`（additive）。恢复成功后轮换世代，客户端据此清本地实体并全量重拉。
+- **015_ledger_ops（0.6.0 S0，已实现）**：ledgers/commodities 的 deleted_at、transactions 的 balance_date/balance_key/import_batch_id + 两个部分索引；不含 edit_key / supersedes。
 
 > **修改 schema 必须走迁移脚本**，不要直接改 `schema.sql` 后手动 ALTER 线上库。
 > **幂等实现边界**：落库用 `INSERT ... ON CONFLICT(ledger_id, client_request_id) WHERE client_request_id IS NOT NULL DO NOTHING`（conflict target 必须重复部分索引谓词，否则 SQLite 报 no matching unique index）；业务行与 `sync_log` 必须同事务。当前并发安全还隐式依赖 `MaxOpenConns=1`，放开连接数或切 Postgres 前必须补齐。
@@ -144,7 +145,7 @@ python -m pip install beancount    # 激活 .venv 后执行
 - pull：`GET /api/sync/pull?since=<水位>&client_id=<设备>` 取回 `id>since` 的全部变更（delete 仅 `{uuid}`）。
 - push：`POST /api/sync/push` 逐条提交，单条失败不阻塞其余；响应 `{checkpoint, accepted, results:[{index, entity_type, uuid, status, accepted, server_uuid, error}]}`（按请求顺序）。先 create（commodity→account→transaction）再 delete（transaction→account）。
 - 自然键合并：推送账户时若同账本存在未删同名账户，保留先到者，`server_uuid` 回传真实 uuid，前端据此重映射本地 `loc-` uuid。
-- 前端离线优先：`local_store` 为本地真相源，断网可记账；联网先 pull 合并再 push 本地队列，失败保留重试。
+- 前端离线提交队列：断网可提交记账并入队，联网后增量同步；查看流水 / 余额 / 报表与改账需在线。联网先 pull 合并再 push 本地队列，失败保留重试。
 
 **关键陷阱（勿混用）**：
 | 路径 | posting 账户字段 | 取值 |
@@ -162,7 +163,7 @@ python -m pip install beancount    # 激活 .venv 后执行
 
 ## 7. API 端点清单
 
-> 共 **36 条 `/api/` 端点**（下表 36 行 + 末尾 1 行静态回退），与 `internal/server/router.go` 的 `mux.HandleFunc` 及 `frontend/src/api/routes.ts` 的常量一一对应；新增端点须三处同步。
+> 基线共 **36 条 `/api/` 端点**（下表 36 行 + 末尾 1 行静态回退），与 `internal/server/router.go` 的 `mux.HandleFunc` 及 `frontend/src/api/routes.ts` 的常量一一对应；新增端点须三处同步。**0.6.0 起新增端点见本节末尾「0.6.0 新增端点」小节**（按 Q-10：既有 36 行不重排，文末顺延编号）。
 
 | 端点 | 方法 | 鉴权 | 说明 |
 |---|---|---|---|
@@ -206,11 +207,19 @@ python -m pip install beancount    # 激活 .venv 后执行
 
 > **在线记账幂等冲突矩阵（迁移 013，已实现）**：新建 → `201 {uuid, idempotent:false}`；同 key 命中未删 → `200 {uuid, idempotent:true}`；命中已软删 → `409 idempotency_key_deleted`（换新 key 重提）；同 key 不同 payload → `409 idempotency_payload_mismatch`。旧客户端不传 `client_request_id` 时保持原行为。冲正沿 `opening_key`，**禁止复用** `client_request_id`。
 > **M2 端点（批 4，已实现）**：`/api/backup/restore/preview`、`/api/backup/restore`、`/api/import/beancount/preview`、`/api/import/beancount`。防误操作靠 **只读预检 + `RESTORE` 确认词 + pre-restore 快照 + 单一大事务**（**未**采用方案早期设想的 `Idempotency-Key` 头 + 通用 `idempotency_keys` 表）；恢复仅系统管理员、导入登录即可，两者均豁免账本上下文。
-> 多账本上下文：业务端点需带 `X-Ledger-Id` 头，服务端缺失回退默认账本 id=1；`/api/import/*`、`/api/db/*`、`/api/backup/*` 为 middleware 豁免路径。`viewer` 只读（非 GET 一律 403）、`editor` 可写、`owner` 可管理。**新前端 API 客户端必须强制注入并断言该头，缺失直接抛错，绝不静默回退**（否则交易会记进错误账本）。
+> 多账本上下文：业务端点需带 `X-Ledger-Id` 头，服务端缺失时回退「该用户所属、未删、最小 id 账本」（0.6.0 R3，不再硬编码 id=1）；`/api/import/*`、`/api/db/*`、`/api/backup/*` 为 middleware 豁免路径。`viewer` 只读（非 GET 一律 403）、`editor` 可写、`owner` 可管理。**新前端 API 客户端必须强制注入并断言该头，缺失直接抛错，绝不静默回退**（否则交易会记进错误账本）。
 > 备份端点例外：备份是全库级产物，**不解析 `X-Ledger-Id`、不校验账本成员**，只要求登录态 + `users.is_admin`。账本级 owner ≠ 系统管理员，勿混用。
 > 鉴权范围按 `/api/` 前缀划分：非 `/api/` 一律放行交由静态托管，新增前端路由无需改白名单。
 > CORS：`LEDGER_CORS_ORIGINS` 未设 = 仅同源（不输出 CORS 头）；设为逗号白名单 = 命中回显 `Origin` + `Allow-Credentials: true` + `Vary: Origin`；设为 `*` = 旧行为但不带凭证。Headers 含 `Content-Type, Authorization, X-Ledger-Id, X-CSRF`，Methods 含 `GET,POST,DELETE,PATCH,OPTIONS`，`OPTIONS` 预检 204 不鉴权。
-> 错误结构统一 `{error, code?, ...details}`（`internal/handler/handler.go` 的 `writeError`）。前端边界：**4xx 不重试、5xx 最多 3 次、fetch 失败显示离线提示并保留输入**；错误码到用户文案的映射集中一处，不把 `HTTP 500` 原文甩给用户。
+> 错误结构统一 `{error, code?, ...details}`（`internal/handler/handler.go` 的 `writeError`）。前端边界：**4xx 不重试、5xx 最多 3 次、fetch 失败显示离线提示并保留输入**；错误码到用户文案的映射集中一处（`frontend/src/api/errors.ts` 的 `codeMessage`），不把 `HTTP 500` 原文甩给用户。
+
+### 0.6.0 新增端点（按 Q-10 顺延，既有 36 行不重排）
+
+| 端点 | 方法 | 鉴权 | 说明 |
+|---|---|---|---|
+| `/api/ledgers/{id}` | DELETE | 登录+**owner**（该账本） | 0.6.0 S1：软删账本（迁移 015 的 `ledgers.deleted_at`）。顺序为「成员门禁 → 禁删最后一个 → `pre-ledger-delete` 一致性快照（VACUUM INTO）→ 单事务软删」；错误码 `409 ledger_has_members {member_count, members}`、`409 last_ledger`、`403 ledger_deleted`；不写 `sync_log`、不轮换 `instance_id`。与既有 PATCH 同路径，仅新增方法 |
+
+> 本小节端点已同步 `internal/server/router.go` 与 `frontend/src/api/routes.ts`（沿用 `ledgerById` 常量：同一路径多方法共用一个常量，DELETE 为 0.6.0 新增方法）。`GET /api/ledgers` 行级附加 `member_count` / `account_count` / `transaction_count`（P1-03，additive，不新增端点）；请求未带 `X-Ledger-Id` 时回退「该用户所属、未删、最小 id 账本」，不再硬编码 id=1（R3）。
 
 ---
 
@@ -220,7 +229,7 @@ python -m pip install beancount    # 激活 .venv 后执行
 - **Beancount 兼容**：改 `internal/export/beancount.go` / `files.go` 后必须重新跑 bean-check。**测试中 `BEAN_CHECK_STRICT=1` 时找不到校验器即失败**，不要改回静默跳过（会形成「测试全绿但账芯从未被验证」的假绿灯）。
 - **备份必须用 `VACUUM INTO`，禁止复制 db 文件**：WAL 模式下未 checkpoint 的数据在 `-wal` 里。实测主库 188 KB / WAL 4.1 MB 时直接复制只得到 236/300 条记录，且**不报错**。快照后必须过 `PRAGMA integrity_check` 与行数比对。
 - **全库级操作要系统管理员**：备份 / 下载 / 恢复校验 `users.is_admin`，不能用账本级 `owner` 代替。
-- **迁移优先**：任何 schema 改动走 `migrate.go`，幂等、记录 `schema_migrations`；新增编号顺延（当前至 014，下一个是 015）。
+- **迁移优先**：任何 schema 改动走 `migrate.go`，幂等、记录 `schema_migrations`；新增编号顺延（当前至 015，下一个是 016）。
 - **借贷平衡**：后端 `handleCreateTransaction` 按币种平衡校验；前端记一笔页实时指示。
 - **UUID 引用**：同步实体一律用 `uuid` 互引，勿用服务端自增 `id` 跨端传递；在线用 `account_id`、离线 push 用 `account_uuid`（§6）。
 - **不可变**：交易一旦创建不原地改；改账 = 新增冲正交易。
@@ -237,7 +246,7 @@ python -m pip install beancount    # 激活 .venv 后执行
 
 **遗留 / 注意**：
 1. `package-lock.json` 在 Linux（CI ubuntu）上的 `npm ci` 与 Dockerfile Node 构建，以 GitHub Actions `web-verify` / 镜像构建的运行记录为准，别把「配置写了」当成「已经跑过」；若失败按 lock 缺平台二进制处理（重新在 Linux 生成）。
-2. `docs/` 目录已于 2026-11-14 清空（19 份旧阶段文档），内容仅存于 git 历史，需要时从历史提交取回。
+2. `docs/` 现存 `0.5.2-prd.md`（产品口径）与 `0.5.2-design.md`（架构设计）两份权威文档；19 份旧阶段文档仅存 git 历史。
 3. `frontend/dist/legacy/` 为**冻结回滚基准**（不入库，需从 git 历史重建）；`web-build` 的 `emptyOutDir` 会清掉它——需要回滚能力时从 `d297318` 之前的 git 历史重建。回滚旧版须同时设 `LEDGER_AUTH_EXPOSE_TOKEN=true`。
 4. `CHANGELOG.md` 顶部已为 `[0.5.1] - 2026-11-13`，M7 批 0~6 与图标/密码补丁已记入该版本；tag / `frontend/package.json` / 镜像示例已同步为 0.5.1，**`v0.5.1` tag 已推送至 origin**。
 5. 真机双端联调（浏览器 A/B 同时在线、离线多设备端到端）与批 5 离线链路真机冒烟尚未完整确认。

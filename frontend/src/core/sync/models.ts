@@ -43,6 +43,8 @@ export interface LocalTxn {
   description: string
   tags: string[]
   reversed_of?: string
+  /** A-02：原交易「已冲正」标记，随 pull 的 op=update 整条覆盖下发；旧响应可能缺失。 */
+  reversed_by?: string
   created_by_name?: string
   postings: LocalPosting[]
 }

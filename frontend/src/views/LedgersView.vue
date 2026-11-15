@@ -6,13 +6,19 @@
  * 新建（默认币种 CNY）、改名（owner）、切换账本、期初日期（owner 专属、
  * 二次确认、上界 = min(今日, 最早非 opening 交易)）。
  *
+ * 0.6.0 S1 新增「删除账本」：仅 owner 且除 owner 外 0 成员可用，输入账本名
+ * 确认词后提交；确认弹窗展示账户数 / 交易数（P1-03）。后端按序做成员门禁、
+ * 禁删最后一个账本、pre-ledger-delete 一致性快照与软删；删除后
+ * session.refreshLedgers() 兜底切到最小有效账本（AC-1.4 / R3）。
+ *
  * 后端 PATCH /api/ledgers/{id} 的 name / default_commodity 是**非指针字段**：
  * 改名或改期初日期时必须把两者都带上，否则 name 空串会被拒、币种会被清空。
  */
 import { computed, onMounted, ref } from 'vue'
 
 import { ledgerManageApi, transactionApi } from '@/api/client'
-import { ApiError } from '@/api/errors'
+import { ApiError, codeMessage } from '@/api/errors'
+import type { LedgerView } from '@/api/types'
 import { roleLabel } from '@/core/batch3'
 import { todayString } from '@/core/record'
 import { useSessionStore } from '@/stores/session'
@@ -35,6 +41,32 @@ const openingValue = ref('')
 const openingCount = ref(0)
 const openingBound = ref(todayString())
 
+// ---- 0.6.0 删除账本 ----
+const deleteTargetId = ref<number | null>(null)
+const deleteConfirm = ref('')
+const deleteTarget = computed<LedgerView | null>(() => {
+  for (const ledger of session.ledgers) {
+    if (ledger.id === deleteTargetId.value) {
+      return ledger
+    }
+  }
+  return null
+})
+// 模板只消费下面这些字符串 / 数字 computed，避免 v-if 内对可空对象做属性访问。
+const deleteName = computed(() => (deleteTarget.value === null ? '' : deleteTarget.value.name))
+const deleteAccountCount = computed(() =>
+  deleteTarget.value === null ? 0 : statOf(deleteTarget.value.account_count),
+)
+const deleteTxnCount = computed(() =>
+  deleteTarget.value === null ? 0 : statOf(deleteTarget.value.transaction_count),
+)
+const deleteMemberCount = computed(() =>
+  deleteTarget.value === null ? 0 : statOf(deleteTarget.value.member_count),
+)
+const canSubmitDelete = computed(
+  () => deleteName.value !== '' && deleteConfirm.value === deleteName.value,
+)
+
 const currentLedger = computed(() => {
   for (const ledger of session.ledgers) {
     if (ledger.id === session.ledgerId) {
@@ -45,8 +77,18 @@ const currentLedger = computed(() => {
 })
 const isOwner = computed(() => currentLedger.value !== null && currentLedger.value.role === 'owner')
 
+/** 兼容旧响应：统计字段 0.6.0 才下发，缺失按 0 处理，不用 `??` / `.at()` 等新 API。 */
+function statOf(value: number | undefined): number {
+  return value === undefined ? 0 : value
+}
+
+/** 稳定错误码优先走集中映射，未知码回退后端可读文案，绝不展示 HTTP 原文。 */
 function messageOf(err: unknown): string {
-  return err instanceof ApiError ? err.message : '操作失败，请稍后重试'
+  if (err instanceof ApiError) {
+    const mapped = err.code === undefined ? '' : codeMessage(err.code)
+    return mapped !== '' ? mapped : err.message
+  }
+  return '操作失败，请稍后重试'
 }
 
 async function reload(): Promise<void> {
@@ -122,6 +164,42 @@ function submitRename(): void {
     await ledgerManageApi.update(id, { name: targetName, default_commodity: commodity })
     renameTargetId.value = null
   }, '账本已改名')
+}
+
+/** 打开删除确认：owner 且除 owner 外无其他成员才可用（AC-1.2）。 */
+function openDelete(ledger: LedgerView): void {
+  actionError.value = ''
+  notice.value = ''
+  if (ledger.role !== 'owner') {
+    return
+  }
+  const others = statOf(ledger.member_count)
+  if (others > 0) {
+    actionError.value = `还有 ${others} 位成员，需先移除后再删除账本`
+    return
+  }
+  deleteTargetId.value = ledger.id
+  deleteConfirm.value = ''
+}
+
+function closeDelete(): void {
+  deleteTargetId.value = null
+  deleteConfirm.value = ''
+}
+
+/** 确认词必须与账本名完全一致才提交；后端另有成员 / 最后账本 / 快照门禁。 */
+function submitDelete(): void {
+  const id = deleteTargetId.value
+  const name = deleteName.value
+  if (id === null || !canSubmitDelete.value) {
+    return
+  }
+  void run(async () => {
+    await ledgerManageApi.remove(id)
+    closeDelete()
+    // run 内的 reload() 会刷新清单；若删的是当前账本，
+    // session.refreshLedgers() 兜底切到最小有效账本（AC-1.4）。
+  }, `已删除「${name}」`)
 }
 
 async function openOpening(): Promise<void> {
@@ -244,7 +322,10 @@ onMounted(() => { void reload() })
         <span class="ldg__icon">▤</span>
         <span class="ldg__name">
           {{ ledger.name }}
-          <small>{{ roleLabel(ledger.role) }} · 期初 {{ ledger.opening_date }}</small>
+          <small>
+            {{ roleLabel(ledger.role) }} · 期初 {{ ledger.opening_date }} ·
+            {{ statOf(ledger.account_count) }} 个账户 / {{ statOf(ledger.transaction_count) }} 笔交易
+          </small>
           <em v-if="ledger.id === session.ledgerId" class="ldg__current">当前</em>
         </span>
         <button
@@ -260,6 +341,14 @@ onMounted(() => { void reload() })
           :disabled="busy"
           @click="openRename(ledger.id, ledger.name)"
         >改名</button>
+        <button
+          v-if="ledger.role === 'owner'"
+          class="fb-btn-ghost ldg__btn ldg__btn--danger"
+          type="button"
+          :disabled="busy || statOf(ledger.member_count) > 0"
+          :title="statOf(ledger.member_count) > 0 ? '还有 ' + statOf(ledger.member_count) + ' 位成员，需先移除' : '删除账本'"
+          @click="openDelete(ledger)"
+        >删除</button>
       </div>
     </div>
 
@@ -285,6 +374,29 @@ onMounted(() => { void reload() })
       </div>
     </div>
 
+    <div v-if="deleteTargetId !== null" class="fb-card ldg__panel ldg__panel--danger">
+      <h2>删除账本「{{ deleteName }}」？</h2>
+      <p>
+        该账本含 {{ deleteAccountCount }} 个账户、{{ deleteTxnCount }} 笔交易，
+        除你之外还有 {{ deleteMemberCount }} 位成员。删除前会自动生成一份
+        pre-ledger-delete 一致性快照（可在备份清单中恢复）；删除后账本不再出现在列表里，
+        本地残留的账本 id 由会话自动切换到最小有效账本。
+      </p>
+      <label class="ldg__field">
+        <span>请输入账本名「{{ deleteName }}」确认删除</span>
+        <input v-model="deleteConfirm" class="fb-input" type="text" :placeholder="deleteName" />
+      </label>
+      <div class="ldg__actions">
+        <button class="fb-btn-ghost" type="button" @click="closeDelete">取消</button>
+        <button
+          class="fb-btn-primary"
+          type="button"
+          :disabled="busy || !canSubmitDelete"
+          @click="submitDelete"
+        >确认删除</button>
+      </div>
+    </div>
+
     <p class="ldg__hint">提示：切换账本会重新加载该账本数据；旧账本尚未同步的离线变更将在批 5 的同步内核中处理。</p>
   </section>
 </template>
@@ -296,6 +408,7 @@ onMounted(() => { void reload() })
 .ldg__sub { display: block; margin-top: 4px; font-size: 12px; color: var(--fb-on-hero-muted); }
 .ldg__toolbar { margin-top: 14px; padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; font-size: 12px; }
 .ldg__btn { padding: 6px 12px; font-size: 12px; }
+.ldg__btn--danger { color: var(--fb-danger); }
 .ldg__notice { margin: 10px 0 0; padding: 8px 12px; border-radius: var(--fb-radius-input); font-size: 12px; }
 .ldg__notice--ok { background: var(--fb-green-soft); color: var(--fb-green); }
 .ldg__notice--err { background: var(--fb-danger-soft); color: var(--fb-danger); }

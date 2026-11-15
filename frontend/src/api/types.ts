@@ -151,6 +151,27 @@ export interface LedgerView {
   default_commodity?: string
   opening_date: ISODate
   role: LedgerRole
+  /** 0.6.0 行级统计（可选 + 容忍旧响应）；member_count 为除 owner 外的成员数。 */
+  member_count?: number
+  account_count?: number
+  transaction_count?: number
+}
+
+/** DELETE /api/ledgers/{id} 成功响应。 */
+export interface DeleteLedgerResponse {
+  ok: boolean
+}
+
+/** 409 ledger_has_members 的成员明细（仅用户名 / 显示名，不含任何凭据）。 */
+export interface LedgerMemberRef {
+  username: string
+  display_name: string
+}
+
+/** 409 ledger_has_members 的响应明细（由 ApiError.details 承载）。 */
+export interface LedgerHasMembersDetails {
+  member_count?: number
+  members?: LedgerMemberRef[]
 }
 
 /** GET /api/ledgers */

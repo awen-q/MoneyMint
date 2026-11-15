@@ -22,7 +22,7 @@ type RetentionResult struct {
 // 保留规则（三者取并集，互不排斥）：
 //  1. 最近 keepDaily 份成功备份（不论日期）
 //  2. 最近 keepMonthly 个「每月至少一份」（维持长期历史，避免只有最近两周）
-//  3. 全部 manual 触发且成功的备份（用户主动创建的，不自动清理）
+//  3. 全部 manual 与 pre-ledger-delete 触发且成功的备份（不自动清理，Q-07）
 //
 // 约束：
 //   - 只处理成功的备份；失败记录保留在清单里供排查（其文件在失败时已被清理）
@@ -83,9 +83,10 @@ func (e *Engine) ApplyRetention(keepDaily, keepMonthly int) (*RetentionResult, e
 		}
 	}
 
-	// 规则 3：手动备份永不自动清理
+	// 规则 3：手动备份与删除账本前快照永不自动清理
+	// （Q-07：keep 集合扩展为 {manual, pre-ledger-delete}）。
 	for _, it := range items {
-		if it.Succeeded() && it.Trigger == "manual" {
+		if it.Succeeded() && (it.Trigger == "manual" || it.Trigger == "pre-ledger-delete") {
 			keep[it.Name] = true
 		}
 	}

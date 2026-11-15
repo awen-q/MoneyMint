@@ -6,9 +6,10 @@ package domain
 
 import "time"
 
-// DefaultLedgerID 是首个注册用户创建的首个账本 id（AUTOINCREMENT 自 1 起），
-// 也作为请求未携带 X-Ledger-Id 时的回退账本，保证旧脚本/旧客户端向前兼容。
-// 多账本隔离（P1-C）落地后，业务账本一律从请求上下文（X-Ledger-Id）解析。
+// DefaultLedgerID 是首个注册用户创建的首个账本 id（AUTOINCREMENT 自 1 起）。
+// 多账本隔离（P1-C）落地后，业务账本一律从请求上下文（X-Ledger-Id）解析；
+// 0.6.0 起请求缺失该头时回退「该用户所属最小有效账本」，不再使用本常量
+// （见 internal/server/middleware.go 的 ledgerIDFromRequest）。
 const DefaultLedgerID int64 = 1
 
 // 账户类型（Beancount 五大类）。
@@ -89,6 +90,12 @@ type Transaction struct {
 	OpeningVersion     int64  // 账户维度期初版本，从 1 递增
 	OpeningKey         string // 仅期初交易：opening:{account_uuid}:{version}
 	ReversedBy         string // 原期初交易：冲正交易 uuid；非空即失效
+
+	// 迁移 015 一次性落库的新列（0.6.0）。本批只落库与透出模型字段，
+	// 读取/写入由后续切片（S4 校准、S5 导入）实现，避免本批预写业务桩。
+	BalanceDate   string // 校准 as-of 日期 D（balance:{uuid}:v{n} 行非空）
+	BalanceKey    string // 校准身份键，仅校准交易非空
+	ImportBatchID string // 导入批次 id（"imp:"+uuid）
 }
 
 // Commodity 是账本内的币种/商品（Beancount commodity 指令）。
@@ -159,6 +166,13 @@ type Ledger struct {
 	Role             string // 当前用户在该账本中的角色：owner | editor | viewer
 	OpeningDate      string // 'YYYY-MM-DD'；迁移 012 落库
 	CreatedAt        string // 建账时间（UTC，datetime('now')）
+	DeletedAt        string // 迁移 015：软删标记；查询层一律过滤
+
+	// 列表行级统计（P1-03，additive）：仅 ListLedgersByUser 填充。
+	// MemberCount 是「除 owner 外」的成员数，与删除门禁口径一致（D-03）。
+	MemberCount      int64
+	AccountCount     int64
+	TransactionCount int64
 }
 
 // 期初方向（FR-05）：持有 / 欠款。

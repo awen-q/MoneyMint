@@ -81,11 +81,14 @@ func (s *Store) IsMember(ledgerID, userID int64) (bool, error) {
 	return n > 0, nil
 }
 
-// RoleOf 返回用户在账本中的角色；未加入返回空串。
+// RoleOf 返回用户在账本中的角色；未加入或账本已软删返回空串（一律 403）。
+// 0.6.0：联查 ledgers.deleted_at IS NULL，软删账本对任何成员都不可访问。
 func (s *Store) RoleOf(ledgerID, userID int64) (string, error) {
 	var role string
 	err := s.db.QueryRow(
-		`SELECT role FROM ledger_members WHERE ledger_id=? AND user_id=?`,
+		`SELECT lm.role FROM ledger_members lm
+		 JOIN ledgers l ON l.id=lm.ledger_id
+		 WHERE lm.ledger_id=? AND lm.user_id=? AND l.deleted_at IS NULL`,
 		ledgerID, userID,
 	).Scan(&role)
 	if errors.Is(err, sql.ErrNoRows) {

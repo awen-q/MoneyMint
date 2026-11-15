@@ -12,9 +12,17 @@ import (
 	"familyledger/internal/repository"
 )
 
+// SnapshotFunc 生成一份一致性快照（VACUUM INTO），trigger 标识触发来源。
+// 由组合根注入，避免 service 反向依赖 backup 包；账本删除前必须成功执行。
+type SnapshotFunc func(trigger string) error
+
 // Service 是业务逻辑的统一入口。
 type Service struct {
 	repo *repository.Store
+
+	// snapshot 是删除账本前的一致性快照实现；为 nil 时 DeleteLedger 明确拒绝，
+	// 绝不静默跳过快照（AC-1.3）。由组合根通过 ConfigureSnapshot 注入。
+	snapshot SnapshotFunc
 
 	// loginLimiter 按「用户名」计数：5 次失败锁该账号。
 	// loginIPLimiter 按「来源 IP」计数，阈值放宽（见 ConfigureLoginLimit）：
@@ -39,3 +47,6 @@ func New(repo *repository.Store) *Service {
 		loginIPLimiter: ratelimit.New(0, 0, 0),
 	}
 }
+
+// ConfigureSnapshot 注入删除前一致性快照实现（组合根调用）。
+func (s *Service) ConfigureSnapshot(fn SnapshotFunc) { s.snapshot = fn }

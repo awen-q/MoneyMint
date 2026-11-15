@@ -186,3 +186,29 @@ func TestRetentionNoopWhenWithinLimits(t *testing.T) {
 		t.Fatalf("应保留 3 份，实际 %d", res.Kept)
 	}
 }
+
+// TestRetentionKeepsPreLedgerDeleteSnapshots 0.6.0 / Q-07：
+// 账本删除前的一致性快照与手动备份同款，纳入永久保留集合、不被自动清理。
+func TestRetentionKeepsPreLedgerDeleteSnapshots(t *testing.T) {
+	engine, _, _ := newTestEngine(t, 0)
+
+	snapshotAt := time.Now().AddDate(0, 0, -30).Truncate(time.Hour)
+	seedBackups(t, engine, 1, snapshotAt, "pre-ledger-delete")
+	// 之后 20 份自动备份，超出每日保留窗口，触发清理。
+	seedBackups(t, engine, 20, time.Now().AddDate(0, 0, -19).Truncate(time.Hour), "auto")
+
+	res, err := engine.ApplyRetention(14, 0)
+	if err != nil {
+		t.Fatalf("apply retention: %v", err)
+	}
+
+	snapshotName := "ledger-" + snapshotAt.Format(snapshotTimeFmt) + ".db"
+	for _, removed := range res.Removed {
+		if removed == snapshotName {
+			t.Fatal("pre-ledger-delete 快照被自动清理删除了")
+		}
+	}
+	if _, err := os.Stat(filepath.Join(engine.Dir(), snapshotName)); err != nil {
+		t.Fatalf("pre-ledger-delete 快照应保留: %v", err)
+	}
+}

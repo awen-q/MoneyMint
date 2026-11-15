@@ -61,6 +61,16 @@ func New(cfg config.Config) (*App, error) {
 		}
 	}
 
+	// 账本删除前置快照（S1 / D-03）：把备份引擎包装成回调注入 service，
+	// 保证「先 VACUUM INTO 快照、后软删」的顺序；engine 为 nil 时
+	// DeleteLedger 会明确拒绝，绝不静默跳过快照（AC-1.3）。
+	if engine != nil {
+		svc.ConfigureSnapshot(func(trigger string) error {
+			_, err := engine.Snapshot(trigger)
+			return err
+		})
+	}
+
 	h := handler.New(svc, engine)
 	// D-7：会话形态与 CORS 策略全部来自环境变量，支持服务端回退，无需重新构建前端。
 	h.ConfigureAuth(handler.AuthOptions{

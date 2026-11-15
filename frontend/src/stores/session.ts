@@ -3,7 +3,7 @@
  *
  * D-7：会话凭据只由 httpOnly Cookie 承担，本 store **不保存 token**。
  * 刷新页面后通过 `/api/auth/me` 恢复登录态（AC-32），再拉取账本清单并校验
- * 持久化的账本 id 是否仍在成员列表内，不在则回退首个账本（E-08）。
+ * 持久化的账本 id 是否仍在成员列表内，不在则回退最小有效账本（E-08 / AC-1.4）。
  */
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
@@ -42,7 +42,21 @@ export const useSessionStore = defineStore('session', () => {
       !mustChangePassword.value &&
       ledgers.value.length === 0,
   )
-  const isViewer = computed(() => user.value !== null && user.value.role === 'viewer')
+  // D-14 / AC-5.7：`Me()` 返回的 user.role 恒为空串，不能作为门禁来源。
+  // 角色是账本级属性，按当前 ledgerId 从 ledgers[].role 派生（与
+  // LedgersView / MembersView 的 role 读取同款）；后端 middleware 的
+  // viewer 写拦截仍是权威防线，这里只负责 UI 显隐。
+  const isViewer = computed(() => {
+    if (user.value === null || ledgerId.value === null) {
+      return false
+    }
+    for (const ledger of ledgers.value) {
+      if (ledger.id === ledgerId.value) {
+        return ledger.role === 'viewer'
+      }
+    }
+    return false
+  })
   const ledgerName = computed(() => {
     if (ledgerId.value === null) {
       return '未选择账本'
@@ -101,7 +115,15 @@ export const useSessionStore = defineStore('session', () => {
     if (persisted !== null && ids.indexOf(persisted) >= 0) {
       return
     }
-    const next = ledgers.value.length > 0 ? ledgers.value[0].id : null
+    // AC-1.4 / R3：服务端软删账本后不再返回它，localStorage 里残留的 id
+    // 可能已失效；兜底切到该用户「最小有效账本 id」，不依赖服务端返回顺序，
+    // 避免删掉原 id=1 后未带 X-Ledger-Id 的旧客户端 / curl 全量 403。
+    let next: number | null = null
+    for (const ledger of ledgers.value) {
+      if (next === null || ledger.id < next) {
+        next = ledger.id
+      }
+    }
     ledgerId.value = next
     writeLedgerId(next)
   }

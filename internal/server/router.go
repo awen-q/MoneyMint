@@ -92,7 +92,8 @@ func newRouter(h *handler.Handler, svc *service.Service, webRoot string, corsCfg
 		http.MethodPost: h.HandleCreateLedger,
 	}))
 	mux.HandleFunc("/api/ledgers/{id}", methodSwitch(map[string]http.HandlerFunc{
-		http.MethodPatch: h.HandleUpdateLedger,
+		http.MethodPatch:  h.HandleUpdateLedger,
+		http.MethodDelete: h.HandleDeleteLedger,
 	}))
 
 	// 成员管理

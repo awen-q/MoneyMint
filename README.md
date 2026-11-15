@@ -23,13 +23,13 @@
 - **在线记账幂等**：提交可带 `client_request_id`，弱网重复提交只产生一笔交易（后端部分唯一索引兜底）。
 - **离线多端同步**：append-only + 不可变交易 + 全局水位，增量 pull / 逐条幂等 push，天然几乎无冲突。
 - **标准导出**：单文件或多文件目录（`main.bean` + `accounts/` + `date/`）两种导出，解压后可直接 `bean-check`。
-- **PWA**：可安装、离线壳、IndexedDB 本地真相源。
+- **PWA**：可安装、离线壳、IndexedDB 离线提交队列。
 
 ## 技术栈
 
 | 层 | 技术 |
 |---|---|
-| 后端 | Go 1.26 + 标准库 + [`modernc.org/sqlite`](https://gitlab.com/cznic/sqlite)（纯 Go，免 CGO） |
+| 后端 | Go 1.25.0 + 标准库 + [`modernc.org/sqlite`](https://gitlab.com/cznic/sqlite)（纯 Go，免 CGO） |
 | 前端 | **Vue 3 + Vite 纯 SPA** + Pinia + Vue Router + `decimal.js`；`es2015` + plugin-legacy，目标 iOS 14.8 / Safari 14.1 |
 | 导出校验 | 项目内 Python venv + `beancount` |
 | 部署 | Docker 多阶段构建（amd64 / arm64），单容器单端口 |
@@ -69,7 +69,7 @@ docker run -d --name famben -p 8080:8080 \
 
 ### 环境要求
 
-- Go 1.26+
+- Go 1.25.0+
 - Node.js 22.x（前端唯一构建链；钉版口径见 `frontend/.nvmrc` / `engines` / Dockerfile 三处一致）
 - Python 3.x（仅用于导出校验，装进项目 `.venv`，不污染系统）
 
@@ -196,7 +196,7 @@ python -m beancount.scripts.check data/family.beancount   # 激活项目 .venv �
 ```
 
 > 字段提醒：在线 `POST /api/transactions` 的 posting 用 `account_id`（整数）；离线 `POST /api/sync/push` 的交易 posting 用 `account_uuid`（字符串），两者勿混。
-> 多账本场景业务请求须带 `X-Ledger-Id`，缺失会回退默认账本 id=1。
+> 多账本场景业务请求须带 `X-Ledger-Id`；0.6.0 起未带该头时服务端回退到该用户所属最小有效账本（不再是固定 id=1），前端仍强制注入并断言该头。
 
 ## 目录结构
 
@@ -207,7 +207,7 @@ python -m beancount.scripts.check data/family.beancount   # 激活项目 .venv �
 ├── internal/             # 后端分层
 │   ├── config/           # 集中配置（环境变量 + 启动校验）
 │   ├── domain/           # 领域模型 + 哨兵错误
-│   ├── db/               # 开库 + 增量迁移（当前至 014 库世代）
+│   ├── db/               # 开库 + 增量迁移（当前至 015 库世代）
 │   ├── repository/       # 数据访问层（SQL 集中于此）
 │   ├── service/          # 业务逻辑层（校验/事务/同步/权限/备份调度/恢复/导入）
 │   ├── handler/          # HTTP 适配层

@@ -107,6 +107,29 @@ func (s *Store) listTransactions(ledgerID int64, deleted bool) ([]domain.Transac
 	return txns, nil
 }
 
+// MarkTransactionReversed 把一笔交易标记为「已冲正」，仅当尚未被标记时生效。
+//
+// A-01：供同步 push 的 transaction op=update 兜底分支使用（不新增 op、不升协议
+// 版本）。服务端三步修改事务会自行写 sync_log，这里**不写** sync_log，避免
+// 旧客户端 / 运维工具重放 op=update 时重复广播。返回本次是否真正更新：
+// 已处于冲正态或 uuid 不存在时返回 false，保持幂等。
+func (s *Store) MarkTransactionReversed(ledgerID int64, uuid, reversalUUID string) (bool, error) {
+	res, err := s.db.Exec(
+		`UPDATE transactions SET reversed_by=?
+		 WHERE ledger_id=? AND uuid=?
+		   AND (reversed_by IS NULL OR reversed_by='')`,
+		reversalUUID, ledgerID, uuid,
+	)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 // TransactionByUUID 按 uuid 查询单笔未删除交易（含分录，引用账户 uuid）。
 func (s *Store) TransactionByUUID(ledgerID int64, uuid string) (domain.Transaction, error) {
 	var t domain.Transaction

@@ -28,6 +28,7 @@ import type {
   CreateAccountRequest,
   CreateLedgerRequest,
   CreateTransactionRequest,
+  DeleteLedgerResponse,
   HealthResponse,
   IdentityCheckResult,
   ImportPreviewResult,
@@ -593,6 +594,10 @@ export const ledgerManageApi = {
   },
   update(id: number, body: UpdateLedgerRequest): Promise<LedgerView> {
     return api.patch<LedgerView>(formatApiPath(API_ROUTES.ledgerById, { id: String(id) }), body)
+  },
+  /** 软删账本（0.6.0 S1，仅 owner；成员门禁 / 最后账本 / 删除前快照由后端按序保证）。 */
+  remove(id: number): Promise<DeleteLedgerResponse> {
+    return api.delete<DeleteLedgerResponse>(formatApiPath(API_ROUTES.ledgerById, { id: String(id) }))
   },
 }
 

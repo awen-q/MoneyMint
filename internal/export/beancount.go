@@ -214,8 +214,9 @@ func ExportLedger(db *sql.DB, ledgerID int64) (string, error) {
 	b.WriteString("\n")
 
 	// 2) open / close（按账户遍历：open 紧跟其 close）
-	//    支持 Beancount close 后再 open 同名账户：每个账户的 close 紧随其 open 之后输出，
-	//    避免多个 open 堆叠导致 duplicate open 指令（0.4-A close 语义）。
+	//    close 后不可重建同名账户（C-04：同名再 open 会触发 Duplicate open directive）；
+	//    每个账户的 close 紧随其 open 之后输出，避免多个 open 堆叠导致指令顺序错误
+	//    （0.4-A close 语义）。
 	sort.SliceStable(accounts, func(i, j int) bool {
 		if accounts[i].openDate != accounts[j].openDate {
 			return accounts[i].openDate < accounts[j].openDate
