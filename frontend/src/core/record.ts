@@ -14,6 +14,9 @@
  * - 报表（批 3）将带币种切换器，聚合一律在选定币种内进行。
  */
 import { Money } from './Money'
+// 仅类型导入：编译后完全擦除，core 层零运行时依赖 api / Vue / store。
+// api/types.ts 的 TxnFlag 是唯一 flag 类型源，此处不重复定义。
+import type { TxnFlag } from '../api/types'
 
 /** 账户余额视图所需的最小结构（避免 core 层反向依赖 api 层）。 */
 export interface SummaryAccount {
@@ -59,7 +62,50 @@ export interface RecordForm {
   transferFromAccountId: number | null
   transferToAccountId: number | null
   /** 高级双录模式的分录行（批 2.5；accountId 允许 null 表示未选择；旧草稿无此字段）。 */
-  advancedPostings?: Array<{ accountId: number | null; amount: string }>
+  advancedPostings?: AdvancedRow[]
+  /**
+   * 交易标记：`*` 已完成 / `!` 待核或冲正。
+   * 可选仅为兼容既有测试固件与旧草稿（它们不声明该字段）；RecordSheet 运行时始终写入，
+   * 缺省口径一律按 `'*'` 处理。类型源仍是 api/types.ts 的 TxnFlag。
+   */
+  flag?: TxnFlag
+}
+
+/** 高级双录的一行：账户 + 带符号定点金额 + 币种（由账户带出，可下拉覆盖）。 */
+export interface AdvancedRow {
+  accountId: number | null
+  /** 定点字符串（带符号），如 `-128.50`。 */
+  amount: string
+  /** 由账户 commodity_restriction 带出，空串表示跟随账本默认币种。 */
+  commodity: string
+}
+
+/** 分录展示行：真实导出名 + 中文 DisplayName + 借贷徽标（仅 UI，Beancount 无借贷字段）。 */
+export interface PostingView {
+  account: SummaryAccount
+  /** account.name，真实 ASCII 导出名。 */
+  name: string
+  /** display_name 优先、name 兜底的中文主文案。 */
+  label: string
+  /** 带符号定点金额。 */
+  amount: string
+  commodity: string
+  /** amount > 0 为借（UI 徽标），仅展示用。 */
+  isDebit: boolean
+}
+
+/** 按商品（币种）分组的配平结果。 */
+export interface BalanceGroup {
+  commodity: string
+  /** 带符号合计。 */
+  sum: string
+  /** 正数分录之和（恒为非负）。 */
+  pos: string
+  /** 负数分录之和（恒为非正）。 */
+  neg: string
+  rows: number
+  /** 同币种 sum = 0 且分录数 >= 2。 */
+  balanced: boolean
 }
 
 /** 两位补零（不依赖 padStart / toISOString，避免跨时区跨日）。 */
@@ -131,9 +177,20 @@ export function accountLabel(account: SummaryAccount): string {
     : account.name
 }
 
-function resolveCommodity(account: SummaryAccount, fallback: string): string {
+/**
+ * 账户币种：commodity_restriction 优先，否则用账本默认币种。
+ * 高级双录「选账户自动带出币种」与 buildPostings 共用同一口径，避免两处漂移。
+ */
+export function resolveAccountCommodity(
+  account: SummaryAccount,
+  fallback: string,
+): string {
   const restriction = account.commodity_restriction
   return restriction !== undefined && restriction !== '' ? restriction : fallback
+}
+
+function resolveCommodity(account: SummaryAccount, fallback: string): string {
+  return resolveAccountCommodity(account, fallback)
 }
 
 /** 复式恒等式：所有分录金额（定点）求和必须为 0。 */
@@ -656,4 +713,140 @@ export function balanceDiffByCommodity(
     }
   }
   return diffs
+}
+
+/**
+ * 按 commodity 分桶的配平明细（设计稿 §3.3）。
+ * 规则：同币种 sum = 0 且该币种分录数 >= 2 才算平衡；全程 Money 定点。
+ * 与 balanceDiffByCommodity 共用同一 Money 口径，不重复实现金额算法。
+ */
+export function balanceGroups(
+  postings: ReadonlyArray<{ commodity: string; amount: string }>,
+): BalanceGroup[] {
+  interface Bucket {
+    sum: Money
+    pos: Money
+    neg: Money
+    rows: number
+  }
+  const buckets: { [code: string]: Bucket } = {}
+  for (const posting of postings) {
+    const code = posting.commodity === '' ? 'CNY' : posting.commodity
+    let value: Money
+    try {
+      value = Money.from(posting.amount)
+    } catch {
+      value = Money.zero()
+    }
+    const previous = buckets[code]
+    if (previous === undefined) {
+      buckets[code] = {
+        sum: value,
+        pos: value.isNegative() ? Money.zero() : value,
+        neg: value.isNegative() ? value : Money.zero(),
+        rows: 1,
+      }
+    } else {
+      previous.sum = previous.sum.plus(value)
+      if (value.isNegative()) {
+        previous.neg = previous.neg.plus(value)
+      } else {
+        previous.pos = previous.pos.plus(value)
+      }
+      previous.rows += 1
+    }
+  }
+  return Object.keys(buckets).map((code) => {
+    const bucket = buckets[code]
+    return {
+      commodity: code,
+      sum: bucket.sum.toString(),
+      pos: bucket.pos.toString(),
+      neg: bucket.neg.toString(),
+      rows: bucket.rows,
+      balanced: bucket.sum.isZero() && bucket.rows >= 2,
+    }
+  })
+}
+
+/**
+ * 分录 → 展示视图：挂真实 ASCII 导出名（account.name）与中文 display_name。
+ * 账户 id 找不到时退回占位视图，不抛错（账户列表可能尚在加载）。
+ */
+export function buildPostingViews(
+  postings: ReadonlyArray<{ accountId: number; commodity: string; amount: string }>,
+  accounts: ReadonlyArray<SummaryAccount>,
+): PostingView[] {
+  const byId = new Map<number, SummaryAccount>()
+  for (const account of accounts) {
+    byId.set(account.id, account)
+  }
+  return postings.map((posting) => {
+    const account = byId.get(posting.accountId)
+    let value = Money.zero()
+    try {
+      value = Money.from(posting.amount)
+    } catch {
+      // 非法金额按 0 展示，提交前的 buildPostings/buildAdvancedPostings 会拦截。
+    }
+    return {
+      account: account === undefined ? { id: posting.accountId, name: '', type: '' } as SummaryAccount : account,
+      name: account === undefined ? '' : account.name,
+      label: account === undefined ? '' : accountLabel(account),
+      amount: value.toString(),
+      commodity: posting.commodity === '' ? 'CNY' : posting.commodity,
+      isDebit: !value.isNegative(),
+    }
+  })
+}
+
+/**
+ * 全部分录是否配平：每组均 balanced 且至少两行（空数组返回 false）。
+ * 供 RecordSheet / AdvancedPostings 的 canSubmit 复用，避免多处重复判定。
+ */
+export function allBalanceGroupsBalanced(groups: ReadonlyArray<BalanceGroup>): boolean {
+  if (groups.length === 0) {
+    return false
+  }
+  for (const group of groups) {
+    if (!group.balanced) {
+      return false
+    }
+  }
+  return true
+}
+
+/**
+ * 高级双录行的完整守门：至少 2 行 + 每行账户已选且金额非 0 + 各币种配平。
+ * RecordSheet（提交守门）与 AdvancedPostings（展示守门）共用，避免两处漂移。
+ */
+export function advancedRowsReady(
+  rows: ReadonlyArray<{ accountId: number | null; amount: string; commodity?: string }>,
+  fallbackCommodity: string,
+): boolean {
+  if (rows.length < 2) {
+    return false
+  }
+  for (const row of rows) {
+    if (row.accountId === null) {
+      return false
+    }
+    let value = Money.zero()
+    try {
+      value = Money.from(row.amount)
+    } catch {
+      return false
+    }
+    if (value.isZero()) {
+      return false
+    }
+  }
+  return allBalanceGroupsBalanced(
+    balanceGroups(
+      rows.map((row) => ({
+        commodity: row.commodity === undefined || row.commodity === '' ? fallbackCommodity : row.commodity,
+        amount: row.amount,
+      })),
+    ),
+  )
 }

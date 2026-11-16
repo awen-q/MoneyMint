@@ -112,6 +112,8 @@ async function enterAmount100(wrapper: VueWrapper): Promise<void> {
 async function mountSheet(): Promise<VueWrapper> {
   const wrapper = mount(RecordSheet)
   await flushPromises() // 等待 onMounted 的 loadAccounts
+  // 键盘默认收起：先点金额区走真实展开路径，再沿用原有按键用例。
+  await wrapper.find('[data-act="amount"]').trigger('click')
   return wrapper
 }
 

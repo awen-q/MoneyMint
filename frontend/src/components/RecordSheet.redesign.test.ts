@@ -1,0 +1,388 @@
+// @vitest-environment jsdom
+/**
+ * 记一笔最终稿回归（T04）：
+ * - H5 全屏 / PC 弹窗容器类与形态切换（CSS 断点，不探测设备）；
+ * - 真实账户源：中文 display_name 作主文案，ASCII name 进导出预览；
+ * - flag 随控件变化写入提交载荷与草稿快照；
+ * - bean 片段逐字对齐 Go，中文标签走 tags 元数据行、金额无千分位；
+ * - 主操作全局唯一、无「取消」、不平衡禁保存（含 disabled 原生派发守门）；
+ * - --vvh / body.kbd-open 监听在 unmount 后成对清理。
+ */
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+
+import RecordSheet from './RecordSheet.vue'
+
+const h = vi.hoisted(() => ({
+  list: vi.fn(),
+  listCommodities: vi.fn(),
+  create: vi.fn(),
+  update: vi.fn(),
+  readDraft: vi.fn(),
+  writeDraft: vi.fn(),
+  newKey: vi.fn(() => 'RD-KEY-1'),
+  editing: { value: null as Record<string, unknown> | null },
+}))
+
+vi.mock('@/api/client', () => ({
+  accountApi: { list: h.list },
+  commodityApi: { list: h.listCommodities },
+  transactionApi: { create: h.create, update: h.update },
+  newIdempotencyKey: h.newKey,
+}))
+
+vi.mock('@/stores/session', () => ({
+  useSessionStore: () => ({
+    ledgerId: 7,
+    isViewer: false,
+    defaultCommodity: 'CNY',
+    ledgerName: '家庭账本',
+  }),
+}))
+
+vi.mock('@/stores/recordSheet', () => ({
+  useRecordSheetStore: () => ({
+    get editingTxn() {
+      return h.editing.value
+    },
+    notifySaved: vi.fn(),
+    notifyChanged: vi.fn(),
+  }),
+}))
+
+vi.mock('@/stores/privacy', () => ({
+  usePrivacyStore: () => ({ enabled: false }),
+}))
+
+vi.mock('@/core/storage', () => ({
+  readDraft: h.readDraft,
+  writeDraft: h.writeDraft,
+  clearDraft: vi.fn(),
+  readDefaultAccounts: () => ({}),
+  setDefaultAccount: vi.fn(),
+}))
+
+const ACCOUNTS = [
+  { id: 1, uuid: 'u-cash', name: 'Assets:Cash', display_name: '现金', type: 'Assets', open_date: '2026-01-01', sort_order: 0 },
+  { id: 2, uuid: 'u-food', name: 'Expenses:Food', display_name: '食品饮料', type: 'Expenses', open_date: '2026-01-01', sort_order: 0 },
+  { id: 3, uuid: 'u-salary', name: 'Income:Salary', display_name: '工资收入', type: 'Income', open_date: '2026-01-01', sort_order: 0 },
+]
+
+const OK_RESULT = { id: 1, uuid: 'rd-1', date: '2026-11-16', postings: 2, idempotent: false }
+
+/** 点金额区展开自定义键盘（默认收起是新交互，用例必须走真实点击路径）。 */
+async function openKeypad(wrapper: VueWrapper): Promise<void> {
+  await wrapper.find('[data-act="amount"]').trigger('click')
+  await flushPromises()
+}
+
+/**
+ * 挂载后默认展开键盘，沿用既有用例的按键输入路径；
+ * 验证收起态的用例显式传 { keypad: false }。
+ */
+async function mountSheet(
+  props: Record<string, unknown> = {},
+  options: { keypad?: boolean } = {},
+): Promise<VueWrapper> {
+  const wrapper = mount(RecordSheet, { props })
+  await flushPromises()
+  if (options.keypad !== false) {
+    await openKeypad(wrapper)
+  }
+  return wrapper
+}
+
+async function press(wrapper: VueWrapper, label: string): Promise<void> {
+  const key = wrapper.findAll('.rs-key').find((button) => button.text() === label)
+  expect(key, `键位 ${label} 不存在`).toBeDefined()
+  await key!.trigger('click')
+}
+
+async function enterAmount(wrapper: VueWrapper, digits: string): Promise<void> {
+  for (const digit of digits.split('')) {
+    await press(wrapper, digit)
+  }
+  await flushPromises()
+}
+
+beforeEach(() => {
+  h.list.mockReset()
+  h.list.mockResolvedValue({ accounts: ACCOUNTS })
+  h.listCommodities.mockReset()
+  h.listCommodities.mockResolvedValue({ commodities: [{ symbol: 'CNY' }, { symbol: 'USD' }] })
+  h.create.mockReset()
+  h.create.mockResolvedValue(OK_RESULT)
+  h.update.mockReset()
+  h.readDraft.mockReset()
+  h.readDraft.mockReturnValue(null)
+  h.writeDraft.mockReset()
+  h.newKey.mockClear()
+  h.editing.value = null
+  document.body.classList.remove('kbd-open')
+  document.documentElement.style.removeProperty('--vvh')
+})
+
+describe('容器形态与主操作唯一', () => {
+  it('默认 auto 容器铺 H5 全屏，简化态无 .rs-foot、无「取消」', async () => {
+    const wrapper = await mountSheet({}, { keypad: false })
+    expect(wrapper.find('.rs-mask').classes()).toContain('rs-mask--auto')
+    expect(wrapper.find('.rs-panel').exists()).toBe(true)
+    expect(wrapper.find('.rs-keyboard').exists()).toBe(false)
+    await openKeypad(wrapper)
+    expect(wrapper.find('.rs-keyboard').exists()).toBe(true)
+    expect(wrapper.find('.rs-foot').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('取消')
+    const saves = wrapper.findAll('button').filter((button) => button.text() === '保存')
+    expect(saves).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('variant 显式覆盖生效；高级态无键盘、仅底部一条全宽保存条', async () => {
+    const wrapper = await mountSheet({ variant: 'dialog' })
+    expect(wrapper.find('.rs-mask').classes()).toContain('rs-mask--dialog')
+    const toggle = wrapper.findAll('button').find((button) => button.text().includes('高级模式'))
+    await toggle!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.rs-keyboard').exists()).toBe(false)
+    expect(wrapper.find('.rs-foot button.fb-btn-primary').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('取消')
+    wrapper.unmount()
+  })
+
+  it('键位顺序严格为 7 8 9 ⌫ / 4 5 6 ＋ / 1 2 3 － / . 0 再记 保存', async () => {
+    const wrapper = await mountSheet()
+    const keys = wrapper.findAll('.rs-key').map((button) => button.text())
+    expect(keys).toEqual(['7', '8', '9', '⌫', '4', '5', '6', '＋', '1', '2', '3', '－', '.', '0', '再记', '保存'])
+    wrapper.unmount()
+  })
+})
+
+describe('自定义数字键盘按需展开（手机端首屏不拥挤）', () => {
+  it('进入简化态默认收起键盘，表单区可用且不冒出第二个保存', async () => {
+    const wrapper = await mountSheet({}, { keypad: false })
+    expect(wrapper.find('.rs-keyboard').exists()).toBe(false)
+    expect(wrapper.find('.rs-foot').exists()).toBe(false)
+    expect(wrapper.find('.rs-body').exists()).toBe(true)
+    expect(wrapper.find('[data-act="show-keypad"]').exists()).toBe(true)
+    expect(wrapper.findAll('button').filter((button) => button.text() === '保存')).toHaveLength(0)
+    wrapper.unmount()
+  })
+
+  it('点金额区展开键盘，16 个键位顺序保持不变', async () => {
+    const wrapper = await mountSheet({}, { keypad: false })
+    await wrapper.find('[data-act="amount"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.rs-keyboard').exists()).toBe(true)
+    const keys = wrapper.findAll('.rs-key').map((button) => button.text())
+    expect(keys).toEqual(['7', '8', '9', '⌫', '4', '5', '6', '＋', '1', '2', '3', '－', '.', '0', '再记', '保存'])
+    wrapper.unmount()
+  })
+
+  it('收起态提示条可展开，展开态「收起」按钮可收回', async () => {
+    const wrapper = await mountSheet({}, { keypad: false })
+    await wrapper.find('[data-act="show-keypad"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.rs-keyboard').exists()).toBe(true)
+    await wrapper.find('[data-act="hide-keypad"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.rs-keyboard').exists()).toBe(false)
+    expect(wrapper.find('[data-act="show-keypad"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('展开 / 收起两态「保存」均不超过 1 个，展开后仍走原提交路径', async () => {
+    const wrapper = await mountSheet({}, { keypad: false })
+    const saveCount = (): number => wrapper.findAll('button').filter((button) => button.text() === '保存').length
+    expect(saveCount()).toBe(0)
+    await openKeypad(wrapper)
+    expect(saveCount()).toBe(1)
+    expect(wrapper.find('.rs-key--save').exists()).toBe(true)
+    await enterAmount(wrapper, '100')
+    await press(wrapper, '保存')
+    await flushPromises()
+    expect(h.create).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('表单控件聚焦自动收起自定义键盘，body.kbd-open 生命周期不受影响', async () => {
+    const wrapper = mount(RecordSheet, { attachTo: document.body })
+    await flushPromises()
+    await openKeypad(wrapper)
+    expect(wrapper.find('.rs-keyboard').exists()).toBe(true)
+
+    const tags = wrapper.find('[data-field="tags"]')
+    tags.element.dispatchEvent(new Event('focusin', { bubbles: true }))
+    await flushPromises() // keypadOpen 走响应式渲染，focusin 后需等 DOM 更新
+    expect(wrapper.find('.rs-keyboard').exists()).toBe(false)
+    expect(document.body.classList.contains('kbd-open')).toBe(true)
+    tags.element.dispatchEvent(new Event('focusout', { bubbles: true }))
+    expect(document.body.classList.contains('kbd-open')).toBe(false)
+
+    wrapper.unmount()
+  })
+
+  it('高级态与编辑态不受 keypadOpen 影响，仍只有 .rs-foot 保存条', async () => {
+    const wrapper = await mountSheet({}, { keypad: false })
+    const toggle = wrapper.findAll('button').find((button) => button.text().includes('高级模式'))
+    await toggle!.trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-act="amount"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.rs-keyboard').exists()).toBe(false)
+    expect(wrapper.find('.rs-foot button.fb-btn-primary').exists()).toBe(true)
+    expect(wrapper.findAll('button').filter((button) => button.text() === '保存')).toHaveLength(1)
+    wrapper.unmount()
+
+    h.editing.value = {
+      uuid: 't-e',
+      date: '2026-11-16',
+      flag: '*',
+      description: '午餐',
+      tags: [],
+      postings: [
+        { account_id: 2, account: 'Expenses:Food', commodity: 'CNY', amount: '38.50' },
+        { account_id: 1, account: 'Assets:Cash', commodity: 'CNY', amount: '-38.50' },
+      ],
+    }
+    const editing = await mountSheet({}, { keypad: false })
+    expect(editing.find('.rs-keyboard').exists()).toBe(false)
+    expect(editing.find('.rs-foot button.fb-btn-primary').exists()).toBe(true)
+    expect(editing.findAll('button').filter((button) => button.text() === '保存')).toHaveLength(1)
+    editing.unmount()
+    h.editing.value = null
+  })
+})
+
+describe('真实账户源与 bean 预览', () => {
+  it('九宫格显示中文 display_name，完整列表与 bean 使用 ASCII name', async () => {
+    const wrapper = await mountSheet()
+    const cats = wrapper.findAll('.rs-cat')
+    expect(cats.length).toBeGreaterThan(0)
+    expect(cats[0].text()).toContain('食品饮料')
+    expect(cats[0].classes()).toContain('on')
+    expect(wrapper.find('.rs-select option[value="2"]').text()).toContain('Expenses:Food')
+
+    await enterAmount(wrapper, '100')
+    const bean = wrapper.find('.js-bean').text()
+    expect(bean).toContain('Expenses:Food 100.00 CNY')
+    expect(bean).toContain('Assets:Cash -100.00 CNY')
+    expect(bean).not.toMatch(/[0-9],[0-9]{3}/)
+    wrapper.unmount()
+  })
+
+  it('标签兼容空格与中英文逗号，导出统一单空格的 tags 元数据行', async () => {
+    const wrapper = await mountSheet()
+    await enterAmount(wrapper, '100')
+    const tagsInput = wrapper.find('[data-field="tags"]')
+    await tagsInput.setValue('日常，孩子 通勤')
+    await flushPromises()
+    const bean = wrapper.find('.js-bean').text()
+    expect(bean).toContain('  tags: "日常 孩子 通勤"')
+    expect(bean).not.toContain('#日常')
+    wrapper.unmount()
+  })
+
+  it('账户列表为空时显示空态而非稿内示例账户', async () => {
+    h.list.mockResolvedValue({ accounts: [] })
+    const wrapper = await mountSheet()
+    expect(wrapper.text()).toContain('当前账本暂无支出分类账户')
+    expect(wrapper.text()).not.toContain('Expenses:Groceries')
+    wrapper.unmount()
+  })
+})
+
+describe('flag 透传与草稿快照', () => {
+  it('flag 切到 ! 后写入 create 载荷；预览首行同步变化', async () => {
+    const wrapper = await mountSheet()
+    await enterAmount(wrapper, '100')
+    await wrapper.find('[data-field="flag"]').setValue('!')
+    await flushPromises()
+    expect(wrapper.find('.js-bean').text()).toMatch(/^2026-\d\d-\d\d ! "/m)
+
+    await press(wrapper, '保存')
+    await flushPromises()
+    expect(h.create).toHaveBeenCalledTimes(1)
+    expect((h.create.mock.calls[0][0] as Record<string, unknown>).flag).toBe('!')
+    wrapper.unmount()
+  })
+
+  it('草稿快照包含 flag，刷新恢复后控件回显', async () => {
+    const wrapper = await mountSheet()
+    await wrapper.find('[data-field="flag"]').setValue('!')
+    await flushPromises()
+    const last = h.writeDraft.mock.calls[h.writeDraft.mock.calls.length - 1]
+    expect(last).toBeDefined()
+    expect((last[1] as Record<string, unknown>).flag).toBe('!')
+
+    h.readDraft.mockReturnValue({ flag: '!', amountExpression: '88', kind: 'expense' })
+    const restored = await mountSheet()
+    expect((restored.find('[data-field="flag"]').element as HTMLSelectElement).value).toBe('!')
+    restored.unmount()
+    wrapper.unmount()
+  })
+})
+
+describe('配平守门与禁用态', () => {
+  it('高级态不平衡时保存 disabled，原生派发点击也不发请求', async () => {
+    const wrapper = await mountSheet()
+    const toggle = wrapper.findAll('button').find((button) => button.text().includes('高级模式'))
+    await toggle!.trigger('click')
+    await flushPromises()
+
+    const rows = wrapper.findAll('.rs-adv-row')
+    await rows[0].find('[data-rf="amt"]').setValue('100.00')
+    await rows[1].find('[data-rf="amt"]').setValue('-30.00')
+    await flushPromises()
+
+    const save = wrapper.find('.rs-foot button.fb-btn-primary')
+    expect((save.element as HTMLButtonElement).disabled).toBe(true)
+    expect(wrapper.find('.js-check').text()).toContain('70.00')
+
+    save.element.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    expect(h.create).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('分录不配平')
+    wrapper.unmount()
+  })
+
+  it('auto-balance 补行账户留空 → 保存保持 disabled', async () => {
+    const wrapper = await mountSheet()
+    const toggle = wrapper.findAll('button').find((button) => button.text().includes('高级模式'))
+    await toggle!.trigger('click')
+    await flushPromises()
+    const rows = wrapper.findAll('.rs-adv-row')
+    await rows[0].find('[data-rf="amt"]').setValue('100.00')
+    await rows[1].find('[data-rf="amt"]').setValue('-30.00')
+    await flushPromises()
+
+    await wrapper.find('[data-act="auto-balance"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.rs-adv-row')).toHaveLength(3)
+    expect((wrapper.find('.rs-foot button.fb-btn-primary').element as HTMLButtonElement).disabled).toBe(true)
+    expect(wrapper.find('[data-rf="acc"]').element).toBeDefined()
+    expect(h.create).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+})
+
+describe('形态与键盘避让的副作用清理', () => {
+  it('--vvh 有 100vh 之后的 px 兜底；卸载后移除 --vvh 与 kbd-open 与监听', async () => {
+    // 键盘避让监听挂在 document 上，VTU 默认挂载到游离节点，需 attachTo 才能走完整冒泡链。
+    const wrapper = mount(RecordSheet, { attachTo: document.body })
+    await flushPromises()
+    const vv = document.documentElement.style.getPropertyValue('--vvh')
+    expect(vv).toMatch(/^\d+px$/)
+
+    const tags = wrapper.find('[data-field="tags"]')
+    expect(tags.element.matches('input.inp-text')).toBe(true)
+    tags.element.dispatchEvent(new Event('focusin', { bubbles: true }))
+    expect(document.body.classList.contains('kbd-open')).toBe(true)
+    tags.element.dispatchEvent(new Event('focusout', { bubbles: true }))
+    expect(document.body.classList.contains('kbd-open')).toBe(false)
+
+    tags.element.dispatchEvent(new Event('focusin', { bubbles: true }))
+    wrapper.unmount()
+    expect(document.body.classList.contains('kbd-open')).toBe(false)
+    expect(document.documentElement.style.getPropertyValue('--vvh')).toBe('')
+  })
+})

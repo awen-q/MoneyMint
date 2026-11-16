@@ -235,6 +235,9 @@ function goChangePassword(): void {
   display: flex;
   background: var(--fb-bg);
   color: var(--fb-ink);
+  /* 记一笔全屏浮层的滚动链隔离：根布局不参与回弹，避免与 .rs-body 抢滚动。
+     z-index 层级：底栏 30 < 提示 40 < 记一笔浮层 60，全屏态不会被底栏遮挡。 */
+  overscroll-behavior: none;
 }
 
 /* ---------- PC 侧栏 ---------- */

@@ -32,6 +32,8 @@ withDefaults(
     postings?: Array<{ account: string; commodity: string; amount: string }>
     /** 是否输出「借贷平衡 · 已校验」。 */
     balanced?: boolean
+    /** 与折叠预览逐字一致的 bean 片段（票面展示，禁止千分位）。 */
+    bean?: string
     footLines?: string[]
     thanks?: string
   }>(),
@@ -46,6 +48,7 @@ withDefaults(
     rows: () => [],
     postings: () => [],
     balanced: true,
+    bean: '',
     footLines: () => [],
     thanks: '— 感 谢 记 账 —',
   },
@@ -113,6 +116,8 @@ withDefaults(
       </table>
     </template>
 
+    <div v-if="bean !== ''" class="slip__bean">{{ bean }}</div>
+
     <template v-if="balanced">
       <div class="slip__rule"></div>
       <div class="slip__balance"><span class="slip__balance-ok">✓</span>借贷平衡 · 已校验</div>
@@ -136,10 +141,7 @@ withDefaults(
   background: var(--fb-paper);
   color: var(--fb-paper-ink);
   font-family: var(--fb-paper-mono);
-  box-shadow:
-    0 1px 2px rgba(20, 24, 30, 0.16),
-    0 10px 24px rgba(20, 24, 30, 0.22),
-    0 26px 60px rgba(20, 24, 30, 0.18);
+  box-shadow: var(--fb-paper-shadow);
 }
 
 /* 撕纸齿边：两组 45° 渐变拼三角，矢量、不随票宽变形 */
@@ -174,11 +176,7 @@ withDefaults(
   bottom: 0;
   left: 0;
   pointer-events: none;
-  background-image: repeating-linear-gradient(
-    0deg,
-    rgba(90, 78, 48, 0.035) 0 1px,
-    transparent 1px 3px
-  );
+  background-image: repeating-linear-gradient(0deg, var(--fb-paper-edge) 0 1px, transparent 1px 3px);
   opacity: 0.8;
 }
 
@@ -224,8 +222,8 @@ withDefaults(
 }
 
 .slip__stamp--amber {
-  border-color: #ba800c;
-  color: #8a6100;
+  border-color: var(--fb-warn);
+  color: var(--fb-warn-ink);
 }
 
 .slip__stamp--blue {
@@ -267,7 +265,7 @@ withDefaults(
   text-align: center;
   font-size: 10px;
   letter-spacing: 3px;
-  color: #b9b2a1;
+  color: var(--fb-paper-sub);
 }
 
 .slip__amount {
@@ -297,11 +295,11 @@ withDefaults(
 .slip__kind-pill {
   display: inline-block;
   padding: 2px 10px;
-  border: 1px solid #d9d2bf;
+  border: 1px solid var(--fb-paper-line);
   border-radius: 3px;
   font-size: 10.5px;
   letter-spacing: 1px;
-  color: #6b6353;
+  color: var(--fb-paper-sub);
 }
 
 .slip__rows {
@@ -334,7 +332,7 @@ withDefaults(
   display: inline-block;
   margin-left: 4px;
   padding: 0 6px;
-  border: 1px solid #ddd5c2;
+  border: 1px solid var(--fb-paper-rule);
   border-radius: 2px;
   font-size: 10.5px;
 }
@@ -397,7 +395,20 @@ withDefaults(
 }
 
 .slip__ledger-amt.is-pos :deep(.money-text) {
-  color: #1f7a52;
+  color: var(--fb-green);
+}
+
+/* Beancount 对照片段：与预览 <details> 逐字一致，金额无千分位。 */
+.slip__bean {
+  margin: 10px 0 0;
+  padding: 8px 9px;
+  border: 1px dashed var(--fb-paper-line);
+  border-radius: 4px;
+  font-size: 9.5px;
+  line-height: 1.8;
+  color: var(--fb-paper-sub);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .slip__balance {
@@ -407,7 +418,7 @@ withDefaults(
   gap: 5px;
   font-size: 10.5px;
   letter-spacing: 1.5px;
-  color: #1f7a52;
+  color: var(--fb-green);
 }
 
 .slip__balance-ok {
@@ -416,7 +427,7 @@ withDefaults(
   height: 13px;
   line-height: 13px;
   border-radius: 50%;
-  background: #1f7a52;
+  background: var(--fb-green);
   color: var(--fb-white);
   font-size: 9px;
   text-align: center;
@@ -439,7 +450,7 @@ withDefaults(
   margin-top: 12px;
   font-size: 10px;
   letter-spacing: 3px;
-  color: #a29a87;
+  color: var(--fb-paper-sub);
 }
 
 /* 小屏（320 / 375）：票内间距与字号各收一档，避免横向滚动 */

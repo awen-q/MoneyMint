@@ -118,7 +118,12 @@ describe('批 2.5 修 5：高级双录', () => {
     await fillRow(wrapper, 0, '3', '100.00')
     await fillRow(wrapper, 1, '1', '-30.00')
 
-    await findSave(wrapper).trigger('click')
+    const save = findSave(wrapper)
+    // 最终稿：不平衡时主操作 disabled（新增守门断言，覆盖不降低）。
+    expect((save.element as HTMLButtonElement).disabled).toBe(true)
+    // VTU 2.5.1 的 trigger() 对 disabled 按钮不派发事件；用原生 dispatchEvent
+    // 强制走到 submit 内部的 buildAdvancedPostings 守门，才能真正验证不发请求。
+    save.element.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await flushPromises()
 
     expect(h.create).not.toHaveBeenCalled()

@@ -65,6 +65,81 @@
   --fb-warn-line: #f0d9a8;
   --fb-warn-ink: #8a6100;
   --fb-blue-line: #cfdcfd;
+
+  /* 记一笔 H5 全屏视口量：JS 在 mounted 后把 --vvh 覆写为 visualViewport 高度 px。
+     这里先给 100vh 兜底（禁止 100dvh），保证首帧 / 无 JS / Safari 14.1 不为 0。 */
+  --vvh: 100vh;
+  --kb-h: clamp(40px, 6.4vh, 48px);
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+}
+
+/* ==========================================================================
+   记一笔作用域：暖纸账本色板（设计稿 :root → 本作用域变量映射，唯一色值源）。
+
+   ⚠️ 仅作用于 RecordSheet / ReceiptSlip 及其子组件：
+      - .rs-mask 是「记一笔」浮层根节点，内部所有 fb-* 变量在此重声明；
+      - .slip 让 ReceiptSlip 在交易详情页复用时也保持暖纸票面。
+   不修改上面 :root 的科技蓝，因此其它 View 主题零变化（不做全站换肤）。
+   ========================================================================== */
+.rs-mask,
+.slip {
+  --fb-blue: #2f5d4e;
+  --fb-green: #3f7d5c;
+  --fb-warn: #c8811e;
+  --fb-danger: #b4463c;
+  --fb-seal: #c1443b;
+  --fb-seal-soft: #f6e7e2;
+  --fb-ink-deep: #1f332c;
+
+  --fb-brand: var(--fb-blue);
+  --fb-brand-soft: #e6efe8;
+  --fb-brand-line: #c3d8cb;
+
+  --fb-bg: #f2eee5;
+  --fb-card: #fdfbf4;
+  --fb-ink: #242b26;
+  --fb-sub: #5f5b50;
+  --fb-line: #ded7c6;
+  --fb-line-strong: #c9c3b2;
+  --fb-soft: #f5f0e4;
+  --fb-white: #fdfbf4;
+  --fb-bg-transparent: rgba(242, 238, 229, 0);
+
+  --fb-green-soft: #e6efe3;
+  --fb-warn-soft: #f9edd7;
+  --fb-warn-line: #e6cfa1;
+  --fb-warn-ink: #8a5a10;
+  --fb-danger-soft: #f7e7e3;
+  --fb-blue-soft: var(--fb-brand-soft);
+  --fb-blue-line: var(--fb-brand-line);
+
+  --fb-hero-gradient: linear-gradient(150deg, #1f332c 0%, #2f5d4e 58%, #3f735e 100%);
+  --fb-on-hero-muted: rgba(253, 251, 244, 0.8);
+  --fb-on-hero-pill: rgba(253, 251, 244, 0.16);
+  --fb-paper-edge: rgba(90, 78, 48, 0.04);
+
+  --fb-shadow-card: 0 2px 10px rgba(70, 58, 36, 0.06);
+  --fb-shadow-inset: inset 0 1px 2px rgba(70, 58, 36, 0.05);
+  --fb-shadow-tab: 0 1px 2px rgba(70, 58, 36, 0.14);
+  --fb-shadow-key: 0 2px 0 var(--fb-line-strong);
+  --fb-shadow-panel: 0 10px 30px rgba(58, 48, 32, 0.2);
+  --fb-shadow-dock: 0 -6px 18px rgba(58, 48, 32, 0.06);
+  --fb-shadow-brand: 0 4px 10px rgba(47, 93, 78, 0.26);
+
+  --fb-mask: rgba(42, 36, 26, 0.44);
+  --fb-mask-strong: rgba(32, 28, 20, 0.64);
+
+  --fb-paper: #fdfbf4;
+  --fb-paper-ink: #262b26;
+  --fb-paper-sub: #625e53;
+  --fb-paper-line: #c9c3b2;
+  --fb-paper-rule: #ded7c6;
+  --fb-paper-shadow: 0 1px 2px rgba(50, 42, 28, 0.18), 0 10px 24px rgba(50, 42, 28, 0.22),
+    0 26px 60px rgba(50, 42, 28, 0.18);
+
+  --fb-font-ledger: Georgia, 'Times New Roman', serif;
+  --fb-font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', 'Courier New', monospace;
 }
 
 * {
