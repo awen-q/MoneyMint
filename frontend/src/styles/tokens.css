@@ -52,6 +52,19 @@
   --fb-green-soft: #e8f6ef;
   --fb-blue-soft: #eef3ff;
   --fb-warn-soft: #fff0e6;
+
+  /* 小票（收据）纸面：保存成功页 / 交易详情页共用，禁止页内散落硬编码 */
+  --fb-paper: #fdfbf4;
+  --fb-paper-ink: #2a2a28;
+  --fb-paper-sub: #8a8578;
+  --fb-paper-line: #c9c3b2;
+  --fb-paper-rule: #ded7c6;
+  --fb-paper-mono: 'Courier New', 'SFMono-Regular', Consolas, monospace;
+
+  /* 小票状态条（离线待同步 / 幂等命中）描边与文字色 */
+  --fb-warn-line: #f0d9a8;
+  --fb-warn-ink: #8a6100;
+  --fb-blue-line: #cfdcfd;
 }
 
 * {

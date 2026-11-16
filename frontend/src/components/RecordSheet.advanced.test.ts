@@ -75,10 +75,13 @@ async function fillRow(
   await row.find('input').setValue(amount)
 }
 
+/**
+ * 高级模式（编辑态同）没有数字键盘，唯一保存入口是底部操作区 .rs-foot
+ * 的全宽主操作按钮。按新的真实用户路径定位，不再靠全局文本搜「保存」。
+ */
 function findSave(wrapper: ReturnType<typeof mount>): ReturnType<typeof wrapper.find> {
-  const save = wrapper.findAll('button').find((b) => b.text() === '保存')
-  expect(save).toBeDefined()
-  // eslint 断言辅助：非空已检查
+  const save = wrapper.find('.rs-foot button.fb-btn-primary')
+  expect(save.exists()).toBe(true)
   return save as unknown as ReturnType<typeof wrapper.find>
 }
 

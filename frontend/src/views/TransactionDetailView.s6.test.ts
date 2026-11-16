@@ -293,7 +293,8 @@ describe('S6-C：RecordSheet 编辑态提交形态（AC-5.6 / AC-5.4）', () => 
     expect(wrapper.text()).toContain('午餐')
 
     // 键盘「保存」→ submit → 编辑分支（PATCH，无幂等键、无离线兜底）。
-    const saveBtn = wrapper.findAll('button').find((b) => b.text() === '保存')!
+    // 编辑态进入高级双录，键盘隐藏，唯一保存入口在底部操作区 .rs-foot。
+    const saveBtn = wrapper.find('.rs-foot button.fb-btn-primary')
     await saveBtn.trigger('click')
     await flushPromises()
 
@@ -324,7 +325,8 @@ describe('S6-C：RecordSheet 编辑态提交形态（AC-5.6 / AC-5.4）', () => 
     const wrapper = mount(RecordSheet)
     await flushPromises()
 
-    const saveBtn = wrapper.findAll('button').find((b) => b.text() === '保存')!
+    // 编辑态进入高级双录，键盘隐藏，唯一保存入口在底部操作区 .rs-foot。
+    const saveBtn = wrapper.find('.rs-foot button.fb-btn-primary')
     await saveBtn.trigger('click')
     await flushPromises()
 

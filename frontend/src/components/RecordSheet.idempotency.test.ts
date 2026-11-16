@@ -91,7 +91,11 @@ async function press(wrapper: VueWrapper, label: string): Promise<void> {
   await target.trigger('click')
 }
 
-/** 点击键盘「保存」键（绕过 disabled，保证一定进入 submit）。 */
+/**
+ * 点击键盘「保存」键走真实用户路径。
+ * 新 UI 下该键与底部保存条共用 canSubmit 校验，调用方需先输入有效金额；
+ * 「绕过 disabled」的旧行为已作为缺陷修复。
+ */
 async function save(wrapper: VueWrapper): Promise<void> {
   await press(wrapper, '保存')
   await flushPromises()
@@ -242,6 +246,52 @@ describe('幂等键：409 冲突后换新键重提', () => {
     // Assert
     expect(h.create).toHaveBeenCalledTimes(2)
     expect(keyOf(0)).toBe(keyOf(1))
+    wrapper.unmount()
+  })
+})
+
+/** 本次 UI 收敛的行为回归：主操作唯一 + 键盘 / 底部保存条校验统一。 */
+describe('主操作唯一：键盘保存键与底部保存条共用校验', () => {
+  it('金额为 0 时键盘「保存」「再记」均为 disabled，且不发起请求', async () => {
+    const wrapper = await mountSheet()
+    const keys = wrapper.findAll('.rs-key')
+    const saveKey = keys.find((button) => button.text() === '保存')
+    const againKey = keys.find((button) => button.text() === '再记')
+    expect(saveKey).toBeDefined()
+    expect(againKey).toBeDefined()
+    expect((saveKey!.element as HTMLButtonElement).disabled).toBe(true)
+    expect((againKey!.element as HTMLButtonElement).disabled).toBe(true)
+
+    // VTU 2.5.1 的 trigger() 对带 disabled 的按钮不派发事件（内部 isDisabled 短路），
+    // 用 trigger 点它恒为 no-op，「不发请求」会变成空洞断言。必须改用原生
+    // dispatchEvent 强制走到 pressKey，才能真正验证 canSubmit 守门：
+    // 守门存在 → 不进入 submit、不设 submitError；守门被移除 → submit 写出金额校验错误。
+    const evt = new MouseEvent('click', { bubbles: true })
+    saveKey!.element.dispatchEvent(evt)
+    await flushPromises()
+    expect(h.create).not.toHaveBeenCalled()
+    expect(wrapper.text()).not.toContain('请输入大于 0 的金额')
+    expect(wrapper.find('.rs-alert--error').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('简化模式只有 1 个「保存」按钮，且不再渲染重复的「取消」操作条', async () => {
+    const wrapper = await mountSheet()
+    expect(wrapper.find('.rs-foot').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('取消')
+    const saveButtons = wrapper.findAll('button').filter((b) => b.text() === '保存')
+    expect(saveButtons).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('输入有效金额后键盘「保存」解除禁用，仍走原有真实提交路径', async () => {
+    h.create.mockResolvedValue(OK_RESULT)
+    const wrapper = await mountSheet()
+    await enterAmount100(wrapper)
+    const saveKey = wrapper.findAll('.rs-key').find((b) => b.text() === '保存')
+    expect((saveKey!.element as HTMLButtonElement).disabled).toBe(false)
+    await save(wrapper)
+    expect(h.create).toHaveBeenCalledTimes(1)
     wrapper.unmount()
   })
 })

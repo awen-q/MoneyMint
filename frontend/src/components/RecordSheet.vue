@@ -24,6 +24,7 @@ import { currencySymbol, formatMoney, Money } from '@/core/Money'
 import {
   accountLabel,
   buildPostings,
+  displayEntryOf,
   evaluateAmountExpression,
   todayString,
   type PostingDraft,
@@ -32,6 +33,7 @@ import {
 } from '@/core/record'
 import { recordFundAccounts } from '@/core/accounts'
 import { balanceDiffByCommodity } from '@/core/record'
+import ReceiptSlip from '@/components/ReceiptSlip.vue'
 import {
   clearDraft,
   readDefaultAccounts,
@@ -71,7 +73,128 @@ const submitting = ref(false)
 const submitError = ref('')
 const notice = ref('')
 const showSuccess = ref(false)
-const lastResult = ref<TransactionCreateResult | null>(null)
+
+/**
+ * 保存成功后的票面快照（小票样式）。
+ * 与表单解耦：票面只读，表单随后可被「再记一笔」清空而不影响展示。
+ */
+interface ReceiptSnapshot {
+  stamp: string
+  stampSub: string
+  tone: 'green' | 'amber' | 'blue' | 'red'
+  kindLabel: string
+  amount: string
+  commodity: string
+  rows: Array<{ label: string; value?: string; tags?: string[] }>
+  postings: Array<{ account: string; commodity: string; amount: string }>
+  footLines: string[]
+  statusLine: string
+  statusTone: 'amber' | 'blue'
+}
+
+const receipt = ref<ReceiptSnapshot | null>(null)
+
+const KIND_LABELS: Record<RecordKind, string> = {
+  expense: '支出 EXPENSE',
+  income: '收入 INCOME',
+  transfer: '转账 TRANSFER',
+}
+
+function pad2(value: number): string {
+  return value < 10 ? `0${value}` : String(value)
+}
+
+/** 保存时刻（本地时区 `YYYY-MM-DD HH:mm:ss`，票尾可追溯）。 */
+function nowText(): string {
+  const now = new Date()
+  const date = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`
+  return `${date} ${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`
+}
+
+/** 票尾流水号：uuid 去连字符取前 8 位（本地 `loc-` 前缀不展示）。 */
+function shortCode(uuid: string): string {
+  const raw = uuid.indexOf('loc-') === 0 ? uuid.slice(4) : uuid
+  const compact = raw.split('-').join('')
+  return compact === '' ? '--------' : compact.slice(0, 8)
+}
+
+function accountNameOf(accountId: number): string {
+  for (const account of accounts.value) {
+    if (account.id === accountId) {
+      return accountLabel(account)
+    }
+  }
+  return `账户 #${accountId}`
+}
+
+/**
+ * 按提交载荷生成票面快照。
+ * mode：saved 正常新增 / idempotent 幂等命中 / offline 离线待同步 / updated 修改（冲正 + 新建）。
+ */
+function buildReceipt(
+  mode: 'saved' | 'idempotent' | 'offline' | 'updated',
+  payload: CreateTransactionRequest,
+  uuid: string,
+): ReceiptSnapshot {
+  const entry = displayEntryOf(payload.postings, accounts.value)
+  const commodity = entry.commodity !== '' ? entry.commodity : session.defaultCommodity
+  const rows: Array<{ label: string; value?: string; tags?: string[] }> = [
+    { label: '日期', value: payload.date },
+    { label: '备注', value: payload.description },
+  ]
+  const tags = payload.tags ?? []
+  if (tags.length > 0) {
+    rows.push({ label: '标签', tags })
+  }
+
+  const stampMap: Record<
+    typeof mode,
+    { stamp: string; stampSub: string; tone: ReceiptSnapshot['tone'] }
+  > = {
+    saved: { stamp: '已保存', stampSub: 'SAVED', tone: 'green' },
+    idempotent: { stamp: '未重复', stampSub: 'IDEMPOTENT', tone: 'blue' },
+    offline: { stamp: '待同步', stampSub: 'OFFLINE', tone: 'amber' },
+    updated: { stamp: '已修改', stampSub: 'UPDATED', tone: 'green' },
+  }
+  const stamp = stampMap[mode]
+
+  let footLines: string[] = []
+  let statusLine = ''
+  let statusTone: ReceiptSnapshot['statusTone'] = 'amber'
+  if (mode === 'saved') {
+    const ledgerName = session.ledgerName ? session.ledgerName : '家庭账本'
+    footLines = [`${nowText()} · ${ledgerName}`, `TXN ${shortCode(uuid)}`]
+  } else if (mode === 'idempotent') {
+    footLines = [`${nowText()} · 未新增交易`, `TXN ${shortCode(uuid)}`]
+    statusLine = '本次为重复提交的幂等命中，账本中仅一笔'
+    statusTone = 'blue'
+  } else if (mode === 'offline') {
+    footLines = [`${nowText()} · 本机待推送`, `LOCAL ${shortCode(uuid)}`]
+    statusLine = '当前离线，已保存在本机，联网后自动同步'
+  } else {
+    footLines = [`${nowText()} · 原交易已冲正`, `NEW ${shortCode(uuid)}`]
+    statusLine = '修改已保存：原交易已冲正，账目以新交易为准'
+    statusTone = 'blue'
+  }
+
+  return {
+    stamp: stamp.stamp,
+    stampSub: stamp.stampSub,
+    tone: stamp.tone,
+    kindLabel: KIND_LABELS[form.kind],
+    amount: Money.from(entry.amount).abs().toString(),
+    commodity,
+    rows,
+    postings: payload.postings.map((posting) => ({
+      account: accountNameOf(posting.account_id),
+      commodity: posting.commodity,
+      amount: posting.amount,
+    })),
+    footLines,
+    statusLine,
+    statusTone,
+  }
+}
 
 // ---------- 0.6.0 S6：编辑态（修改 = 冲正 + 新建） ----------
 /** 非空即编辑态（store.openEdit 注入）；新建入口 open() 会清空。 */
@@ -148,6 +271,13 @@ const categoryOptions = computed(() =>
   form.kind === 'income' ? incomeAccounts.value : expenseAccounts.value,
 )
 const categoryGrid = computed(() => categoryOptions.value.slice(0, 9))
+/** 当前选中的分类名；九宫格与「更多分类」下拉写的是同一字段，显式回显避免双入口看起来是两套选择器。 */
+const selectedCategoryLabel = computed(() => {
+  const found = categoryOptions.value.find(
+    (account) => account.id === form.categoryAccountId,
+  )
+  return found === undefined ? '' : accountLabel(found)
+})
 
 const amountMoney = computed<Money>(() => {
   if (form.amountExpression === '') {
@@ -471,12 +601,14 @@ function currentSegment(expr: string): string {
 }
 
 function pressKey(key: string): void {
-  if (key === '保存') {
-    void submit(false)
-    return
-  }
-  if (key === '再记') {
-    void submit(true)
+  if (key === '保存' || key === '再记') {
+    // 主操作唯一：键盘动作键与底部保存条共用 canSubmit 校验。
+    // 旧版键盘「保存」直接 submit(false)，会绕过「0 金额 / 未配平」的禁用校验，
+    // 与底部按钮给出不一致的反馈；此处统一在入口处守门。
+    if (!canSubmit.value) {
+      return
+    }
+    void submit(key === '再记')
     return
   }
   if (key === '⌫') {
@@ -509,6 +641,11 @@ function pressKey(key: string): void {
     }
     form.amountExpression += key
   }
+}
+
+/** 键盘内的两个提交动作键（数字键之外），需与底部保存条共用 disabled 校验。 */
+function isActionKey(key: string): boolean {
+  return key === '保存' || key === '再记'
 }
 
 function keyClass(key: string): string {
@@ -727,9 +864,10 @@ async function submit(continueAfter: boolean): Promise<void> {
     }
     submitting.value = true
     try {
-      await transactionApi.update(target.uuid, payload)
+      const result = await transactionApi.update(target.uuid, payload)
       sheet.notifyChanged()
       emit('updated', target.uuid)
+      receipt.value = buildReceipt('updated', payload, result.new_uuid)
       showSuccess.value = true
       notice.value = '修改已保存：原交易已冲正，账目以新交易为准'
     } catch (err) {
@@ -758,7 +896,11 @@ async function submit(continueAfter: boolean): Promise<void> {
     const result = await transactionApi.create(payload, idempotencyKey)
     clearDraftIfPossible()
     resetIdempotencyKey()
-    lastResult.value = result
+    receipt.value = buildReceipt(
+      result.idempotent === true ? 'idempotent' : 'saved',
+      payload,
+      result.uuid,
+    )
     rememberDefaults()
     sheet.notifySaved(result)
     emit('saved', result)
@@ -772,11 +914,12 @@ async function submit(continueAfter: boolean): Promise<void> {
     // 离线兜底（批 5 / AC-04）：网络不通时本地落库并入待推队列，
     // 联网后由 SyncEngine 自动补推；服务端错误仍走原失败路径。
     if (err instanceof ApiError && err.code === 'network_error') {
-      const saved = await saveOffline(payload)
-      if (saved) {
+      const offlineUuid = await saveOffline(payload)
+      if (offlineUuid !== null) {
         clearDraftIfPossible()
         resetIdempotencyKey()
         rememberDefaults()
+        receipt.value = buildReceipt('offline', payload, offlineUuid)
         notice.value = '当前离线，已保存在本机，联网后自动同步'
         showSuccess.value = true
         return
@@ -799,15 +942,15 @@ async function submit(continueAfter: boolean): Promise<void> {
 /**
  * 离线保存：生成 `loc-*` 本地 uuid，postings 的 account_id 映射为
  * account_uuid（push 契约按 uuid 引用），本地落库并入待推队列。
- * 映射失败（账户列表缺失）返回 false，走常规错误提示。
+ * 成功返回本地 uuid（票面流水号用），映射失败（账户列表缺失）返回 null 走常规错误提示。
  */
-async function saveOffline(payload: CreateTransactionRequest): Promise<boolean> {
+async function saveOffline(payload: CreateTransactionRequest): Promise<string | null> {
   // 离线路径才取 sync store（普通挂载/测试无 Pinia 时不触碰）。
   const syncStore = useSyncStore()
   const uuidPostings: Array<{ account_uuid: string; commodity: string; amount: string }> = []
   for (const posting of payload.postings) {
     const account = accounts.value.find((item) => item.id === posting.account_id)
-    if (account === undefined || account.uuid === '') return false
+    if (account === undefined || account.uuid === '') return null
     uuidPostings.push({
       account_uuid: account.uuid,
       commodity: posting.commodity,
@@ -827,7 +970,7 @@ async function saveOffline(payload: CreateTransactionRequest): Promise<boolean> 
     key: txn.uuid,
     entity: { ...txn },
   })
-  return true
+  return txn.uuid
 }
 
 function resetForm(): void {
@@ -837,6 +980,7 @@ function resetForm(): void {
   form.advancedPostings = []
   resetIdempotencyKey()
   showSuccess.value = false
+  receipt.value = null
   submitError.value = ''
   advancedError.value = ''
   clearDraftIfPossible()
@@ -887,35 +1031,57 @@ watch(
 </script>
 
 <template>
-  <div class="rs-mask" :class="containerClass" @click.self="close">
-    <section class="rs-panel" role="dialog" aria-modal="true" aria-label="记一笔">
-      <header class="rs-head">
-        <h3>{{ isEditing ? '修改交易' : '记一笔' }}</h3>
-        <button class="rs-close" type="button" aria-label="关闭" @click="close">✕</button>
-      </header>
-
-      <!-- 0.6.0 S6 编辑态提示：修改 = 冲正 + 新建（服务端三步事务），仅在线。 -->
-      <p v-if="isEditing && !showSuccess" class="rs-editbanner" role="status">
-        正在修改「{{ editingTxn?.description }}」：保存后原交易将被冲正，账目以新交易为准（需联网）。
-      </p>
-
-      <!-- 保存结果：返回 / 再记一笔 / 复制上一笔（AC-14） -->
-      <div v-if="showSuccess" class="rs-success">
-        <div class="rs-success__icon">✓</div>
-        <h4>已保存</h4>
-        <p class="rs-muted">
-          {{ lastResult && lastResult.idempotent
-            ? '本次为重复提交的幂等命中，未新增交易'
-            : '交易已写入账本' }}
-        </p>
-        <div class="rs-success__actions">
-          <button class="fb-btn-ghost" type="button" @click="close">返回</button>
-          <button v-if="!isEditing" class="fb-btn-ghost" type="button" @click="copyLast">复制上一笔</button>
-          <button v-if="!isEditing" class="fb-btn-primary" type="button" @click="again">再记一笔</button>
+  <div
+    class="rs-mask"
+    :class="[containerClass, { 'rs-mask--receipt': showSuccess }]"
+    @click.self="close"
+  >
+    <section class="rs-panel" :class="{ 'rs-panel--receipt': showSuccess }" role="dialog" aria-modal="true" aria-label="记一笔">
+      <!-- 小票样式成功态：不套弹窗白卡 / 标题栏 / 底部按钮栏（票面即主体） -->
+      <div v-if="showSuccess" class="rs-receipt">
+        <ReceiptSlip
+          v-if="receipt !== null"
+          :stamp="receipt.stamp"
+          :stamp-sub="receipt.stampSub"
+          :tone="receipt.tone"
+          title="家庭账本"
+          subtitle="FAMBEAN · DOUBLE-ENTRY JOURNAL"
+          :amount="receipt.amount"
+          :commodity="receipt.commodity"
+          :kind-label="receipt.kindLabel"
+          :rows="receipt.rows"
+          :postings="receipt.postings"
+          :balanced="true"
+          :foot-lines="receipt.footLines"
+          :thanks="isEditing ? '— 修 改 完 成 —' : '— 感 谢 记 账 —'"
+        />
+        <p
+          v-if="receipt !== null && receipt.statusLine !== ''"
+          class="rs-receipt__status"
+          :class="`rs-receipt__status--${receipt.statusTone}`"
+          role="status"
+        >{{ receipt.statusLine }}</p>
+        <div class="rs-receipt__actions">
+          <template v-if="!isEditing">
+            <button type="button" class="rs-rcpt-btn rs-rcpt-btn--text" @click="close">返回</button>
+            <button type="button" class="rs-rcpt-btn rs-rcpt-btn--ghost" @click="copyLast">复制上一笔</button>
+            <button type="button" class="rs-rcpt-btn rs-rcpt-btn--primary" @click="again">再记一笔</button>
+          </template>
+          <button v-else type="button" class="rs-rcpt-btn rs-rcpt-btn--primary" @click="close">完成</button>
         </div>
       </div>
 
       <template v-else>
+        <header class="rs-head">
+          <h3>{{ isEditing ? '修改交易' : '记一笔' }}</h3>
+          <button class="rs-close" type="button" aria-label="关闭" @click="close">✕</button>
+        </header>
+
+        <!-- 0.6.0 S6 编辑态提示：修改 = 冲正 + 新建（服务端三步事务），仅在线。 -->
+        <p v-if="isEditing" class="rs-editbanner" role="status">
+          正在修改「{{ editingTxn?.description }}」：保存后原交易将被冲正，账目以新交易为准（需联网）。
+        </p>
+
         <div class="rs-tabs" role="tablist">
           <button
             v-for="tab in tabs"
@@ -975,34 +1141,49 @@ watch(
 
           <template v-else>
           <template v-if="form.kind !== 'transfer'">
-            <div class="rs-label">分类（必选）</div>
-            <div class="rs-cats">
-              <button
-                v-for="cat in categoryGrid"
-                :key="cat.id"
-                type="button"
-                class="rs-cat"
-                :class="{ on: form.categoryAccountId === cat.id }"
-                @click="selectCategory(cat.id)"
-              >
-                <span class="rs-cat__icon">{{ catIcon(cat) }}</span>
-                <span class="rs-cat__name">{{ accountLabel(cat) }}</span>
-              </button>
-              <p v-if="categoryGrid.length === 0" class="rs-muted">
-                当前账本暂无{{ form.kind === 'income' ? '收入' : '支出' }}分类账户
-              </p>
+            <!-- 九宫格与「更多分类」下拉写的是同一个 form.categoryAccountId：
+                 是同一字段的「常用快捷 + 完整列表」两种选法，不是两套并列选择器，
+                 也不是层级关系。收进同一分组框并回显已选值，消除重复观感。 -->
+            <div class="rs-cat-group">
+              <div class="rs-cat-group__head">
+                <span class="rs-label rs-cat-group__title">分类（必选）</span>
+                <span class="rs-cat-group__selected">
+                  已选：{{ selectedCategoryLabel === '' ? '未选择' : selectedCategoryLabel }}
+                </span>
+              </div>
+              <span class="rs-cat-group__hint">常用分类，点击图标快速选择</span>
+              <div class="rs-cats">
+                <button
+                  v-for="cat in categoryGrid"
+                  :key="cat.id"
+                  type="button"
+                  class="rs-cat"
+                  :class="{ on: form.categoryAccountId === cat.id }"
+                  @click="selectCategory(cat.id)"
+                >
+                  <span class="rs-cat__icon">{{ catIcon(cat) }}</span>
+                  <span class="rs-cat__name">{{ accountLabel(cat) }}</span>
+                </button>
+                <p v-if="categoryGrid.length === 0" class="rs-muted">
+                  当前账本暂无{{ form.kind === 'income' ? '收入' : '支出' }}分类账户
+                </p>
+              </div>
+              <div v-if="categoryOptions.length > 9" class="rs-cat-group__more">
+                <span class="rs-cat-group__hint">
+                  更多分类（全部 {{ categoryOptions.length }} 个，与上方图标为同一项）
+                </span>
+                <select
+                  class="fb-input rs-select"
+                  :value="categorySelectValue"
+                  @change="onCategorySelect"
+                >
+                  <option value="">选择其他分类…</option>
+                  <option v-for="cat in categoryOptions" :key="cat.id" :value="String(cat.id)">
+                    {{ accountLabel(cat) }}
+                  </option>
+                </select>
+              </div>
             </div>
-            <select
-              v-if="categoryOptions.length > 9"
-              class="fb-input rs-select"
-              :value="categorySelectValue"
-              @change="onCategorySelect"
-            >
-              <option value="">全部分类…</option>
-              <option v-for="cat in categoryOptions" :key="cat.id" :value="String(cat.id)">
-                {{ accountLabel(cat) }}
-              </option>
-            </select>
             <div class="rs-label">资金账户（必选）</div>
             <select class="fb-input" :value="fundValue" @change="onFundSelect">
               <option value="">选择资金账户</option>
@@ -1063,24 +1244,28 @@ watch(
           </template>
         </div>
 
-        <div v-if="!advancedMode" class="rs-keyboard">
-          <button
-            v-for="key in keyboardKeys"
-            :key="key"
-            type="button"
-            :class="keyClass(key)"
-            @click="pressKey(key)"
-          >{{ key }}</button>
-        </div>
-
-        <div class="rs-foot">
-          <button type="button" class="fb-btn-ghost" @click="close">取消</button>
-          <button
-            type="button"
-            class="fb-btn-primary"
-            :disabled="!canSubmit"
-            @click="submit(false)"
-          >{{ submitting ? '保存中…' : '保存' }}</button>
+        <!-- 底部唯一操作区：简化模式放数字键盘（保存 / 再记在键盘内），
+             高级 / 编辑模式无键盘时放单一全宽保存条；两者互斥，主操作全局唯一。
+             「取消」由顶部 ✕ 与点击遮罩统一承担，不再重复一行按钮。 -->
+        <div class="rs-dock">
+          <div v-if="!advancedMode" class="rs-keyboard">
+            <button
+              v-for="key in keyboardKeys"
+              :key="key"
+              type="button"
+              :class="keyClass(key)"
+              :disabled="isActionKey(key) && !canSubmit"
+              @click="pressKey(key)"
+            >{{ key }}</button>
+          </div>
+          <div v-else class="rs-foot">
+            <button
+              type="button"
+              class="fb-btn-primary"
+              :disabled="!canSubmit"
+              @click="submit(false)"
+            >{{ submitting ? '保存中…' : '保存' }}</button>
+          </div>
         </div>
       </template>
     </section>
@@ -1235,12 +1420,74 @@ watch(
   min-height: 0;
   overflow-y: auto;
   padding: 12px 18px 16px;
+  /* 唯一滚动区：细化滚动条并隔离滚动链，避免与键盘 / 底部操作区互相牵扯。 */
+  scrollbar-width: thin;
+  scrollbar-color: var(--fb-line) transparent;
+  overscroll-behavior: contain;
+}
+
+.rs-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.rs-body::-webkit-scrollbar-thumb {
+  background: var(--fb-line);
+  border-radius: 3px;
 }
 
 .rs-label {
   font-size: 12px;
   color: var(--fb-sub);
   margin: 10px 0 6px;
+}
+
+/* 分类：同一字段的「常用图标快捷 + 完整列表」收进一个分组框，
+   明确二者是一个字段的两种选法，而不是两套并列的分类选择器。 */
+.rs-cat-group {
+  padding: 10px 12px 12px;
+  border: 1px solid var(--fb-line);
+  border-radius: 12px;
+  background: var(--fb-card);
+}
+
+.rs-cat-group__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rs-cat-group__title {
+  margin: 0;
+}
+
+.rs-cat-group__selected {
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fb-blue);
+}
+
+.rs-cat-group__hint {
+  display: block;
+  margin: 6px 0 8px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--fb-sub);
+}
+
+.rs-cat-group__more {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--fb-line);
+}
+
+.rs-cat-group__more .rs-cat-group__hint {
+  margin: 0 0 6px;
 }
 
 .rs-cats {
@@ -1287,8 +1534,22 @@ watch(
   white-space: nowrap;
 }
 
+/* iOS Safari：聚焦 computed font-size < 16px 的 input/select/textarea 会放大整页。
+   记一笔弹窗内所有真实控件（分类溢出下拉、资金/转出/转入账户、日期、标签、
+   描述、高级双录账户与金额）统一为 16px。仅在本组件 scoped 局部覆盖，
+   不改 tokens.css 的全局 .fb-input（15px，全站复用，属本次范围外）。
+   现有 min-height（40/46px）与 padding 已能容纳 16px 文本，故不改尺寸。 */
+.rs-body input,
+.rs-body select,
+.rs-body textarea {
+  font-size: 16px;
+}
+
 .rs-select {
-  margin-top: 8px;
+  margin-top: 0;
+  min-height: 40px;
+  padding: 8px 12px;
+  font-size: 16px;
 }
 
 .rs-transfer-arrow {
@@ -1392,12 +1653,21 @@ watch(
   color: var(--fb-sub);
 }
 
+/* 底部唯一操作区（键盘 / 高级模式保存条二选一）：统一承载安全区与分层阴影，
+   让键盘与主操作不再割裂成上下两条。 */
+.rs-dock {
+  flex: 0 0 auto;
+  background: var(--fb-card);
+  border-top: 1px solid var(--fb-line);
+  box-shadow: 0 -6px 18px rgba(23, 32, 68, 0.05);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
 .rs-keyboard {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 1px;
   background: var(--fb-line);
-  border-top: 1px solid var(--fb-line);
 }
 
 .rs-key {
@@ -1416,12 +1686,16 @@ watch(
   font-size: 15px;
 }
 
+/* 次要动作「再记」：软底绿字，不与主操作抢实心主色。 */
 .rs-key--again {
   color: var(--fb-green);
+  background: var(--fb-green-soft);
   font-size: 13px;
   font-weight: 700;
 }
 
+/* 唯一主操作「保存」：实心主色；disabled 与 .fb-btn-primary 统一用降透明度表达，
+   保证键盘键与高级模式保存条的校验反馈完全一致。 */
 .rs-key--save {
   background: var(--fb-blue);
   color: var(--fb-white);
@@ -1429,45 +1703,135 @@ watch(
   font-weight: 700;
 }
 
+.rs-key--save:disabled,
+.rs-key--again:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .rs-foot {
   display: flex;
-  gap: 10px;
-  padding: 10px 18px calc(10px + env(safe-area-inset-bottom, 0px));
+  padding: 12px 18px;
 }
 
 .rs-foot > button {
   flex: 1;
+  min-height: 46px;
 }
 
-.rs-success {
-  padding: 30px 18px 26px;
-  text-align: center;
-}
-
-.rs-success__icon {
-  width: 56px;
-  height: 56px;
-  margin: 0 auto 12px;
-  border-radius: 50%;
-  background: var(--fb-green);
-  color: var(--fb-white);
-  font-size: 30px;
-  line-height: 56px;
-}
-
-.rs-success h4 {
-  margin: 0 0 6px;
-  font-size: 18px;
-}
-
-.rs-success__actions {
+.rs-receipt {
   display: flex;
-  gap: 8px;
-  margin-top: 20px;
+  flex-direction: column;
+  align-items: center;
+  margin: auto 0;
+  padding: 8px 0 4px;
 }
 
-.rs-success__actions > button {
+.rs-receipt__status {
+  width: 100%;
+  max-width: 340px;
+  margin: 20px auto 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 11.5px;
+  line-height: 1.7;
+  text-align: center;
+  background: var(--fb-warn-soft);
+  border: 1px solid var(--fb-warn-line);
+  color: var(--fb-warn-ink);
+}
+
+.rs-receipt__status--blue {
+  background: var(--fb-blue-soft);
+  border-color: var(--fb-blue-line);
+  color: var(--fb-blue);
+}
+
+.rs-receipt__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  max-width: 340px;
+  margin: 18px auto 0;
+}
+
+.rs-rcpt-btn {
+  height: 46px;
+  border-radius: var(--fb-radius-input);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.rs-rcpt-btn--text {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  border: none;
+  background: none;
+  color: var(--fb-white);
+  font-size: 13px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.rs-rcpt-btn--ghost {
+  flex: 0 0 auto;
+  padding: 0 16px;
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.55);
+  color: var(--fb-ink);
+}
+
+.rs-rcpt-btn--primary {
   flex: 1;
+  border: 1px solid var(--fb-blue);
+  background: var(--fb-blue);
+  color: var(--fb-white);
+  box-shadow: 0 6px 16px rgba(59, 110, 246, 0.35);
+}
+
+@media (max-width: 380px) {
+  .rs-rcpt-btn {
+    height: 44px;
+    font-size: 13px;
+  }
+
+  .rs-rcpt-btn--ghost {
+    padding: 0 10px;
+  }
+
+  /* 窄屏下收紧分类分组与九宫格间距，5 列仍可用且不挤压图标文字。 */
+  .rs-cat-group {
+    padding: 8px 9px 10px;
+  }
+
+  .rs-cats {
+    gap: 6px;
+  }
+
+  .rs-cat {
+    padding: 7px 1px;
+  }
+}
+
+/* 成功态遮罩：小票浮在遮罩上，不再有白色弹窗底 */
+.rs-mask--receipt {
+  align-items: center;
+  justify-content: center;
+}
+
+.rs-panel--receipt {
+  width: 100%;
+  max-width: 420px;
+  max-height: 100%;
+  padding: 20px 16px calc(20px + env(safe-area-inset-bottom, 0px));
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .rs-muted {
@@ -1486,6 +1850,15 @@ watch(
     max-width: 92vw;
     max-height: 88vh;
     border-radius: 18px;
+  }
+
+  /* 成功态小票：桌面维持窄纸面，不继承弹窗宽度与圆角 */
+  .rs-mask--auto .rs-panel--receipt,
+  .rs-mask--dialog .rs-panel--receipt {
+    width: 100%;
+    max-width: 420px;
+    max-height: 100%;
+    border-radius: 0;
   }
 
   .rs-cats {

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 /**
- * P-05 交易详情（批 2；0.6.0 S6 增加编辑入口）
+ * P-05 交易详情（批 2；0.6.0 S6 增加编辑入口；小票改版）
  *
- * - 通过 query `id` 从流水列表定位交易，展示全部分录（复式可视性）；
+ * - 通过 query `id` 从流水列表定位交易，票面展示全部分录（复式可视性）；
+ * - 核对状态用印章表达（已核对 / 待核对 / 已冲正 / 冲正），不再用 hero 色块 + 多张白卡；
  * - 软删走 `DELETE /api/transactions/{uuid}`（列表已透出 uuid），
  *   删除前二次确认，删除后可在回收站恢复；
  * - 编辑入口（AC-5.4）：不按 navigator.onLine 显隐——在线 GET 成功 → 按
@@ -16,10 +17,16 @@ import { useRoute, useRouter } from 'vue-router'
 import { accountApi, transactionApi } from '@/api/client'
 import { ApiError } from '@/api/errors'
 import type { AccountView, TransactionView } from '@/api/types'
-import { accountLabel, displayEntryOf, transactionKind, transferRoute } from '@/core/record'
+import {
+  accountLabel,
+  displayEntryOf,
+  transactionKind,
+  transferRoute,
+  type TransactionKind,
+} from '@/core/record'
 import { useRecordSheetStore } from '@/stores/recordSheet'
 import { useSessionStore } from '@/stores/session'
-import MoneyText from '@/components/MoneyText.vue'
+import ReceiptSlip from '@/components/ReceiptSlip.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -62,13 +69,50 @@ const entry = computed(() =>
     ? { amount: '0.00', commodity: session.defaultCommodity }
     : displayEntryOf(txn.value.postings, accounts.value),
 )
-const meta = computed(() => {
-  if (txn.value === null) {
-    return ''
+
+const KIND_LABELS: Record<TransactionKind, string> = {
+  expense: '支出 EXPENSE',
+  income: '收入 INCOME',
+  transfer: '转账 TRANSFER',
+  opening: '期初 OPENING',
+}
+
+/** 票面印章：核对 / 待核对 / 已冲正 / 冲正（已冲正优先，与编辑入口判定同口径）。 */
+const stamp = computed<{ text: string; sub: string; tone: 'green' | 'amber' | 'blue' | 'red' }>(
+  () => {
+    const t = txn.value
+    if (t !== null && (t.reversed_by ?? '') !== '') {
+      return { text: '已冲正', sub: 'REVERSED', tone: 'red' }
+    }
+    if (t !== null && (t.reversal_of ?? '') !== '') {
+      return { text: '冲正', sub: 'REVERSAL', tone: 'blue' }
+    }
+    if (t !== null && t.flag === '!') {
+      return { text: '待核对', sub: 'UNCHECKED', tone: 'amber' }
+    }
+    return { text: '已核对', sub: 'VERIFIED', tone: 'green' }
+  },
+)
+
+const rows = computed<Array<{ label: string; value?: string; tags?: string[] }>>(() => {
+  const t = txn.value
+  if (t === null) {
+    return []
   }
-  return kind.value === 'transfer'
-    ? transferRoute(txn.value.postings, accounts.value)
-    : `记账人 ${txn.value.created_by_name}`
+  const list: Array<{ label: string; value?: string; tags?: string[] }> = [
+    { label: '日期', value: t.date },
+    { label: '备注', value: t.description },
+  ]
+  if (Array.isArray(t.tags) && t.tags.length > 0) {
+    list.push({ label: '标签', tags: t.tags })
+  }
+  if (kind.value === 'transfer') {
+    list.push({ label: '转账', value: transferRoute(t.postings, accounts.value) })
+  }
+  if ((t.created_by_name ?? '') !== '') {
+    list.push({ label: '记账人', value: t.created_by_name })
+  }
+  return list
 })
 
 function typeOf(accountId: number): string {
@@ -79,6 +123,36 @@ function typeOf(accountId: number): string {
   }
   return ''
 }
+
+const postingRows = computed<Array<{ account: string; commodity: string; amount: string }>>(() => {
+  const t = txn.value
+  if (t === null) {
+    return []
+  }
+  return t.postings.map((posting) => ({
+    account: accountLabel({
+      id: posting.account_id,
+      name: posting.account,
+      type: typeOf(posting.account_id),
+    }),
+    commodity: posting.commodity,
+    amount: posting.amount,
+  }))
+})
+
+/** 票尾流水号：uuid 去连字符取前 8 位。 */
+function shortCode(uuid: string): string {
+  const compact = uuid.split('-').join('')
+  return compact === '' ? '--------' : compact.slice(0, 8)
+}
+
+const footLines = computed<string[]>(() => {
+  const t = txn.value
+  if (t === null) {
+    return []
+  }
+  return [`TXN ${shortCode(t.uuid)}`, `ID #${String(t.id).padStart(6, '0')}`]
+})
 
 async function load(): Promise<void> {
   if (txnId.value === null) {
@@ -210,26 +284,9 @@ watch(
 
 <template>
   <section class="detail">
-    <header class="detail__hero fb-hero">
+    <div class="detail__bar">
       <button type="button" class="detail__back" @click="goBack">‹ 返回</button>
-      <div class="detail__hero-body" v-if="txn !== null">
-        <div class="detail__label">{{ txn.date }} · {{ txn.flag === '!' ? '待核对' : '已核对' }}</div>
-        <MoneyText
-          class="detail__amount"
-          :amount="entry.amount"
-          :commodity="entry.commodity"
-          size="lg"
-          :signed="kind !== 'transfer'"
-        />
-        <div class="detail__meta">
-          <span v-if="(txn.reversed_by ?? '') !== ''" class="detail__badge">已冲正</span>
-          <span v-else-if="(txn.reversal_of ?? '') !== ''" class="detail__badge">冲正</span>
-          <span v-if="kind === 'transfer'" class="detail__badge">转账</span>
-          <span v-else-if="kind === 'opening'" class="detail__badge">期初</span>
-          {{ txn.description }} · {{ meta }}
-        </div>
-      </div>
-    </header>
+    </div>
 
     <div v-if="loadError" class="fb-card detail__state detail__state--error">
       <p>{{ loadError }}</p>
@@ -238,35 +295,38 @@ watch(
     <div v-else-if="loading" class="fb-card detail__state">正在加载交易详情…</div>
 
     <template v-else-if="txn !== null">
-      <div class="fb-card detail__card">
-        <h3>分录（{{ txn.postings.length }} 条）</h3>
-        <ul class="detail__postings">
-          <li v-for="(posting, index) in txn.postings" :key="index" class="detail__posting">
-            <span class="detail__posting-name">
-              {{ accountLabel({ id: posting.account_id, name: posting.account, type: typeOf(posting.account_id) }) }}
-              <span class="detail__posting-type">{{ typeOf(posting.account_id) }}</span>
-            </span>
-            <MoneyText :amount="posting.amount" :commodity="posting.commodity" size="sm" />
-          </li>
-        </ul>
+      <div class="detail__slip">
+        <ReceiptSlip
+          :stamp="stamp.text"
+          :stamp-sub="stamp.sub"
+          :tone="stamp.tone"
+          title="交易凭证"
+          subtitle="FAMBEAN · TRANSACTION SLIP"
+          :amount="entry.amount"
+          :commodity="entry.commodity"
+          :signed="kind !== 'transfer'"
+          :kind-label="KIND_LABELS[kind]"
+          :rows="rows"
+          :postings="postingRows"
+          :balanced="true"
+          :foot-lines="footLines"
+          thanks="— 凭 证 可 核 对 —"
+        />
       </div>
 
-      <!-- 0.6.0 S6 编辑入口（AC-5.4）：按钮保留、禁用态 + 固定文案，绝不按在线状态隐藏。 -->
-      <div class="fb-card detail__card">
+      <div class="detail__actions">
+        <button type="button" class="detail__edit" :disabled="editDisabled" @click="onEdit">
+          修改这笔交易
+        </button>
         <button
           type="button"
-          class="detail__edit"
-          :disabled="editDisabled"
-          @click="onEdit"
-        >修改这笔交易</button>
-        <p class="detail__hint" :class="{ 'detail__hint--warn': editDisabled }">{{ editHint }}</p>
+          class="detail__delete"
+          :disabled="session.isViewer"
+          @click="onDelete"
+        >删除这笔交易</button>
       </div>
-
-      <div class="fb-card detail__card">
-        <button type="button" class="detail__delete" :disabled="session.isViewer" @click="onDelete">删除这笔交易（软删）</button>
-        <p v-if="notice" class="detail__notice" role="status">{{ notice }}</p>
-        <p class="detail__hint">删除后的交易可在「回收站」中恢复。</p>
-      </div>
+      <p class="detail__hint" :class="{ 'detail__hint--warn': editDisabled }">{{ editHint }}</p>
+      <p v-if="notice" class="detail__notice" role="status">{{ notice }}</p>
 
       <div v-if="showDeleteConfirm" class="fb-card detail__card detail__confirm">
         <h3>确认删除</h3>
@@ -286,126 +346,45 @@ watch(
 
 <style scoped>
 .detail {
-  padding-bottom: 20px;
+  padding: 0 16px calc(24px + env(safe-area-inset-bottom, 0px));
 }
 
-.detail__hero {
-  padding: calc(16px + env(safe-area-inset-top, 0px)) 20px 20px;
-  border-radius: 0 0 24px 24px;
+.detail__bar {
+  padding: 14px 0 6px;
 }
 
 .detail__back {
   border: none;
-  background: var(--fb-on-hero-pill);
-  color: var(--fb-white);
-  border-radius: var(--fb-radius-pill);
-  padding: 5px 12px;
-  font-size: 12px;
+  background: none;
+  padding: 4px 0;
+  color: var(--fb-blue);
   font-family: inherit;
+  font-size: 13px;
   cursor: pointer;
 }
 
-.detail__hero-body {
-  margin-top: 14px;
+.detail__slip {
+  display: flex;
+  justify-content: center;
+  padding: 12px 0 6px;
 }
 
-.detail__label {
-  font-size: 12px;
-  color: var(--fb-on-hero-muted);
-}
-
-.detail__amount {
-  margin-top: 4px;
-  color: var(--fb-white);
-}
-
-.detail__amount :deep(.money-text--negative) {
-  color: var(--fb-white);
-}
-
-.detail__meta {
-  margin-top: 10px;
-  font-size: 12px;
-  color: var(--fb-on-hero-muted);
-}
-
-.detail__badge {
-  display: inline-block;
-  margin-right: 6px;
-  padding: 1px 7px;
-  border-radius: var(--fb-radius-pill);
-  background: var(--fb-on-hero-pill);
-  font-size: 10px;
-  font-weight: 600;
-}
-
-.detail__card {
-  margin-top: 14px;
-  padding: 14px 16px;
-}
-
-.detail__card h3 {
-  margin: 0 0 10px;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.detail__postings {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.detail__posting {
+.detail__actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--fb-line);
-}
-
-.detail__posting:last-child {
-  border-bottom: none;
-}
-
-.detail__posting-name {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  font-size: 13px;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.detail__posting-type {
-  font-size: 10px;
-  color: var(--fb-sub);
-  flex-shrink: 0;
-}
-
-.detail__delete {
+  gap: 10px;
   width: 100%;
-  height: 44px;
-  border: none;
-  border-radius: var(--fb-radius-input);
-  background: var(--fb-danger);
-  color: var(--fb-white);
-  font-size: 14px;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
+  max-width: 340px;
+  margin: 18px auto 0;
 }
 
 /* 0.6.0 S6：编辑按钮与禁用文案（修改 = 冲正 + 新建）。 */
 .detail__edit {
-  width: 100%;
-  height: 44px;
+  flex: 1;
+  height: 46px;
   border: none;
   border-radius: var(--fb-radius-input);
-  background: var(--fb-primary, #4c6ef5);
+  background: var(--fb-blue);
   color: var(--fb-white);
   font-size: 14px;
   font-weight: 600;
@@ -418,8 +397,18 @@ watch(
   cursor: not-allowed;
 }
 
-.detail__hint--warn {
-  color: var(--fb-warn);
+.detail__delete {
+  flex: 0 0 auto;
+  padding: 0 14px;
+  height: 46px;
+  border: 1px solid var(--fb-danger);
+  border-radius: var(--fb-radius-input);
+  background: var(--fb-card);
+  color: var(--fb-danger);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
 }
 
 .detail__delete:disabled {
@@ -427,17 +416,32 @@ watch(
   cursor: not-allowed;
 }
 
-.detail__notice {
-  margin: 10px 0 0;
-  font-size: 12px;
+.detail__hint {
+  width: 100%;
+  max-width: 340px;
+  margin: 10px auto 0;
+  font-size: 11.5px;
+  line-height: 1.8;
+  color: var(--fb-sub);
+  text-align: center;
+}
+
+.detail__hint--warn {
   color: var(--fb-warn);
 }
 
-.detail__hint {
-  margin: 8px 0 0;
-  font-size: 11px;
-  color: var(--fb-sub);
-  line-height: 1.7;
+.detail__notice {
+  width: 100%;
+  max-width: 340px;
+  margin: 10px auto 0;
+  font-size: 12px;
+  color: var(--fb-warn);
+  text-align: center;
+}
+
+.detail__card {
+  margin-top: 14px;
+  padding: 14px 16px;
 }
 
 .detail__confirm h3 {
