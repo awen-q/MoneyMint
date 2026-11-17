@@ -566,7 +566,7 @@ onMounted(() => {
   right: 0;
   bottom: 0;
   left: 0;
-  background: rgba(20, 28, 48, 0.45);
+  background: var(--fb-overlay-scrim);
   z-index: 60;
   display: flex;
   align-items: center;
@@ -579,7 +579,7 @@ onMounted(() => {
   background: var(--fb-card);
   border-radius: 18px;
   padding: 18px;
-  box-shadow: 0 10px 30px rgba(23, 32, 68, 0.2);
+  box-shadow: 0 10px 30px var(--fb-shadow-pop);
 }
 
 .cats__confirm h3 {

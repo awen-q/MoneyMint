@@ -345,6 +345,6 @@ function gotoLedgers(): void {
 .im__must { margin: 10px 0 0; padding: 8px 12px; border-radius: var(--fb-radius-input); font-size: 12px; background: var(--fb-warn-soft); color: var(--fb-warn); font-weight: 600; }
 .im__targets { display: flex; gap: 8px; margin-bottom: 8px; }
 .im__target { flex: 1; padding: 8px 10px; font-size: 12px; border: 1.5px solid var(--fb-line); border-radius: var(--fb-radius-input); background: transparent; color: var(--fb-text, inherit); }
-.im__target--on { border-color: var(--fb-primary, #4c6ef5); font-weight: 600; background: var(--fb-primary-soft, rgba(76, 110, 245, 0.08)); }
+.im__target--on { border-color: var(--fb-primary); font-weight: 600; background: var(--fb-primary-soft); }
 .im__padbox { margin: 8px 0; }
 </style>

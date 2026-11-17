@@ -216,5 +216,5 @@ function backToLogin(): void {
 .rs__warnings { margin: 0 0 10px; padding-left: 18px; font-size: 11px; color: var(--fb-sub); line-height: 1.8; }
 .rs__confirm { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-top: 6px; flex-wrap: wrap; }
 .rs__input { padding: 6px 8px; border: 1px solid var(--fb-line); border-radius: var(--fb-radius-input); font-size: 12px; width: 140px; }
-.rs__must { margin: 10px 0 0; padding: 8px 12px; border-radius: var(--fb-radius-input); font-size: 12px; background: var(--fb-warn-soft, #fff7e6); color: var(--fb-warn, #b8860b); font-weight: 600; }
+.rs__must { margin: 10px 0 0; padding: 8px 12px; border-radius: var(--fb-radius-input); font-size: 12px; background: var(--fb-warn-soft); color: var(--fb-warn); font-weight: 600; }
 </style>

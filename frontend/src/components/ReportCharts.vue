@@ -8,8 +8,18 @@
  * 真正的金额聚合在 `core/reports.ts` 里用 decimal.js 定点完成。
  *
  * jsdom（Vitest）没有 canvas 上下文，getContext 返回 null 时静默跳过绘制。
+ *
+ * 阶段 0：Canvas 读不到 CSS 变量，色值统一经 styles/themeTokens 读桥获取；
+ * 绘制逻辑与旧常量值完全不变，保证截图逐像素一致。
  */
 import { onMounted, ref, watch } from 'vue'
+
+import {
+  getChartPalette,
+  readThemeTokens,
+  themeEpoch,
+  type ChartPalette,
+} from '../styles/themeTokens'
 
 interface Share {
   label: string
@@ -36,12 +46,8 @@ const props = withDefaults(
 )
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
-
-const GRID = '#e5e7eb'
-const INK = '#6b7280'
-const EXPENSE = '#3b6ef6'
-const INCOME = '#2ba471'
-const PIE_COLORS = ['#3b6ef6', '#2ba471', '#e8590c', '#8b5cf6', '#d93025', '#0ea5e9']
+// setup 阶段先读一次（SSR/jsdom 自动用 DEFAULT_TOKENS 兜底），onMounted 再读正式 CSS 变量。
+const palette = ref<ChartPalette>(getChartPalette(readThemeTokens()))
 
 /** 坐标用紧凑数字（1.2k / 3.4w），避免画布被长金额挤爆。 */
 function compact(value: number): string {
@@ -122,11 +128,11 @@ function drawTrend(
   }
 
   ctx.font = '11px -apple-system, BlinkMacSystemFont, sans-serif'
-  ctx.fillStyle = INK
+  ctx.fillStyle = palette.value.ink
   ctx.textAlign = 'right'
   for (let i = 0; i <= 3; i += 1) {
     const y = top + (height / 3) * i
-    ctx.strokeStyle = GRID
+    ctx.strokeStyle = palette.value.grid
     ctx.lineWidth = 1
     ctx.beginPath()
     ctx.moveTo(left, y)
@@ -135,14 +141,14 @@ function drawTrend(
     ctx.fillText(compact(max - (max / 3) * i), left - 6, y + 4)
   }
 
-  drawLine(ctx, props.income, max, left, top, width, height, INCOME)
-  drawLine(ctx, props.expense, max, left, top, width, height, EXPENSE)
+  drawLine(ctx, props.income, max, left, top, width, height, palette.value.income)
+  drawLine(ctx, props.expense, max, left, top, width, height, palette.value.expense)
 
   // x 轴刻度抽稀：最多显示 7 个标签。
   const labels = props.labels
   const stride = labels.length > 7 ? Math.ceil(labels.length / 7) : 1
   ctx.textAlign = 'center'
-  ctx.fillStyle = INK
+  ctx.fillStyle = palette.value.ink
   for (let i = 0; i < labels.length; i += stride) {
     const x = left + (labels.length > 1 ? (width / (labels.length - 1)) * i : 0)
     ctx.fillText(labels[i], x, top + height + 16)
@@ -161,7 +167,7 @@ function drawShare(
   const inner = outer * 0.58
 
   if (shares.length === 0) {
-    ctx.strokeStyle = GRID
+    ctx.strokeStyle = palette.value.grid
     ctx.lineWidth = 14
     ctx.beginPath()
     ctx.arc(cx, cy, (outer + inner) / 2, 0, Math.PI * 2)
@@ -177,7 +183,7 @@ function drawShare(
     }
     const end = start + ratio * Math.PI * 2
     ctx.beginPath()
-    ctx.fillStyle = PIE_COLORS[i % PIE_COLORS.length]
+    ctx.fillStyle = palette.value.pie[i % palette.value.pie.length]
     ctx.arc(cx, cy, outer, start, end)
     ctx.arc(cx, cy, inner, end, start, true)
     ctx.closePath()
@@ -186,10 +192,11 @@ function drawShare(
   }
 
   ctx.textAlign = 'center'
-  ctx.fillStyle = '#1a1d1f'
+  // 原中心主标题色 = --fb-ink；走 inkDeep 保持逐像素一致（ink 是 --fb-sub 轴标签色）。
+  ctx.fillStyle = palette.value.inkDeep
   ctx.font = '600 13px -apple-system, BlinkMacSystemFont, sans-serif'
   ctx.fillText('支出占比', cx, cy - 2)
-  ctx.fillStyle = INK
+  ctx.fillStyle = palette.value.ink
   ctx.font = '11px -apple-system, BlinkMacSystemFont, sans-serif'
   ctx.fillText(`${shares.length} 个分类`, cx, cy + 15)
 }
@@ -221,6 +228,14 @@ function draw(): void {
 }
 
 onMounted(() => {
+  // CSS 已注入后再读一次正式 token；值与 DEFAULT_TOKENS 相同，仅改来源不改颜色。
+  palette.value = getChartPalette(readThemeTokens())
+  draw()
+})
+
+// 阶段 4 深色模式：refreshThemeTokens() 递增 themeEpoch 后触发重绘；本次不接切换 UI。
+watch(themeEpoch, () => {
+  palette.value = getChartPalette(readThemeTokens())
   draw()
 })
 

@@ -66,6 +66,18 @@
   --fb-warn-ink: #8a6100;
   --fb-blue-line: #cfdcfd;
 
+  /* 阶段 0：图表色桥接 token。值沿用旧科技蓝，阶段 3 再统一换暖值（视觉零变化）。 */
+  --fb-chart-4: #8b5cf6;
+  --fb-chart-6: #0ea5e9;
+
+  /* 阶段 0 护栏收编：以下 token 精确沿用原硬编码值，阶段 3 再换暖色。 */
+  --fb-primary: #4c6ef5;
+  --fb-primary-soft: rgba(76, 110, 245, 0.08);
+  --fb-overlay-scrim: rgba(20, 28, 48, 0.45);
+  --fb-shadow-pop: rgba(23, 32, 68, 0.2);
+  --fb-shadow-accent: rgba(59, 110, 246, 0.35);
+  --fb-shadow-deep: rgba(13, 22, 48, 0.18);
+
   /* 记一笔 H5 全屏视口量：JS 在 mounted 后把 --vvh 覆写为 visualViewport 高度 px。
      这里先给 100vh 兜底（禁止 100dvh），保证首帧 / 无 JS / Safari 14.1 不为 0。 */
   --vvh: 100vh;

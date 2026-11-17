@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 
+import { findColorLiterals } from '../../scripts/check-theme-sources.mjs'
 import ReceiptSlip from './ReceiptSlip.vue'
 
 // MoneyText 读取隐私 store（遮挡开关），组件级测试需先装一个空 Pinia。
@@ -89,8 +90,11 @@ describe('ReceiptSlip：色值 token 化', () => {
     const file = candidates.find((candidate) => existsSync(candidate))
     expect(file, '未找到 ReceiptSlip.vue 源文件').toBeDefined()
     const source = readFileSync(file as string, 'utf8')
-    for (const color of ['#ba800c', '#8a6100', '#1f7a52', '#d9d2bf', '#6b6353', '#b9b2a1', '#ddd5c2', '#a29a87']) {
-      expect(source, `仍存在硬编码色值 ${color}`).not.toContain(color)
-    }
+    // 复用主题护栏扫描器，不再把旧色值写死在断言里（换肤后不会假绿 / 假红）。
+    const hits = findColorLiterals(source)
+    expect(
+      hits.map((hit) => `${hit.line}:${hit.text}`),
+      'ReceiptSlip.vue 仍存在硬编码色值',
+    ).toEqual([])
   })
 })

@@ -448,7 +448,7 @@ function goChangePassword(): void {
   font-size: 28px;
   line-height: 1;
   cursor: pointer;
-  box-shadow: 0 8px 20px rgba(59, 110, 246, 0.35);
+  box-shadow: 0 8px 20px var(--fb-shadow-accent);
 }
 
 /* ---------- 断点：与 Flutter 版 isWide(1024) 对齐 ---------- */

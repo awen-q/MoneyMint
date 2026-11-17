@@ -196,7 +196,7 @@ onMounted(() => { void loadRegistration() })
   margin: 0 auto;
   border-radius: 14px;
   object-fit: cover;
-  box-shadow: 0 2px 10px rgba(13, 22, 48, 0.18);
+  box-shadow: 0 2px 10px var(--fb-shadow-deep);
 }
 
 .auth__hero h1 {

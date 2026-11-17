@@ -427,7 +427,7 @@ onMounted(() => {
   right: 0;
   bottom: 0;
   left: 0;
-  background: rgba(20, 28, 48, 0.45);
+  background: var(--fb-overlay-scrim);
   z-index: 60;
   display: flex;
   align-items: flex-end;

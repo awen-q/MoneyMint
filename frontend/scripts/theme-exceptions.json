@@ -1,0 +1,7 @@
+{
+  "allowFiles": [
+    "src/styles/tokens.css",
+    "src/styles/themeTokens.ts"
+  ],
+  "allowLines": []
+}

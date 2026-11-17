@@ -334,11 +334,11 @@ onMounted(() => {
 .rpt__card-head span { font-size: 11px; }
 .rpt__legend { display: flex; gap: 14px; margin-top: 8px; font-size: 11px; color: var(--fb-sub); }
 .rpt__dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; background: var(--fb-blue); }
-.rpt__dot--income { background: #2ba471; }
-.rpt__dot--expense { background: #3b6ef6; }
-.rpt__dot--0 { background: #3b6ef6; } .rpt__dot--1 { background: #2ba471; }
-.rpt__dot--2 { background: #e8590c; } .rpt__dot--3 { background: #8b5cf6; }
-.rpt__dot--4 { background: #d93025; } .rpt__dot--5 { background: #0ea5e9; }
+.rpt__dot--income { background: var(--fb-green); }
+.rpt__dot--expense { background: var(--fb-blue); }
+.rpt__dot--0 { background: var(--fb-blue); } .rpt__dot--1 { background: var(--fb-green); }
+.rpt__dot--2 { background: var(--fb-warn); } .rpt__dot--3 { background: var(--fb-chart-4); }
+.rpt__dot--4 { background: var(--fb-danger); } .rpt__dot--5 { background: var(--fb-chart-6); }
 .rpt__legend-list, .rpt__rank, .rpt__members { list-style: none; margin: 10px 0 0; padding: 0; }
 .rpt__legend-list li, .rpt__rank li, .rpt__members li { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 12px; }
 .rpt__legend-name, .rpt__rank-name, .rpt__member-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
