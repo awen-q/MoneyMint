@@ -192,7 +192,8 @@ defineExpose({ canSubmit, addRow, removeRow, autoBalance })
   <section class="grp">
     <div class="g-head">
       <span class="g-title"><i class="g-dot"></i>双录分录</span>
-      <button type="button" class="g-link" data-act="back-simple" @click="backToSimple">
+      <!-- 编辑态隐藏「返回简化模式」：带类型 Tab 的简化编辑器会把类型暗示带回编辑态。 -->
+      <button v-if="!editing" type="button" class="g-link" data-act="back-simple" @click="backToSimple">
         ‹ 返回简化模式
       </button>
     </div>
@@ -276,7 +277,9 @@ defineExpose({ canSubmit, addRow, removeRow, autoBalance })
     />
   </section>
 
-  <p class="adv-note">日期 / 标签 / 备注沿用切换前填写的内容；返回简化模式可修改。提交走与简化模式相同的幂等路径。</p>
+  <!-- 编辑态：日期 / 标签 / 备注来自原交易；新建态：沿用切换前填写的内容。 -->
+  <p v-if="editing" class="adv-note">日期 / 标签 / 备注来自原交易，可直接修改；保存走冲正 + 新建（仅在线）。</p>
+  <p v-else class="adv-note">日期 / 标签 / 备注沿用切换前填写的内容；返回简化模式可修改。提交走与简化模式相同的幂等路径。</p>
   <p v-if="editing" class="edit-mini">原交易将被冲正：保存后以新交易为准，仅在线提交。</p>
   <p class="adv-note">多币种时按 <b>commodity 分组</b>各自配平；跨币种 cost / price 注解属 P1，本期不出。</p>
 </template>

@@ -863,7 +863,8 @@ function buildReceipt(
     stamp: stamp.stamp,
     stampSub: stamp.stampSub,
     tone: stamp.tone,
-    kindLabel: KIND_LABELS[form.kind],
+    // 编辑态无类型概念（冲正 + 新建），票面类型标签固定为「修改 EDIT」。
+    kindLabel: isEditing.value ? '修改 EDIT' : KIND_LABELS[form.kind],
     amount: Money.from(entry.amount).abs().toString(),
     commodity,
     rows,
@@ -1225,7 +1226,9 @@ watch(
           正在修改「{{ editingTxn?.description }}」：保存后原交易将被冲正，账目以新交易为准，仅在线提交。
         </p>
 
-        <div class="rs-stage">
+        <!-- 编辑态无类型 Tab 与金额舞台：Beancount 交易无类型字段，类型由分录本身表达，
+             配平检查交给下方高级双录。新建态（!isEditing）恒渲染，视觉零变化。 -->
+        <div v-if="!isEditing" class="rs-stage">
           <div class="rs-tabs" role="tablist">
             <button
               v-for="tab in tabs"

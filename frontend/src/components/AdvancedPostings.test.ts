@@ -147,3 +147,28 @@ describe('AdvancedPostings：配平与守门', () => {
     wrapper.unmount()
   })
 })
+
+describe('AdvancedPostings：编辑态冲正口径', () => {
+  it('editing=true：无「返回简化模式」链接，adv-note 为编辑态文案', () => {
+    const { wrapper } = mountRows(rows([[3, '128.50', 'CNY'], [1, '-128.50', 'CNY']]), true)
+    // 返回带类型 Tab 的简化编辑器会把类型暗示带回编辑态，必须隐藏。
+    expect(wrapper.find('[data-act="back-simple"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('返回简化模式')
+    const note = wrapper.find('.adv-note').text()
+    expect(note).toContain('来自原交易')
+    expect(note).toContain('冲正 + 新建（仅在线）')
+    expect(note).not.toContain('沿用切换前填写的内容')
+    wrapper.unmount()
+  })
+
+  it('editing=false：back-simple 存在，adv-note 保持原文案', () => {
+    const { wrapper } = mountRows(rows([[3, '128.50', 'CNY'], [1, '-128.50', 'CNY']]), false)
+    expect(wrapper.find('[data-act="back-simple"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('返回简化模式')
+    const note = wrapper.find('.adv-note').text()
+    expect(note).toContain('沿用切换前填写的内容')
+    expect(note).toContain('幂等路径')
+    expect(note).not.toContain('来自原交易')
+    wrapper.unmount()
+  })
+})

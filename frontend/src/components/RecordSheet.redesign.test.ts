@@ -386,3 +386,81 @@ describe('形态与键盘避让的副作用清理', () => {
     expect(document.documentElement.style.getPropertyValue('--vvh')).toBe('')
   })
 })
+
+describe('编辑态（冲正 + 新建）：无类型 Tab 与金额舞台', () => {
+  /** Beancount 交易无类型字段：编辑态类型未知，去掉顶部 Tab 与金额舞台，类型交给分录 + 配平。 */
+  const EDIT_TXN = {
+    uuid: 't-edit',
+    date: '2026-11-16',
+    flag: '*',
+    description: '午餐',
+    tags: ['日常'],
+    postings: [
+      { account_id: 2, account: 'Expenses:Food', commodity: 'CNY', amount: '38.50' },
+      { account_id: 1, account: 'Assets:Cash', commodity: 'CNY', amount: '-38.50' },
+    ],
+  }
+
+  it('编辑态移除 rs-stage（类型 Tab + 金额舞台），保留冲正横幅与高级双录分录', async () => {
+    h.editing.value = EDIT_TXN
+    const wrapper = await mountSheet({}, { keypad: false })
+    // ① 不存在类型 Tab；② 不存在金额舞台（含 rs-stage 容器整块）。
+    expect(wrapper.find('.rs-tabs').exists()).toBe(false)
+    expect(wrapper.find('.rs-amount').exists()).toBe(false)
+    expect(wrapper.find('.rs-stage').exists()).toBe(false)
+    // ③ 冲正横幅存在且带原交易描述。
+    expect(wrapper.find('.rs-editbanner').exists()).toBe(true)
+    expect(wrapper.find('.rs-editbanner').text()).toContain('午餐')
+    // ④ 高级双录渲染：预填两行分录，且无「返回简化模式」入口（带回类型暗示）。
+    expect(wrapper.find('.js-advrows').exists()).toBe(true)
+    expect(wrapper.findAll('.rs-adv-row')).toHaveLength(2)
+    expect(wrapper.find('[data-act="back-simple"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('返回简化模式')
+    wrapper.unmount()
+    h.editing.value = null
+  })
+
+  it('编辑态保存走 update（冲正），票面类型标签固定为「修改 EDIT」', async () => {
+    h.editing.value = EDIT_TXN
+    h.update.mockReset()
+    h.update.mockResolvedValue({ new_uuid: 't-new' })
+    const wrapper = await mountSheet({}, { keypad: false })
+    const save = wrapper.find('.rs-foot button.fb-btn-primary')
+    expect(save.exists()).toBe(true)
+    await save.trigger('click')
+    await flushPromises()
+    expect(h.update).toHaveBeenCalledTimes(1)
+    // 钉死：编辑绝不走新建幂等路径（冲正 + 新建语义下 create 必须零调用）。
+    expect(h.create).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('修改 EDIT')
+    expect(wrapper.text()).not.toContain('支出 EXPENSE')
+    wrapper.unmount()
+    h.editing.value = null
+  })
+
+  it('编辑态保存失败：错误提示 alert 不随 rs-stage 移除而丢失', async () => {
+    h.editing.value = EDIT_TXN
+    h.update.mockRejectedValueOnce(new Error('net down'))
+    const wrapper = await mountSheet({}, { keypad: false })
+    const save = wrapper.find('.rs-foot button.fb-btn-primary')
+    expect(save.exists()).toBe(true)
+    await save.trigger('click')
+    await flushPromises()
+    // rs-alert 容器在 rs-stage 之外，编辑态移除 stage 后保存失败信息仍可见。
+    const alert = wrapper.find('.rs-alert--error')
+    expect(alert.exists()).toBe(true)
+    expect(alert.text()).toContain('修改失败')
+    wrapper.unmount()
+    h.editing.value = null
+  })
+
+  it('新建态回归保护：rs-stage / 类型 Tab / 金额舞台仍按原结构渲染', async () => {
+    const wrapper = await mountSheet({}, { keypad: false })
+    expect(wrapper.find('.rs-stage').exists()).toBe(true)
+    expect(wrapper.find('.rs-tabs').exists()).toBe(true)
+    expect(wrapper.findAll('.rs-tabs button')).toHaveLength(3)
+    expect(wrapper.find('.rs-amount').exists()).toBe(true)
+    expect(wrapper.find('.rs-editbanner').exists()).toBe(false)
+    wrapper.unmount()
+  })
+})
