@@ -414,7 +414,8 @@ onMounted(() => { void reload() })
 .ldg__notice--err { background: var(--fb-danger-soft); color: var(--fb-danger-ink); }
 .ldg__panel { margin-top: 12px; padding: 14px 16px; }
 .ldg__panel h2 { margin: 0 0 10px; font-size: 14px; }
-.ldg__panel p { margin: 0 0 10px; font-size: 12px; }
+/* 确认弹窗里的期初日期与账户 / 交易 / 成员笔数按等宽对齐。 */
+.ldg__panel p { margin: 0 0 10px; font-size: 12px; font-variant-numeric: var(--fb-font-numeric); }
 .ldg__panel--danger { border: 1px solid var(--fb-warn); }
 .ldg__field { display: block; margin-bottom: 10px; font-size: 12px; color: var(--fb-sub); }
 .ldg__field span { display: block; margin-bottom: 4px; }
@@ -425,7 +426,7 @@ onMounted(() => { void reload() })
 .ldg__row:last-child { border-bottom: none; }
 .ldg__icon { font-size: 18px; color: var(--fb-blue); }
 .ldg__name { flex: 1; min-width: 130px; font-size: 13px; }
-.ldg__name small { display: block; font-size: 11px; color: var(--fb-sub); }
+.ldg__name small { display: block; font-size: 11px; color: var(--fb-sub); font-variant-numeric: var(--fb-font-numeric); }
 .ldg__current { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: var(--fb-radius-pill); background: var(--fb-green-soft); color: var(--fb-green-ink); font-size: 10px; font-style: normal; }
 .ldg__opening { margin-top: 14px; }
 .ldg__state { margin-top: 14px; padding: 28px 16px; text-align: center; font-size: 13px; color: var(--fb-sub); }

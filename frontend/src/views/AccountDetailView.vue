@@ -670,6 +670,8 @@ onMounted(() => {
   margin: 8px 0 0;
   font-size: 11px;
   color: var(--fb-sub);
+  /* 余额校准预检的各币种累计金额是纯文本渲染，数字等宽避免竖列跳动。 */
+  font-variant-numeric: var(--fb-font-numeric);
 }
 
 .acctd__confirm h3 {
@@ -681,6 +683,8 @@ onMounted(() => {
   font-size: 12px;
   line-height: 1.7;
   color: var(--fb-ink);
+  /* 预检文案内嵌目标余额，等宽数字保证逐行对齐。 */
+  font-variant-numeric: var(--fb-font-numeric);
 }
 
 .acctd__warn--error {
@@ -752,6 +756,7 @@ onMounted(() => {
   color: var(--fb-green-ink);
   font-size: 12px;
   line-height: 1.7;
+  font-variant-numeric: var(--fb-font-numeric);
 }
 
 .acctd__list {
@@ -811,6 +816,8 @@ onMounted(() => {
 .acctd__row-meta {
   font-size: 11px;
   color: var(--fb-sub);
+  /* 校准历史行的差额金额在元信息里，跟进等宽口径。 */
+  font-variant-numeric: var(--fb-font-numeric);
 }
 
 .acctd__empty {

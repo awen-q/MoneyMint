@@ -253,7 +253,7 @@ onMounted(() => {
               <i class="rpt__dot" :class="`rpt__dot--${index % 6}`" />
               <span class="rpt__legend-name">{{ item.label }}</span>
               <MoneyText :amount="item.amount" :commodity="commodity" size="sm" />
-              <span class="fb-muted">{{ Math.round(item.ratio * 100) }}%</span>
+              <span class="fb-muted rpt__pct">{{ Math.round(item.ratio * 100) }}%</span>
             </li>
           </ul>
           <p v-else class="rpt__empty">本期没有支出分类数据。</p>
@@ -327,7 +327,9 @@ onMounted(() => {
 .rpt__metrics { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 14px; }
 .rpt__metric { padding: 14px; display: flex; flex-direction: column; gap: 6px; }
 .rpt__metric-label { font-size: 11px; color: var(--fb-sub); }
-.rpt__count { font-size: 26px; font-weight: 800; }
+/* 报表数字列统一 tabular-nums：笔数 / 占比 / 排名 / 成员笔数与金额同口径。 */
+.rpt__count { font-size: 26px; font-weight: 800; font-variant-numeric: var(--fb-font-numeric); }
+.rpt__pct { font-variant-numeric: var(--fb-font-numeric); }
 .rpt__card { margin-top: 14px; padding: 14px 16px; }
 .rpt__card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .rpt__card-head h2 { margin: 0; font-size: 14px; }
@@ -342,11 +344,11 @@ onMounted(() => {
 .rpt__legend-list, .rpt__rank, .rpt__members { list-style: none; margin: 10px 0 0; padding: 0; }
 .rpt__legend-list li, .rpt__rank li, .rpt__members li { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 12px; }
 .rpt__legend-name, .rpt__rank-name, .rpt__member-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rpt__rank-no { width: 18px; color: var(--fb-sub); }
+.rpt__rank-no { width: 18px; color: var(--fb-sub); font-variant-numeric: var(--fb-font-numeric); }
 .rpt__bar { width: 70px; height: 6px; border-radius: 3px; background: var(--fb-soft); overflow: hidden; flex-shrink: 0; }
 .rpt__bar i { display: block; height: 100%; background: var(--fb-blue); }
 .rpt__avatar { width: 26px; height: 26px; border-radius: 50%; background: var(--fb-blue-soft); color: var(--fb-blue); display: flex; align-items: center; justify-content: center; font-weight: 700; }
-.rpt__member-name small { display: block; font-size: 10px; color: var(--fb-sub); }
+.rpt__member-name small { display: block; font-size: 10px; color: var(--fb-sub); font-variant-numeric: var(--fb-font-numeric); }
 .rpt__grid { display: grid; grid-template-columns: 1fr; gap: 0; }
 .rpt__grid > .rpt__card { margin-top: 14px; }
 .rpt__empty { margin: 12px 0 0; font-size: 12px; color: var(--fb-sub); text-align: center; }

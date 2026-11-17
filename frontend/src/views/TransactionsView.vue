@@ -526,6 +526,7 @@ onMounted(() => {
   font-size: 13px;
   font-weight: 500;
   color: var(--fb-ink);
+  font-variant-numeric: var(--fb-font-numeric);
 }
 
 .txn__cal-e {
@@ -547,6 +548,8 @@ onMounted(() => {
   font-size: 12px;
   color: var(--fb-sub);
   padding: 12px 0 4px;
+  /* 日期与当日收支小计同列显示，日期数字也走等宽口径。 */
+  font-variant-numeric: var(--fb-font-numeric);
 }
 
 .txn__day-sum {

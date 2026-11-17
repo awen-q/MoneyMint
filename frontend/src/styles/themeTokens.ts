@@ -36,9 +36,10 @@ export interface ChartPalette {
 /**
  * 模块内唯一允许的 JS 色值字面量，仅当 CSS 变量读不到时兜底（jsdom / SSR / 样式未注入）。
  *
- * 阶段 1 全站纸质暖色迁移：语义色兜底值已同步为 tokens.css :root 的暖纸值，
- * 避免 Canvas 在无 CSS 环境下残留科技蓝孤岛。chart4 / chart6 保留阶段 0 旧值，
- * 与 tokens.css 一致，阶段 3 再一并换暖。浏览器正常路径始终读 CSS 变量（单一色源）。
+ * 阶段 1 全站纸质暖色迁移：语义色兜底值已同步为 tokens.css :root 的暖纸值。
+ * 阶段 3 图表暖色化：chart4 / chart6 也已由遗留冷色换为暖褐 / 雾青，
+ * 与 tokens.css 及 scripts/theme-tokens.golden.json 逐字一致；浏览器正常路径
+ * 始终读 CSS 变量（单一色源），本对象只在 jsdom / SSR 等无 CSS 环境兜底。
  */
 export const DEFAULT_TOKENS: Readonly<ThemeTokens> = Object.freeze({
   card: '#fdfbf4',
@@ -49,8 +50,8 @@ export const DEFAULT_TOKENS: Readonly<ThemeTokens> = Object.freeze({
   green: '#3f7d5c',
   warn: '#c8811e',
   danger: '#b4463c',
-  chart4: '#8b5cf6',
-  chart6: '#0ea5e9',
+  chart4: '#8a6d4f',
+  chart6: '#5c8a86',
 })
 
 /**

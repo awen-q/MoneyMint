@@ -9,8 +9,9 @@
  *
  * jsdom（Vitest）没有 canvas 上下文，getContext 返回 null 时静默跳过绘制。
  *
- * 阶段 0：Canvas 读不到 CSS 变量，色值统一经 styles/themeTokens 读桥获取；
- * 绘制逻辑与旧常量值完全不变，保证截图逐像素一致。
+ * 阶段 0：Canvas 读不到 CSS 变量，色值统一经 styles/themeTokens 读桥获取。
+ * 阶段 3：六色饼图第 4 / 6 色随 token 换暖；绘制逻辑仍只读调色板，
+ * 与 ReportsView 的 DOM 图例共用同一色源，组件内不保留色值副本。
  */
 import { onMounted, ref, watch } from 'vue'
 
@@ -228,7 +229,7 @@ function draw(): void {
 }
 
 onMounted(() => {
-  // CSS 已注入后再读一次正式 token；值与 DEFAULT_TOKENS 相同，仅改来源不改颜色。
+  // CSS 已注入后再读一次正式 token；浏览器走 CSS 变量，jsdom / SSR 走已同步暖色的兜底值。
   palette.value = getChartPalette(readThemeTokens())
   draw()
 })

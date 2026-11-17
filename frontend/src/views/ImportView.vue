@@ -338,7 +338,8 @@ function gotoLedgers(): void {
 .im__textarea { width: 100%; box-sizing: border-box; padding: 10px; border: 1.5px solid var(--fb-line); border-radius: var(--fb-radius-input); font-size: 12px; font-family: monospace; line-height: 1.6; resize: vertical; background: var(--fb-surface, transparent); color: var(--fb-text, inherit); }
 .im__buttons { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .im__btn { padding: 6px 12px; font-size: 12px; }
-.im__table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 10px; }
+/* pad / balance 表格的目标 / 累计 / 差额是定点金额，数字列等宽对齐。 */
+.im__table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 10px; font-variant-numeric: var(--fb-font-numeric); }
 .im__table td { padding: 6px 8px; border-bottom: 1px solid var(--fb-line); }
 .im__table td:first-child { color: var(--fb-sub); width: 40%; }
 .im__errors { margin: 0 0 10px; padding-left: 18px; font-size: 11px; line-height: 1.8; color: var(--fb-danger); }

@@ -351,6 +351,8 @@ watch(
   align-items: center;
   justify-content: space-between;
   margin-bottom: 10px;
+  /* 标题右侧的账户数量按等宽显示，金额仍由 MoneyText 自行跟进。 */
+  font-variant-numeric: var(--fb-font-numeric);
 }
 
 .home__card-head h3 {

@@ -97,9 +97,12 @@
   --fb-font-ledger: Georgia, 'Times New Roman', serif;
   --fb-font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', 'Courier New', monospace;
 
-  /* 阶段 0：图表色桥接 token。值沿用旧科技蓝，阶段 3 再统一换暖值（视觉零变化）。 */
-  --fb-chart-4: #8b5cf6;
-  --fb-chart-6: #0ea5e9;
+  /* 阶段 3：图表第 4 / 6 色由阶段 0 遗留冷色换暖，与饼图其余四色同属纸感色系。
+     --fb-chart-4 暖褐、--fb-chart-6 雾青；在纸底 --fb-card 上图形对比度均 ≥ 3.0:1
+     （雾青由 2.68:1 提升到 3.73:1）。Canvas 经 themeTokens 读桥、DOM 图例经 var()
+     共用本 token，组件内无第二份色值。 */
+  --fb-chart-4: #8a6d4f;
+  --fb-chart-6: #5c8a86;
 
   /* 阶段 0 护栏收编 token：阶段 1 改为暖纸 / 暖褐，消除蓝色孤岛。 */
   --fb-primary: #2f5d4e;

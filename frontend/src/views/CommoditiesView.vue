@@ -359,6 +359,8 @@ onMounted(() => {
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;
+  /* 账户数 / 交易数数字列与 MoneyText 金额列同口径。 */
+  font-variant-numeric: var(--fb-font-numeric);
 }
 
 .cmd__table th,
