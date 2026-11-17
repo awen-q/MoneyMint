@@ -452,12 +452,12 @@ onMounted(() => {
 
 .cmd__notice--ok {
   background: var(--fb-green-soft);
-  color: var(--fb-green);
+  color: var(--fb-green-ink);
 }
 
 .cmd__notice--err {
   background: var(--fb-danger-soft);
-  color: var(--fb-danger);
+  color: var(--fb-danger-ink);
 }
 
 .cmd__usage {

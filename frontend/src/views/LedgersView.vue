@@ -410,8 +410,8 @@ onMounted(() => { void reload() })
 .ldg__btn { padding: 6px 12px; font-size: 12px; }
 .ldg__btn--danger { color: var(--fb-danger); }
 .ldg__notice { margin: 10px 0 0; padding: 8px 12px; border-radius: var(--fb-radius-input); font-size: 12px; }
-.ldg__notice--ok { background: var(--fb-green-soft); color: var(--fb-green); }
-.ldg__notice--err { background: var(--fb-danger-soft); color: var(--fb-danger); }
+.ldg__notice--ok { background: var(--fb-green-soft); color: var(--fb-green-ink); }
+.ldg__notice--err { background: var(--fb-danger-soft); color: var(--fb-danger-ink); }
 .ldg__panel { margin-top: 12px; padding: 14px 16px; }
 .ldg__panel h2 { margin: 0 0 10px; font-size: 14px; }
 .ldg__panel p { margin: 0 0 10px; font-size: 12px; }
@@ -426,7 +426,7 @@ onMounted(() => { void reload() })
 .ldg__icon { font-size: 18px; color: var(--fb-blue); }
 .ldg__name { flex: 1; min-width: 130px; font-size: 13px; }
 .ldg__name small { display: block; font-size: 11px; color: var(--fb-sub); }
-.ldg__current { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: var(--fb-radius-pill); background: var(--fb-green-soft); color: var(--fb-green); font-size: 10px; font-style: normal; }
+.ldg__current { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: var(--fb-radius-pill); background: var(--fb-green-soft); color: var(--fb-green-ink); font-size: 10px; font-style: normal; }
 .ldg__opening { margin-top: 14px; }
 .ldg__state { margin-top: 14px; padding: 28px 16px; text-align: center; font-size: 13px; color: var(--fb-sub); }
 .ldg__state--err { color: var(--fb-danger); }

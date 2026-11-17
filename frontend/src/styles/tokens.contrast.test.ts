@@ -118,6 +118,16 @@ interface Pair {
   readonly background: string
 }
 
+/**
+ * 阶段 2 OBS-1 收口后锁定：正文安全墨色 on 对应 soft 底的实测下限。
+ * 没有登记的组合沿用 WCAG AA 正文门槛 4.5:1；这些 floor 只依赖 token 名，不写裸 hex。
+ */
+const INK_MIN_RATIOS: ReadonlyMap<string, number> = new Map([
+  ['警示正文墨 on 警示浅底', 5.1],
+  ['成功正文墨 on 成功浅底', 5.29],
+  ['危险正文墨 on 危险浅底', 5.37],
+])
+
 /** 正文安全墨色 / 主按钮反白字 / 侧栏文字：门槛 4.5:1。 */
 const BODY_PAIRS: readonly Pair[] = [
   { label: '品牌墨绿 on 纸面', foreground: '--fb-blue', background: '--fb-card' },
@@ -184,11 +194,12 @@ describe('阶段 1 结构门禁：物理单源', () => {
 })
 
 describe('阶段 1 对比度门禁 G3：正文 ≥4.5、大字/UI/图形 ≥3.0', () => {
-  it(`正文配对全部达到 4.5:1（共 ${BODY_PAIRS.length} 对）`, () => {
+  it(`正文配对全部达到门槛（含 OBS-1 收口下限，共 ${BODY_PAIRS.length} 对）`, () => {
     for (const pair of BODY_PAIRS) {
       const score = contrast(pair.foreground, pair.background)
+      const floor = INK_MIN_RATIOS.get(pair.label) ?? 4.5
       expect(score, `${pair.label}：${pair.foreground} on ${pair.background}`).toBeGreaterThanOrEqual(
-        4.5,
+        floor,
       )
     }
   })

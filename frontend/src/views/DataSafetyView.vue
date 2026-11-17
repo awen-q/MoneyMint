@@ -291,8 +291,8 @@ onMounted(() => { void loadBackups() })
 .ds__title { display: block; font-size: 16px; font-weight: 700; }
 .ds__sub { display: block; margin-top: 4px; font-size: 12px; color: var(--fb-on-hero-muted); }
 .ds__notice { margin: 10px 0 0; padding: 8px 12px; border-radius: var(--fb-radius-input); font-size: 12px; }
-.ds__notice--ok { background: var(--fb-green-soft); color: var(--fb-green); }
-.ds__notice--err { background: var(--fb-danger-soft); color: var(--fb-danger); }
+.ds__notice--ok { background: var(--fb-green-soft); color: var(--fb-green-ink); }
+.ds__notice--err { background: var(--fb-danger-soft); color: var(--fb-danger-ink); }
 .ds__block { margin-top: 12px; padding: 14px 16px; border: 1px solid var(--fb-danger); }
 .ds__block h2 { margin: 0 0 8px; font-size: 14px; color: var(--fb-danger); }
 .ds__block p { margin: 0 0 6px; font-size: 12px; }

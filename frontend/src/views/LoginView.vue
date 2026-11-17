@@ -241,7 +241,7 @@ onMounted(() => { void loadRegistration() })
   padding: 8px 12px;
   border-radius: var(--fb-radius-input);
   background: var(--fb-danger-soft);
-  color: var(--fb-danger);
+  color: var(--fb-danger-ink);
   font-size: 13px;
 }
 
@@ -257,7 +257,7 @@ onMounted(() => { void loadRegistration() })
 
 .auth__hint--warn {
   background: var(--fb-danger-soft);
-  color: var(--fb-danger);
+  color: var(--fb-danger-ink);
 }
 
 .auth__switch {

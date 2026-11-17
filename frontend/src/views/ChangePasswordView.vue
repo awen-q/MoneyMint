@@ -143,7 +143,7 @@ async function logout(): Promise<void> {
   padding: 10px 12px;
   border-radius: var(--fb-radius-input);
   background: var(--fb-warn-soft);
-  color: var(--fb-warn);
+  color: var(--fb-warn-ink);
   font-size: 12px;
   line-height: 1.6;
 }
@@ -171,7 +171,7 @@ async function logout(): Promise<void> {
   padding: 8px 12px;
   border-radius: var(--fb-radius-input);
   background: var(--fb-danger-soft);
-  color: var(--fb-danger);
+  color: var(--fb-danger-ink);
   font-size: 13px;
 }
 

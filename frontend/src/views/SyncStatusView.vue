@@ -236,7 +236,7 @@ onMounted(() => {
 .syn__status-text small { font-size: 11px; color: var(--fb-sub); }
 .syn__btn { padding: 6px 12px; font-size: 12px; white-space: nowrap; }
 .syn__btn--danger { color: var(--fb-danger); border-color: var(--fb-danger); }
-.syn__notice { margin: 10px 0 0; padding: 8px 12px; border-radius: var(--fb-radius-input); font-size: 12px; background: var(--fb-green-soft); color: var(--fb-green); }
+.syn__notice { margin: 10px 0 0; padding: 8px 12px; border-radius: var(--fb-radius-input); font-size: 12px; background: var(--fb-green-soft); color: var(--fb-green-ink); }
 .syn__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; margin: 0 0 8px; font-size: 12px; }
 .syn__grid dt { color: var(--fb-sub); }
 .syn__grid dd { margin: 0; text-align: right; overflow-wrap: anywhere; }

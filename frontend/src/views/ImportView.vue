@@ -333,7 +333,7 @@ function gotoLedgers(): void {
 .im__reject { border: 1px solid var(--fb-danger); }
 .im__reject h2 { color: var(--fb-danger); }
 .im__desc { margin: 0 0 8px; font-size: 11px; color: var(--fb-sub); line-height: 1.7; }
-.im__notice { margin: 10px 0 0; padding: 8px 12px; border-radius: var(--fb-radius-input); font-size: 12px; background: var(--fb-danger-soft); color: var(--fb-danger); }
+.im__notice { margin: 10px 0 0; padding: 8px 12px; border-radius: var(--fb-radius-input); font-size: 12px; background: var(--fb-danger-soft); color: var(--fb-danger-ink); }
 .im__file { display: block; margin: 10px 0; font-size: 12px; }
 .im__textarea { width: 100%; box-sizing: border-box; padding: 10px; border: 1.5px solid var(--fb-line); border-radius: var(--fb-radius-input); font-size: 12px; font-family: monospace; line-height: 1.6; resize: vertical; background: var(--fb-surface, transparent); color: var(--fb-text, inherit); }
 .im__buttons { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
@@ -342,7 +342,7 @@ function gotoLedgers(): void {
 .im__table td { padding: 6px 8px; border-bottom: 1px solid var(--fb-line); }
 .im__table td:first-child { color: var(--fb-sub); width: 40%; }
 .im__errors { margin: 0 0 10px; padding-left: 18px; font-size: 11px; line-height: 1.8; color: var(--fb-danger); }
-.im__must { margin: 10px 0 0; padding: 8px 12px; border-radius: var(--fb-radius-input); font-size: 12px; background: var(--fb-warn-soft); color: var(--fb-warn); font-weight: 600; }
+.im__must { margin: 10px 0 0; padding: 8px 12px; border-radius: var(--fb-radius-input); font-size: 12px; background: var(--fb-warn-soft); color: var(--fb-warn-ink); font-weight: 600; }
 .im__targets { display: flex; gap: 8px; margin-bottom: 8px; }
 .im__target { flex: 1; padding: 8px 10px; font-size: 12px; border: 1.5px solid var(--fb-line); border-radius: var(--fb-radius-input); background: transparent; color: var(--fb-text, inherit); }
 .im__target--on { border-color: var(--fb-primary); font-weight: 600; background: var(--fb-primary-soft); }

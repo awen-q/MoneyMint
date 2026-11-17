@@ -616,7 +616,7 @@ onMounted(() => {
 /* 0.6.0 S6 AC-5.5：已冲正（失效原交易）徽章，警示色。 */
 .txn__badge--reversed {
   background: var(--fb-warn-soft);
-  color: var(--fb-warn);
+  color: var(--fb-warn-ink);
 }
 
 .txn__empty {

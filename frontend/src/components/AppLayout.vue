@@ -357,7 +357,7 @@ function goChangePassword(): void {
   padding: 10px 14px;
   border-radius: var(--fb-radius-input);
   background: var(--fb-warn-soft);
-  color: var(--fb-warn);
+  color: var(--fb-warn-ink);
   font-size: 12px;
 }
 .layout__update-btn {

@@ -206,7 +206,7 @@ function backToLogin(): void {
 .rs__reject { border: 1px solid var(--fb-danger); }
 .rs__reject h2 { color: var(--fb-danger); }
 .rs__desc { margin: 0 0 8px; font-size: 11px; color: var(--fb-sub); line-height: 1.7; }
-.rs__notice { margin: 10px 0 0; padding: 8px 12px; border-radius: var(--fb-radius-input); font-size: 12px; background: var(--fb-danger-soft); color: var(--fb-danger); }
+.rs__notice { margin: 10px 0 0; padding: 8px 12px; border-radius: var(--fb-radius-input); font-size: 12px; background: var(--fb-danger-soft); color: var(--fb-danger-ink); }
 .rs__file { display: block; margin: 10px 0; font-size: 12px; }
 .rs__buttons { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .rs__btn { padding: 6px 12px; font-size: 12px; }
@@ -216,5 +216,5 @@ function backToLogin(): void {
 .rs__warnings { margin: 0 0 10px; padding-left: 18px; font-size: 11px; color: var(--fb-sub); line-height: 1.8; }
 .rs__confirm { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-top: 6px; flex-wrap: wrap; }
 .rs__input { padding: 6px 8px; border: 1px solid var(--fb-line); border-radius: var(--fb-radius-input); font-size: 12px; width: 140px; }
-.rs__must { margin: 10px 0 0; padding: 8px 12px; border-radius: var(--fb-radius-input); font-size: 12px; background: var(--fb-warn-soft); color: var(--fb-warn); font-weight: 600; }
+.rs__must { margin: 10px 0 0; padding: 8px 12px; border-radius: var(--fb-radius-input); font-size: 12px; background: var(--fb-warn-soft); color: var(--fb-warn-ink); font-weight: 600; }
 </style>

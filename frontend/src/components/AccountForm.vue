@@ -530,12 +530,12 @@ onMounted(() => {
 
 .af-alert--error {
   background: var(--fb-danger-soft);
-  color: var(--fb-danger);
+  color: var(--fb-danger-ink);
 }
 
 .af-alert--ok {
   background: var(--fb-green-soft);
-  color: var(--fb-green);
+  color: var(--fb-green-ink);
 }
 
 .af-balances {
@@ -548,7 +548,7 @@ onMounted(() => {
 .af-balances__label {
   margin: 0 0 6px;
   font-size: 12px;
-  color: var(--fb-danger);
+  color: var(--fb-danger-ink);
   font-weight: 600;
 }
 

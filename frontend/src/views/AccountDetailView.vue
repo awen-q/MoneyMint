@@ -749,7 +749,7 @@ onMounted(() => {
   padding: 8px 12px;
   border-radius: var(--fb-radius-input);
   background: var(--fb-green-soft);
-  color: var(--fb-green);
+  color: var(--fb-green-ink);
   font-size: 12px;
   line-height: 1.7;
 }

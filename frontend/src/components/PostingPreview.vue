@@ -280,7 +280,7 @@ function chipNote(group: BalanceGroup): string {
 .bal-chip.bad {
   border-color: var(--fb-danger-soft);
   background: var(--fb-danger-soft);
-  color: var(--fb-danger);
+  color: var(--fb-danger-ink);
 }
 
 .bal-chip b {

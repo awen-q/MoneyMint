@@ -244,8 +244,8 @@ onMounted(() => { void load() })
 .mem__btn { padding: 6px 12px; font-size: 12px; }
 .mem__btn--danger { color: var(--fb-danger); }
 .mem__notice { margin: 10px 0 0; padding: 8px 12px; border-radius: var(--fb-radius-input); font-size: 12px; }
-.mem__notice--ok { background: var(--fb-green-soft); color: var(--fb-green); }
-.mem__notice--err { background: var(--fb-danger-soft); color: var(--fb-danger); }
+.mem__notice--ok { background: var(--fb-green-soft); color: var(--fb-green-ink); }
+.mem__notice--err { background: var(--fb-danger-soft); color: var(--fb-danger-ink); }
 .mem__panel { margin-top: 12px; padding: 14px 16px; }
 .mem__panel h2 { margin: 0 0 10px; font-size: 14px; }
 .mem__panel p { margin: 0 0 10px; font-size: 12px; }

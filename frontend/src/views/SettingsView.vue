@@ -257,10 +257,10 @@ onMounted(() => {
 .set__badges { display: flex; gap: 6px; flex-wrap: wrap; }
 .set__badge { padding: 3px 9px; border-radius: var(--fb-radius-pill); background: var(--fb-soft); color: var(--fb-sub); font-size: 11px; font-style: normal; }
 .set__badge--admin { background: var(--fb-blue-soft); color: var(--fb-blue); }
-.set__badge--owner { background: var(--fb-green-soft); color: var(--fb-green); }
+.set__badge--owner { background: var(--fb-green-soft); color: var(--fb-green-ink); }
 .set__notice { margin: 10px 0 0; padding: 8px 12px; border-radius: var(--fb-radius-input); font-size: 12px; }
-.set__notice--ok { background: var(--fb-green-soft); color: var(--fb-green); }
-.set__notice--err { background: var(--fb-danger-soft); color: var(--fb-danger); }
+.set__notice--ok { background: var(--fb-green-soft); color: var(--fb-green-ink); }
+.set__notice--err { background: var(--fb-danger-soft); color: var(--fb-danger-ink); }
 .set__card { margin-top: 12px; padding: 12px 16px; }
 .set__card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .set__card h2 { margin: 0 0 8px; font-size: 14px; }
