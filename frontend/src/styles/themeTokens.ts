@@ -34,18 +34,21 @@ export interface ChartPalette {
 }
 
 /**
- * 模块内唯一允许的 JS 色值字面量（旧科技蓝值，仅作兜底）。
- * 阶段 3 换暖值时只需改 tokens.css，这里保持旧值以确保 jsdom/SSR 行为稳定。
+ * 模块内唯一允许的 JS 色值字面量，仅当 CSS 变量读不到时兜底（jsdom / SSR / 样式未注入）。
+ *
+ * 阶段 1 全站纸质暖色迁移：语义色兜底值已同步为 tokens.css :root 的暖纸值，
+ * 避免 Canvas 在无 CSS 环境下残留科技蓝孤岛。chart4 / chart6 保留阶段 0 旧值，
+ * 与 tokens.css 一致，阶段 3 再一并换暖。浏览器正常路径始终读 CSS 变量（单一色源）。
  */
 export const DEFAULT_TOKENS: Readonly<ThemeTokens> = Object.freeze({
-  card: '#ffffff',
-  ink: '#1a1d1f',
-  sub: '#6b7280',
-  line: '#e5e7eb',
-  blue: '#3b6ef6',
-  green: '#2ba471',
-  warn: '#e8590c',
-  danger: '#d93025',
+  card: '#fdfbf4',
+  ink: '#242b26',
+  sub: '#5f5b50',
+  line: '#ded7c6',
+  blue: '#2f5d4e',
+  green: '#3f7d5c',
+  warn: '#c8811e',
+  danger: '#b4463c',
   chart4: '#8b5cf6',
   chart6: '#0ea5e9',
 })
@@ -97,8 +100,8 @@ export function readThemeTokens(): ThemeTokens {
 /**
  * 把 CSS token 映射成 Canvas 绘制用的调色板。
  *
- * inkDeep 为饼图中心主标题色（原 #1a1d1f = --fb-ink），
- * ink 为坐标轴/副标题色（原 #6b7280 = --fb-sub）；阶段 0 必须逐像素保持旧值。
+ * inkDeep 为饼图中心主标题色（--fb-ink），ink 为坐标轴/副标题色（--fb-sub）；
+ * 两者均从 CSS token 读取，阶段 1 起随暖纸主题自动变化。
  *
  * @param tokens readThemeTokens() 的结果
  * @returns Canvas 调色板

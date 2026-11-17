@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 
+import paperGolden from '../../scripts/theme-paper.golden.json'
 import { findColorLiterals } from '../../scripts/check-theme-sources.mjs'
 import ReceiptSlip from './ReceiptSlip.vue'
 
@@ -96,5 +97,65 @@ describe('ReceiptSlip：色值 token 化', () => {
       hits.map((hit) => `${hit.line}:${hit.text}`),
       'ReceiptSlip.vue 仍存在硬编码色值',
     ).toEqual([])
+  })
+})
+
+/**
+ * 阶段 1 小票视觉零变化 golden：
+ * jsdom 不注入 tokens.css，getComputedStyle 读不到 :root 变量，故按
+ * RecordSheet.iosFont.test.ts 的先例做源码文本解析。期望值放 scripts/ 下的
+ * golden JSON，测试文件内不出现裸 hex（护栏扫描 .ts）。
+ */
+function readTokensCss(): string {
+  // jsdom 下 import.meta.url 可能是 http:，沿用本文件既有的 cwd 兜底定位。
+  const candidates = [
+    resolve(process.cwd(), 'src/styles/tokens.css'),
+    resolve(process.cwd(), 'frontend/src/styles/tokens.css'),
+  ]
+  const file = candidates.find((candidate) => existsSync(candidate))
+  expect(file, '未找到 src/styles/tokens.css').toBeDefined()
+  return readFileSync(file as string, 'utf8')
+}
+
+/** 去掉 CSS 注释后按 selector 截取规则体。 */
+function ruleBody(source: string, selector: RegExp): string {
+  const match = selector.exec(source)
+  expect(match, '未找到目标 CSS 规则块').not.toBeNull()
+  return (match?.[1] ?? '').replace(/\/\*[\s\S]*?\*\//g, '')
+}
+
+/** 解析 `--name: value;` 声明，值内空白归一，便于与 golden 逐字比对。 */
+function parseDeclarations(body: string): Map<string, string> {
+  const result = new Map<string, string>()
+  const pattern = /(--[\w-]+)\s*:\s*([^;]+);/g
+  let match = pattern.exec(body)
+  while (match !== null) {
+    result.set(match[1] ?? '', (match[2] ?? '').replace(/\s+/g, ' ').trim())
+    match = pattern.exec(body)
+  }
+  return result
+}
+
+const tokensCss = readTokensCss()
+const rootTokens = parseDeclarations(ruleBody(tokensCss, /:root\s*\{([\s\S]*?)\}/))
+const scopeTokens = parseDeclarations(
+  ruleBody(tokensCss, /\.rs-mask\s*,\s*\.slip\s*\{([\s\S]*?)\}/),
+)
+
+describe('ReceiptSlip：阶段 1 纸感 golden 与小票零变化', () => {
+  it('关键元素最终计算色值锁定：card / ink / blue 取自 :root golden', () => {
+    const entries = Object.entries(paperGolden.receiptGolden)
+    expect(entries.length).toBeGreaterThan(0)
+    for (const [name, expected] of entries) {
+      expect(rootTokens.get(name), `${name} 与票面 golden 不一致`).toBe(expected)
+    }
+  })
+
+  it('小票原始色板五兄弟作用域值逐字不变（票面视觉零变化的实证）', () => {
+    const entries = Object.entries(paperGolden.scopeExceptions)
+    expect(entries.length).toBeGreaterThan(0)
+    for (const [name, expected] of entries) {
+      expect(scopeTokens.get(name), `${name} 作用域值被改动`).toBe(expected)
+    }
   })
 })

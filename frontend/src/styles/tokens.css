@@ -2,36 +2,76 @@
  * 设计 token（批 0）
  * 数值沿用改版期原型已定的设计 token，
  * 不新建设计系统；后续页面只能引用变量，禁止散落硬编码色值。
+ *
+ * 阶段 1（全站纸质暖色迁移）：:root 全量上提 .rs-mask/.slip 已验收的暖纸色板。
+ * 同名 token 的值与原作用域逐字相同，故小票 / 记一笔视觉零变化；
+ * 其余 View 通过 var(--fb-*) 自动跟随变暖（唯一色值源）。
  */
 :root {
-  /* 主色与语义色 */
-  --fb-blue: #3b6ef6;
-  --fb-green: #2ba471;
-  --fb-warn: #e8590c;
-  --fb-danger: #d93025;
+  /* 主色与语义色
+     --fb-blue 为历史变量名，纸感主题下语义=品牌主色墨绿，勿据字面理解为蓝色。 */
+  --fb-blue: #2f5d4e;
+  --fb-green: #3f7d5c;
+  --fb-warn: #c8811e;
+  --fb-danger: #b4463c;
+  --fb-seal: #c1443b;
+
+  /* 品牌别名族（原仅小票作用域所有，阶段 1 上提，值逐字相同） */
+  --fb-seal-soft: #f6e7e2;
+  --fb-ink-deep: #1f332c;
+  --fb-brand: var(--fb-blue);
+  --fb-brand-soft: #e6efe8;
+  --fb-brand-line: #c3d8cb;
 
   /* 背景与文字 */
-  --fb-bg: #f5f6f8;
-  --fb-card: #ffffff;
-  --fb-ink: #1a1d1f;
-  --fb-sub: #6b7280;
-  --fb-line: #e5e7eb;
-  --fb-soft: #eef1f6;
+  --fb-bg: #f2eee5;
+  --fb-card: #fdfbf4;
+  --fb-ink: #242b26;
+  --fb-sub: #5f5b50;
+  --fb-line: #ded7c6;
+  --fb-line-strong: #c9c3b2;
+  --fb-soft: #f5f0e4;
+  --fb-white: #fdfbf4;
+  --fb-bg-transparent: rgba(242, 238, 229, 0);
+
+  /* soft 族 / 正文安全墨色：填充色与正文墨色分离，保证 WCAG AA 正文门禁 */
+  --fb-green-soft: #e6efe3;
+  --fb-warn-soft: #f9edd7;
+  --fb-danger-soft: #f7e7e3;
+  --fb-blue-soft: var(--fb-brand-soft);
+  --fb-warn-line: #e6cfa1;
+  --fb-warn-ink: #8a5a10;
+  --fb-blue-line: var(--fb-brand-line);
+  --fb-green-ink: #366b4d;
+  --fb-danger-ink: #a33c33;
 
   /* PC 侧栏 */
-  --fb-sidebar: #15203b;
-  --fb-side-fg: #c7d0e0;
-  --fb-side-head: #7e8aa3;
+  --fb-sidebar: #20352c;
+  --fb-side-fg: #d8d2c3;
+  --fb-side-head: #9a9c8c;
 
-  /* 渐变蓝（首页 hero） */
-  --fb-hero-gradient: linear-gradient(150deg, #1d2b5f 0%, #2e4bb8 55%, #3b6ef6 100%);
+  /* 渐变（首页 hero，11 个 fb-hero View 共用；逐字取作用域现成值） */
+  --fb-hero-gradient: linear-gradient(150deg, #1f332c 0%, #2f5d4e 58%, #3f735e 100%);
+  --fb-on-hero-muted: rgba(253, 251, 244, 0.8);
+  --fb-on-hero-pill: rgba(253, 251, 244, 0.16);
 
-  /* 圆角与阴影 */
+  /* 圆角与阴影：暖褐系，作用域现成值优先逐字上提 */
   --fb-radius-card: 18px;
   --fb-radius-input: 10px;
   --fb-radius-pill: 999px;
-  --fb-shadow-card: 0 2px 12px rgba(23, 32, 68, 0.05);
-  --fb-shadow-header: 0 8px 24px rgba(21, 32, 59, 0.18);
+  --fb-shadow-card: 0 2px 10px rgba(70, 58, 36, 0.06);
+  --fb-shadow-header: 0 8px 24px rgba(40, 35, 25, 0.18);
+  --fb-shadow-inset: inset 0 1px 2px rgba(70, 58, 36, 0.05);
+  --fb-shadow-tab: 0 1px 2px rgba(70, 58, 36, 0.14);
+  --fb-shadow-key: 0 2px 0 var(--fb-line-strong);
+  --fb-shadow-panel: 0 10px 30px rgba(58, 48, 32, 0.2);
+  --fb-shadow-dock: 0 -6px 18px rgba(58, 48, 32, 0.06);
+  --fb-shadow-brand: 0 4px 10px rgba(47, 93, 78, 0.26);
+  --fb-paper-shadow: 0 1px 2px rgba(50, 42, 28, 0.18), 0 10px 24px rgba(50, 42, 28, 0.22),
+    0 26px 60px rgba(50, 42, 28, 0.18);
+  --fb-paper-edge: rgba(90, 78, 48, 0.04);
+  --fb-mask: rgba(42, 36, 26, 0.44);
+  --fb-mask-strong: rgba(32, 28, 20, 0.64);
 
   /* 间距 */
   --fb-space-1: 4px;
@@ -44,16 +84,8 @@
   /* 金额必须等宽数字，避免列表跳动 */
   --fb-font-numeric: tabular-nums;
 
-  /* 批 1 补充：hero 上的文字 / 胶囊底色与语义色浅底，避免组件散落硬编码色值 */
-  --fb-white: #ffffff;
-  --fb-on-hero-muted: rgba(255, 255, 255, 0.78);
-  --fb-on-hero-pill: rgba(255, 255, 255, 0.16);
-  --fb-danger-soft: #fdecea;
-  --fb-green-soft: #e8f6ef;
-  --fb-blue-soft: #eef3ff;
-  --fb-warn-soft: #fff0e6;
-
-  /* 小票（收据）纸面：保存成功页 / 交易详情页共用，禁止页内散落硬编码 */
+  /* 小票（收据）纸面：保存成功页 / 交易详情页共用，禁止页内散落硬编码。
+     原始色板五兄弟保持原值，不合并不去重（与语义层数值接近但故意并存）。 */
   --fb-paper: #fdfbf4;
   --fb-paper-ink: #2a2a28;
   --fb-paper-sub: #8a8578;
@@ -61,22 +93,21 @@
   --fb-paper-rule: #ded7c6;
   --fb-paper-mono: 'Courier New', 'SFMono-Regular', Consolas, monospace;
 
-  /* 小票状态条（离线待同步 / 幂等命中）描边与文字色 */
-  --fb-warn-line: #f0d9a8;
-  --fb-warn-ink: #8a6100;
-  --fb-blue-line: #cfdcfd;
+  /* 字体：阶段 1 上提，值逐字取自小票作用域 */
+  --fb-font-ledger: Georgia, 'Times New Roman', serif;
+  --fb-font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', 'Courier New', monospace;
 
   /* 阶段 0：图表色桥接 token。值沿用旧科技蓝，阶段 3 再统一换暖值（视觉零变化）。 */
   --fb-chart-4: #8b5cf6;
   --fb-chart-6: #0ea5e9;
 
-  /* 阶段 0 护栏收编：以下 token 精确沿用原硬编码值，阶段 3 再换暖色。 */
-  --fb-primary: #4c6ef5;
-  --fb-primary-soft: rgba(76, 110, 245, 0.08);
-  --fb-overlay-scrim: rgba(20, 28, 48, 0.45);
-  --fb-shadow-pop: rgba(23, 32, 68, 0.2);
-  --fb-shadow-accent: rgba(59, 110, 246, 0.35);
-  --fb-shadow-deep: rgba(13, 22, 48, 0.18);
+  /* 阶段 0 护栏收编 token：阶段 1 改为暖纸 / 暖褐，消除蓝色孤岛。 */
+  --fb-primary: #2f5d4e;
+  --fb-primary-soft: var(--fb-brand-soft);
+  --fb-overlay-scrim: rgba(40, 35, 25, 0.45);
+  --fb-shadow-pop: rgba(40, 35, 25, 0.2);
+  --fb-shadow-accent: rgba(60, 48, 28, 0.35);
+  --fb-shadow-deep: rgba(40, 35, 25, 0.18);
 
   /* 记一笔 H5 全屏视口量：JS 在 mounted 后把 --vvh 覆写为 visualViewport 高度 px。
      这里先给 100vh 兜底（禁止 100dvh），保证首帧 / 无 JS / Safari 14.1 不为 0。 */
@@ -87,71 +118,18 @@
 }
 
 /* ==========================================================================
-   记一笔作用域：暖纸账本色板（设计稿 :root → 本作用域变量映射，唯一色值源）。
-
-   ⚠️ 仅作用于 RecordSheet / ReceiptSlip 及其子组件：
-      - .rs-mask 是「记一笔」浮层根节点，内部所有 fb-* 变量在此重声明；
-      - .slip 让 ReceiptSlip 在交易详情页复用时也保持暖纸票面。
-   不修改上面 :root 的科技蓝，因此其它 View 主题零变化（不做全站换肤）。
+   记一笔 / 小票作用域：暖纸 token 已于阶段 1 全量上提 :root（值逐字相同），
+   故此处不再重复声明语义层变量，避免双轨漂移。
+   仅保留小票原始色板层 5 兄弟：与小票票面强绑定，按设计刻意与 :root 并存，
+   删除会改变票面计算色，属登记例外（见 tokens.contrast.test.ts 的 EXCEPTION_TOKENS）。
    ========================================================================== */
 .rs-mask,
 .slip {
-  --fb-blue: #2f5d4e;
-  --fb-green: #3f7d5c;
-  --fb-warn: #c8811e;
-  --fb-danger: #b4463c;
-  --fb-seal: #c1443b;
-  --fb-seal-soft: #f6e7e2;
-  --fb-ink-deep: #1f332c;
-
-  --fb-brand: var(--fb-blue);
-  --fb-brand-soft: #e6efe8;
-  --fb-brand-line: #c3d8cb;
-
-  --fb-bg: #f2eee5;
-  --fb-card: #fdfbf4;
-  --fb-ink: #242b26;
-  --fb-sub: #5f5b50;
-  --fb-line: #ded7c6;
-  --fb-line-strong: #c9c3b2;
-  --fb-soft: #f5f0e4;
-  --fb-white: #fdfbf4;
-  --fb-bg-transparent: rgba(242, 238, 229, 0);
-
-  --fb-green-soft: #e6efe3;
-  --fb-warn-soft: #f9edd7;
-  --fb-warn-line: #e6cfa1;
-  --fb-warn-ink: #8a5a10;
-  --fb-danger-soft: #f7e7e3;
-  --fb-blue-soft: var(--fb-brand-soft);
-  --fb-blue-line: var(--fb-brand-line);
-
-  --fb-hero-gradient: linear-gradient(150deg, #1f332c 0%, #2f5d4e 58%, #3f735e 100%);
-  --fb-on-hero-muted: rgba(253, 251, 244, 0.8);
-  --fb-on-hero-pill: rgba(253, 251, 244, 0.16);
-  --fb-paper-edge: rgba(90, 78, 48, 0.04);
-
-  --fb-shadow-card: 0 2px 10px rgba(70, 58, 36, 0.06);
-  --fb-shadow-inset: inset 0 1px 2px rgba(70, 58, 36, 0.05);
-  --fb-shadow-tab: 0 1px 2px rgba(70, 58, 36, 0.14);
-  --fb-shadow-key: 0 2px 0 var(--fb-line-strong);
-  --fb-shadow-panel: 0 10px 30px rgba(58, 48, 32, 0.2);
-  --fb-shadow-dock: 0 -6px 18px rgba(58, 48, 32, 0.06);
-  --fb-shadow-brand: 0 4px 10px rgba(47, 93, 78, 0.26);
-
-  --fb-mask: rgba(42, 36, 26, 0.44);
-  --fb-mask-strong: rgba(32, 28, 20, 0.64);
-
   --fb-paper: #fdfbf4;
   --fb-paper-ink: #262b26;
   --fb-paper-sub: #625e53;
   --fb-paper-line: #c9c3b2;
   --fb-paper-rule: #ded7c6;
-  --fb-paper-shadow: 0 1px 2px rgba(50, 42, 28, 0.18), 0 10px 24px rgba(50, 42, 28, 0.22),
-    0 26px 60px rgba(50, 42, 28, 0.18);
-
-  --fb-font-ledger: Georgia, 'Times New Roman', serif;
-  --fb-font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', 'Courier New', monospace;
 }
 
 * {
@@ -241,3 +219,5 @@ body {
   outline: none;
   border-color: var(--fb-blue);
 }
+
+/* [data-theme='night'] 语义覆盖见阶段4；禁止在组件内做主题分支 */
