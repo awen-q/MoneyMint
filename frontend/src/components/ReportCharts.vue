@@ -234,7 +234,7 @@ onMounted(() => {
   draw()
 })
 
-// 阶段 4 深色模式：refreshThemeTokens() 递增 themeEpoch 后触发重绘；本次不接切换 UI。
+// 阶段 4 深色模式：useTheme.setTheme() → refreshThemeTokens() 递增 themeEpoch，此处重绘为夜纸色。
 watch(themeEpoch, () => {
   palette.value = getChartPalette(readThemeTokens())
   draw()

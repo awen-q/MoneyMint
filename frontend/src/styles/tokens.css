@@ -223,4 +223,114 @@ body {
   border-color: var(--fb-blue);
 }
 
-/* [data-theme='night'] 语义覆盖见阶段4；禁止在组件内做主题分支 */
+/* [data-theme='night'] 语义覆盖见阶段4 —— 已落地：只覆盖 L2 语义 token，组件零改动。 */
+[data-theme='night'] {
+  /* 底 / 面 */
+  --fb-bg: #1c1b18;
+  --fb-card: #24231f;
+  --fb-soft: #2b2a25;
+  --fb-white: #24231f;
+  --fb-bg-transparent: rgba(28, 27, 24, 0);
+
+  /* 墨 / 线 */
+  --fb-ink: #e8e2d2;
+  --fb-sub: #b3ab98;
+  --fb-line: #3a382f;
+  --fb-line-strong: #4a463a;
+  --fb-ink-deep: #f2ecdc;
+
+  /* 主色与语义色 */
+  --fb-blue: #7fae90;
+  --fb-green: #7fbf9a;
+  --fb-warn: #d9a441;
+  --fb-danger: #e08b7f;
+  --fb-seal: #e08b7f;
+  --fb-seal-soft: #3a2823;
+
+  /* 语义墨色：压对应 soft 底仍达 WCAG AA 正文 */
+  --fb-warn-ink: #e8bc6a;
+  --fb-green-ink: #8fd0a8;
+  --fb-danger-ink: #ef9e92;
+
+  /* soft / line（夜纸版） */
+  --fb-blue-soft: #26382e;
+  --fb-green-soft: #26362c;
+  --fb-warn-soft: #3a3020;
+  --fb-danger-soft: #3a2823;
+  --fb-blue-line: #4a6a57;
+  --fb-warn-line: #6b5834;
+  --fb-brand-soft: #26382e;
+  --fb-brand-line: #4a6a57;
+
+  /* PC 侧栏 */
+  --fb-sidebar: #121512;
+  --fb-side-fg: #d8d2c3;
+  --fb-side-head: #9a9c8c;
+
+  /* 首页 hero：深墨绿渐变；on-hero 文字取浅米色 */
+  --fb-hero-gradient: linear-gradient(150deg, #121512, #26382e, #3a5a48);
+  --fb-on-hero-muted: rgba(232, 226, 210, 0.86);
+  --fb-on-hero-pill: rgba(232, 226, 210, 0.16);
+
+  /* 阴影 / 遮罩：统一改深色 rgba(0,0,0,·) 系 */
+  --fb-shadow-card: 0 2px 10px rgba(0, 0, 0, 0.4);
+  --fb-shadow-header: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --fb-shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.4);
+  --fb-shadow-tab: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --fb-shadow-panel: 0 10px 30px rgba(0, 0, 0, 0.5);
+  --fb-shadow-dock: 0 -6px 18px rgba(0, 0, 0, 0.4);
+  --fb-shadow-brand: 0 4px 10px rgba(0, 0, 0, 0.4);
+  --fb-paper-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 24px rgba(0, 0, 0, 0.5),
+    0 26px 60px rgba(0, 0, 0, 0.45);
+  --fb-paper-edge: rgba(0, 0, 0, 0.16);
+  --fb-mask: rgba(0, 0, 0, 0.6);
+  --fb-mask-strong: rgba(0, 0, 0, 0.78);
+  --fb-overlay-scrim: rgba(0, 0, 0, 0.6);
+  --fb-shadow-pop: rgba(0, 0, 0, 0.5);
+  --fb-shadow-accent: rgba(0, 0, 0, 0.55);
+  --fb-shadow-deep: rgba(0, 0, 0, 0.45);
+
+  /* 图表第 4 / 6 色：夜纸卡面上实算 ≥3.0，canvas 经 themeTokens 读桥自动取新值 */
+  --fb-chart-4: #b89268;
+  --fb-chart-6: #74a9a4;
+
+  /* 别名族：显式跟随夜纸主色，避免 var 链仍指向浅纸值 */
+  --fb-brand: var(--fb-blue);
+  --fb-primary: var(--fb-blue);
+  --fb-primary-soft: var(--fb-blue-soft);
+}
+
+/*
+ * 语义补偿（仍在 token 层，组件内零主题分支）：
+ * 夜纸 --fb-white = 卡面深色，适合"亮色主色按钮上的字"；
+ * 而"深底上的白字"场景把 --fb-white 继承为 --fb-ink（夜纸即米字）。
+ * 两级都只用现成 token，组件代码不改一字。
+ */
+[data-theme='night'] .fb-hero,
+[data-theme='night'] .layout__brand,
+[data-theme='night'] .layout__notice,
+[data-theme='night'] .rs-rcpt-btn--text,
+[data-theme='night'] .rs-rcpt-btn--ghost {
+  --fb-white: var(--fb-ink);
+}
+
+/* 夜纸开关：关态轨道提亮，深色滑块才看得见（颜色仍只走 token）。 */
+[data-theme='night'] .set__switch i:not(.on) {
+  background: var(--fb-sub);
+}
+
+/*
+ * 小票是"纸"：夜纸下保持浅纸票面。paper 五兄弟不在 night 根块覆盖，
+ * 且 .slip / .rs-mask 作用域已显式声明浅纸值；这里再把小票用到的语义色
+ * 恢复为浅纸值，避免亮墨绿 / 亮金写在浅纸上不可读。
+ */
+[data-theme='night'] .slip {
+  --fb-ink: #242b26;
+  --fb-sub: #5f5b50;
+  --fb-blue: #2f5d4e;
+  --fb-green: #3f7d5c;
+  --fb-warn: #c8811e;
+  --fb-danger: #b4463c;
+  --fb-warn-ink: #8a5a10;
+  --fb-white: #fdfbf4;
+}

@@ -118,8 +118,16 @@ export function getChartPalette(tokens: ThemeTokens): ChartPalette {
   }
 }
 
-/** 阶段 4 深色模式重绘信号；本次只定义，不接切换 UI。 */
+/** 阶段 4 深色模式重绘信号：useTheme.setTheme() 经 refreshThemeTokens() 递增。 */
 export const themeEpoch = ref<number>(0)
+
+/**
+ * 主题持久化键与 PWA theme-color（阶段 4）。
+ * 与色值相关的字面量只允许放在本文件或 tokens.css（主题护栏白名单）。
+ */
+export const THEME_STORAGE_KEY = 'fambean.theme'
+export const THEME_COLOR_PAPER = '#20352c'
+export const THEME_COLOR_NIGHT = '#121512'
 
 /**
  * 刷新 token 并递增重绘信号。

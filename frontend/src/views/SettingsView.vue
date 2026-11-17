@@ -11,6 +11,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { accountApi, settingsApi } from '@/api/client'
+import { isNight, toggleTheme } from '@/composables/useTheme'
 import { ApiError } from '@/api/errors'
 import type { AccountView } from '@/api/types'
 import { roleLabel } from '@/core/batch3'
@@ -204,6 +205,23 @@ onMounted(() => {
       <p class="set__hint">记一笔会记住上次选择；账户被删除或关户后自动回退为未选。</p>
     </div>
 
+    <div class="fb-card set__card set__appearance">
+      <div>
+        <strong>夜间模式</strong>
+        <p class="fb-muted">深色护眼，切换后全站生效</p>
+      </div>
+      <button
+        class="set__switch"
+        type="button"
+        role="switch"
+        :aria-checked="isNight"
+        @click="toggleTheme"
+      >
+        <i :class="{ on: isNight }" />
+        <span>{{ isNight ? '夜纸' : '浅纸' }}</span>
+      </button>
+    </div>
+
     <div class="fb-card set__card set__links">
       <button
         v-for="item in links"
@@ -273,6 +291,8 @@ onMounted(() => {
 .set__missing { color: var(--fb-danger); }
 .set__hint, .set__registration p { margin: 10px 0 0; font-size: 11px; color: var(--fb-sub); line-height: 1.6; }
 .set__state { margin: 10px 0 0; font-size: 12px; color: var(--fb-sub); }
+.set__appearance { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.set__appearance strong { font-size: 13px; }
 .set__links { padding: 4px 16px; }
 .set__link { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 0; border: none; border-bottom: 1px solid var(--fb-line); background: transparent; color: var(--fb-ink); font-size: 13px; font-family: inherit; text-align: left; cursor: pointer; }
 .set__link:last-child { border-bottom: none; }

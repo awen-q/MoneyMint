@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
+import nightGolden from '../../scripts/theme-night.golden.json'
 import paperGolden from '../../scripts/theme-paper.golden.json'
 
 const tokensCss = readFileSync(fileURLToPath(new URL('./tokens.css', import.meta.url)), 'utf8')
@@ -37,14 +38,15 @@ function parseDeclarations(body: string): Map<string, string> {
 
 const rootTokens = parseDeclarations(ruleBody(/:root\s*\{([\s\S]*?)\}/))
 const scopeTokens = parseDeclarations(ruleBody(/\.rs-mask\s*,\s*\.slip\s*\{([\s\S]*?)\}/))
+const nightTokens = parseDeclarations(ruleBody(/\[data-theme='night'\]\s*\{([\s\S]*?)\}/))
 
 /** 递归展开 `var(--x)`，让 var 型 token 也能参与对比度计算。 */
-function resolveExpression(value: string, depth = 0): string {
+function resolveExpression(value: string, tokens: Map<string, string>, depth = 0): string {
   const trimmed = value.trim()
   const reference = /^var\(\s*(--[\w-]+)\s*\)$/.exec(trimmed)
   if (reference !== null && depth < 8) {
     const name = reference[1] ?? ''
-    return resolveExpression(rootTokens.get(name) ?? '', depth + 1)
+    return resolveExpression(tokens.get(name) ?? '', tokens, depth + 1)
   }
   return trimmed
 }
@@ -57,8 +59,8 @@ interface Rgba {
 }
 
 /** 解析十六进制与颜色函数写法；无法解析时抛错，避免对比度测试假绿。 */
-function parseColor(value: string): Rgba {
-  const expression = resolveExpression(value)
+function parseColor(value: string, tokens: Map<string, string>): Rgba {
+  const expression = resolveExpression(value, tokens)
   const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(expression)
   if (hex !== null) {
     const digits = hex[1] ?? ''
@@ -102,9 +104,13 @@ function luminance(color: Rgba): number {
 }
 
 /** 两个不透明色的 WCAG 对比度（较大亮度 +0.05）/（较小亮度 +0.05）。 */
-function contrast(foregroundToken: string, backgroundToken: string): number {
-  const foreground = parseColor(rootTokens.get(foregroundToken) ?? '')
-  const background = parseColor(rootTokens.get(backgroundToken) ?? '')
+function contrast(
+  foregroundToken: string,
+  backgroundToken: string,
+  tokens: Map<string, string> = rootTokens,
+): number {
+  const foreground = parseColor(tokens.get(foregroundToken) ?? '', tokens)
+  const background = parseColor(tokens.get(backgroundToken) ?? '', tokens)
   expect(foreground.a, `${foregroundToken} 应为不透明色`).toBe(1)
   expect(background.a, `${backgroundToken} 应为不透明色`).toBe(1)
   const first = luminance(foreground)
@@ -154,6 +160,71 @@ const GRAPHIC_PAIRS: readonly Pair[] = [
   { label: '品牌墨绿 on 墨绿浅底', foreground: '--fb-blue', background: '--fb-blue-soft' },
   { label: '印章红 on 警示浅底', foreground: '--fb-seal', background: '--fb-warn-soft' },
 ]
+
+/** 阶段 4 夜纸：正文 ≥4.5:1 的关键配对（token 名驱动，测试内无裸 hex）。 */
+const NIGHT_BODY_PAIRS: readonly Pair[] = [
+  { label: '夜纸正文墨 on 页面底', foreground: '--fb-ink', background: '--fb-bg' },
+  { label: '夜纸正文墨 on 卡片', foreground: '--fb-ink', background: '--fb-card' },
+  { label: '夜纸正文墨 on 浅面', foreground: '--fb-ink', background: '--fb-soft' },
+  { label: '夜纸次要墨 on 卡片', foreground: '--fb-sub', background: '--fb-card' },
+  { label: '夜纸次要墨 on 页面底', foreground: '--fb-sub', background: '--fb-bg' },
+  { label: '夜纸主色墨 on 卡片', foreground: '--fb-blue', background: '--fb-card' },
+  { label: '夜纸成功墨 on 卡片', foreground: '--fb-green', background: '--fb-card' },
+  { label: '夜纸警示墨 on 卡片', foreground: '--fb-warn', background: '--fb-card' },
+  { label: '夜纸危险墨 on 卡片', foreground: '--fb-danger', background: '--fb-card' },
+  { label: '夜纸印章墨 on 卡片', foreground: '--fb-seal', background: '--fb-card' },
+  { label: '夜纸深墨 on 卡片', foreground: '--fb-ink-deep', background: '--fb-card' },
+  { label: '夜纸警示正文墨 on 夜纸警示底', foreground: '--fb-warn-ink', background: '--fb-warn-soft' },
+  { label: '夜纸成功正文墨 on 夜纸成功底', foreground: '--fb-green-ink', background: '--fb-green-soft' },
+  { label: '夜纸危险正文墨 on 夜纸危险底', foreground: '--fb-danger-ink', background: '--fb-danger-soft' },
+  { label: '夜纸主按钮字 on 亮墨绿', foreground: '--fb-white', background: '--fb-blue' },
+  { label: '夜纸侧栏正文 on 侧栏底', foreground: '--fb-side-fg', background: '--fb-sidebar' },
+  { label: '夜纸侧栏标题 on 侧栏底', foreground: '--fb-side-head', background: '--fb-sidebar' },
+]
+
+/** 阶段 4 夜纸：图形 / 填充 / 大字 ≥3.0:1。 */
+const NIGHT_GRAPHIC_PAIRS: readonly Pair[] = [
+  { label: '夜纸主色 on 夜纸主色浅底', foreground: '--fb-blue', background: '--fb-blue-soft' },
+  { label: '夜纸成功色 on 夜纸成功浅底', foreground: '--fb-green', background: '--fb-green-soft' },
+  { label: '夜纸图表第 4 色 on 卡片', foreground: '--fb-chart-4', background: '--fb-card' },
+  { label: '夜纸图表第 6 色 on 卡片', foreground: '--fb-chart-6', background: '--fb-card' },
+]
+
+/** 夜纸不覆盖 paper 五兄弟：小票仍是浅纸。 */
+const PAPER_FIVE = Object.keys(paperGolden.scopeExceptions)
+
+describe('阶段 4 夜纸 golden：night 语义覆盖全量锚定', () => {
+  it('golden key 与 [data-theme=night] 块逐字对齐', () => {
+    const expected = Object.entries(nightGolden.nightGolden)
+    expect(expected.length).toBeGreaterThan(0)
+    for (const [name, value] of expected) {
+      expect(nightTokens.get(name), `${name} 夜纸值被改动或缺失`).toBe(value)
+    }
+  })
+
+  it('paper 五兄弟未被 night 覆盖，且 .slip 夜纸作用域显式存在', () => {
+    for (const name of PAPER_FIVE) {
+      expect(nightTokens.has(name), `${name} 不应在 night 根块覆盖`).toBe(false)
+    }
+    expect(tokensCss).toContain("[data-theme='night'] .slip")
+  })
+})
+
+describe('阶段 4 夜纸对比度门禁：正文 ≥4.5、图形 ≥3.0', () => {
+  it(`夜纸正文配对全部达标（共 ${NIGHT_BODY_PAIRS.length} 对）`, () => {
+    for (const pair of NIGHT_BODY_PAIRS) {
+      const score = contrast(pair.foreground, pair.background, nightTokens)
+      expect(score, `${pair.label}：${pair.foreground} on ${pair.background}`).toBeGreaterThanOrEqual(4.5)
+    }
+  })
+
+  it(`夜纸图形配对全部达标（共 ${NIGHT_GRAPHIC_PAIRS.length} 对）`, () => {
+    for (const pair of NIGHT_GRAPHIC_PAIRS) {
+      const score = contrast(pair.foreground, pair.background, nightTokens)
+      expect(score, `${pair.label}：${pair.foreground} on ${pair.background}`).toBeGreaterThanOrEqual(3.0)
+    }
+  })
+})
 
 describe('阶段 1 基底 golden：:root 暖纸 token 全量锚定', () => {
   it('golden key 与 tokens.css :root 完全对齐（无遗漏、无漂移）', () => {
