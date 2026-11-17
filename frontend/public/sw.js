@@ -12,8 +12,10 @@
  */
 // v2（2026-11-13）：全站图标由 Flutter 默认图换成豆子图，文件名未变但内容变了；
 // cache-first 下老客户端会一直命中旧图标，故整体升版让 activate 清掉旧缓存。
+// v3（2026-11-17）：豆子图标换暖纸墨绿底（配色对齐 0.6.0 暖纸账本），文件名仍不变，
+// 同理仅升资源缓存版本；应用壳（'/'）内容未变，shell 版本不动。
 const SHELL_CACHE = 'fambean-shell-v2'
-const ASSET_CACHE = 'fambean-assets-v2'
+const ASSET_CACHE = 'fambean-assets-v3'
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(SHELL_CACHE).then((cache) => cache.addAll(['/'])))
