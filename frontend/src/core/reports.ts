@@ -247,12 +247,19 @@ export function collectCommodities(txns: ReportTxn[], fallback: string): string[
   return codes.sort()
 }
 
-/** 收支合计（幅度值，非负）。 */
+/** 收支合计（带符号：退款 / 冲减分录会抵减对应桶，允许负合计）。 */
 export interface IncomeExpenseTotals {
   income: string
   expense: string
 }
 
+/**
+ * 收支合计（带符号，fava 口径）：
+ * - Income 分录贡献 = Σ(−amount)（fava 下收入分录原值为负，取负后为正收入；
+ *   退款产生的正分录会冲减收入，可出现负合计）；
+ * - Expenses 分录贡献 = Σ(+amount)（借方为正支出；退款负分录冲减支出）；
+ * - 禁 abs：符号即方向，取绝对值会把「负支出 / 退款」误计为正向发生额。
+ */
 export function incomeExpenseTotals(
   txns: ReportTxn[],
   accounts: SummaryAccount[],
@@ -262,9 +269,9 @@ export function incomeExpenseTotals(
   let expense = Money.zero()
   for (const txn of txns) {
     for (const posting of txn.postings) {
-      const value = safeMoney(posting.amount).abs()
+      const value = safeMoney(posting.amount)
       if (matches(posting, accounts, 'Income', commodity)) {
-        income = income.plus(value)
+        income = income.plus(value.negated())
       } else if (matches(posting, accounts, 'Expenses', commodity)) {
         expense = expense.plus(value)
       }
@@ -316,6 +323,11 @@ export interface CategoryShare {
   ratio: number
 }
 
+/**
+ * 分类聚合（带符号）：Expenses 分录按原符号累加（负分录 / 退款冲减支出），
+ * 负合计允许存在；ratio 仅在 grand > 0 时按 amount/grand 计算，负合计得 0，
+ * 视图层柱宽须自行 Math.max(0, …) 防负宽度。金额文本保持带符号展示。
+ */
 export function categoryShares(
   txns: ReportTxn[],
   accounts: SummaryAccount[],
@@ -330,7 +342,7 @@ export function categoryShares(
       }
       const account = accountById(accounts, posting.account_id)
       const label = account === undefined ? '未分类' : accountLabel(account)
-      const value = safeMoney(posting.amount).abs()
+      const value = safeMoney(posting.amount)
       totals[label] = totals[label] === undefined ? value : totals[label].plus(value)
     }
   }
@@ -359,7 +371,10 @@ export function categoryShares(
   return out
 }
 
-/** 成员贡献：按记账人聚合笔数与该币种支出金额。 */
+/**
+ * 成员贡献：按记账人聚合笔数与该币种支出金额（带符号：退款负分录冲减，
+ * 负合计允许存在；ratio 与柱宽口径同 categoryShares）。
+ */
 export interface MemberContribution {
   name: string
   count: number
@@ -378,7 +393,7 @@ export function memberContributions(
     let expense = Money.zero()
     for (const posting of txn.postings) {
       if (matches(posting, accounts, 'Expenses', commodity)) {
-        expense = expense.plus(safeMoney(posting.amount).abs())
+        expense = expense.plus(safeMoney(posting.amount))
       }
     }
     const current = buckets[name]

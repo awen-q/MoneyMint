@@ -265,7 +265,7 @@ onMounted(() => {
             <li v-for="(item, index) in shares.slice(0, 10)" :key="item.label">
               <span class="rpt__rank-no">{{ index + 1 }}</span>
               <span class="rpt__rank-name">{{ item.label }}</span>
-              <span class="rpt__bar"><i :style="{ width: `${Math.round(item.ratio * 100)}%` }" /></span>
+              <span class="rpt__bar"><i :style="{ width: `${Math.max(0, Math.round(item.ratio * 100))}%` }" /></span>
               <MoneyText :amount="item.amount" :commodity="commodity" size="sm" />
             </li>
           </ol>
@@ -283,7 +283,7 @@ onMounted(() => {
             <li v-for="item in members" :key="item.name">
               <span class="rpt__avatar">{{ item.name.charAt(0) }}</span>
               <span class="rpt__member-name">{{ item.name }}<small>{{ item.count }} 笔</small></span>
-              <span class="rpt__bar"><i :style="{ width: `${Math.round(item.ratio * 100)}%` }" /></span>
+              <span class="rpt__bar"><i :style="{ width: `${Math.max(0, Math.round(item.ratio * 100))}%` }" /></span>
               <MoneyText :amount="item.amount" :commodity="commodity" size="sm" />
             </li>
           </ul>

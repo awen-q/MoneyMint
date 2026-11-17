@@ -118,6 +118,56 @@ describe('P-11：分录级收支与币种隔离', () => {
     expect(totals.expense).toBe('10.30')
   })
 
+  it('退款冲减带符号：支出 +100 与 -30 → 70；收入 -100 与 +20 → 80', () => {
+    const refundTxns: ReportTxn[] = [
+      txn(11, '2026-11-12', '阿文', [
+        { account_id: 2, commodity: 'CNY', amount: '100.00' },
+        { account_id: 1, commodity: 'CNY', amount: '-100.00' },
+      ]),
+      txn(12, '2026-11-12', '阿文', [
+        { account_id: 2, commodity: 'CNY', amount: '-30.00' },
+        { account_id: 1, commodity: 'CNY', amount: '30.00' },
+      ]),
+      txn(13, '2026-11-12', '小林', [
+        { account_id: 3, commodity: 'CNY', amount: '-100.00' },
+        { account_id: 1, commodity: 'CNY', amount: '100.00' },
+      ]),
+      txn(14, '2026-11-12', '小林', [
+        { account_id: 3, commodity: 'CNY', amount: '20.00' },
+        { account_id: 1, commodity: 'CNY', amount: '-20.00' },
+      ]),
+    ]
+    const totals = incomeExpenseTotals(refundTxns, ACCOUNTS, 'CNY')
+    expect(totals.expense).toBe('70.00')
+    expect(totals.income).toBe('80.00')
+  })
+
+  it('负合计允许存在：Income +20（退款超收入）→ 收入 -20.00，不取绝对值', () => {
+    const only = [
+      txn(15, '2026-11-12', '小林', [
+        { account_id: 3, commodity: 'CNY', amount: '20.00' },
+        { account_id: 1, commodity: 'CNY', amount: '-20.00' },
+      ]),
+    ]
+    expect(incomeExpenseTotals(only, ACCOUNTS, 'CNY').income).toBe('-20.00')
+  })
+
+  it('分类聚合带符号：退款负分录冲减分类合计', () => {
+    const refundTxns: ReportTxn[] = [
+      txn(21, '2026-11-12', '阿文', [
+        { account_id: 2, commodity: 'CNY', amount: '100.00' },
+        { account_id: 1, commodity: 'CNY', amount: '-100.00' },
+      ]),
+      txn(22, '2026-11-12', '阿文', [
+        { account_id: 2, commodity: 'CNY', amount: '-30.00' },
+        { account_id: 1, commodity: 'CNY', amount: '30.00' },
+      ]),
+    ]
+    const shares = categoryShares(refundTxns, ACCOUNTS, 'CNY')
+    expect(shares[0].label).toBe('食品')
+    expect(shares[0].amount).toBe('70.00')
+  })
+
   it('0.10 + 0.20 = 0.30，无浮点尾差（AC-22）', () => {
     const onlySmall = [TXNS[1]]
     expect(incomeExpenseTotals(onlySmall, ACCOUNTS, 'CNY').expense).toBe('0.30')

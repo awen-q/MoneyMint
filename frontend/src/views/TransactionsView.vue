@@ -35,6 +35,7 @@ import {
 } from '@/core/record'
 import { useSessionStore } from '@/stores/session'
 import MoneyText from '@/components/MoneyText.vue'
+import { Money } from '@/core/Money'
 
 const route = useRoute()
 const router = useRouter()
@@ -88,6 +89,19 @@ const dayTotalsMap = computed(() =>
 const grid = computed(() =>
   buildMonthGrid(cursor.value.year, cursor.value.month, dayTotalsMap.value),
 )
+
+/**
+ * 收入展示口径（仅 display 层）：dailyTotals 的 income 桶按 fava 口径存负值
+ * （Income 分录原值），core 层语义不动；日历格 / 日小计展示时经 Money.abs()
+ * 取绝对值，由模板统一补 + 号（MoneyText 走 signed），避免渲染出 `+-5,000.00`。
+ */
+function displayIncomeAbs(amount: string): string {
+  try {
+    return Money.from(amount).abs().toString()
+  } catch {
+    return amount
+  }
+}
 
 /** 按日期分组（后端按时间倒序返回，保持分组稳定）。 */
 const grouped = computed(() => {
@@ -331,7 +345,7 @@ onMounted(() => {
           >
             <span class="txn__cal-n">{{ cell.day }}</span>
             <span v-if="cell.expense !== '0.00'" class="txn__cal-e">{{ formatAmount(cell.expense) }}</span>
-            <span v-if="cell.income !== '0.00'" class="txn__cal-i">+{{ formatAmount(cell.income) }}</span>
+            <span v-if="cell.income !== '0.00'" class="txn__cal-i">+{{ formatAmount(displayIncomeAbs(cell.income)) }}</span>
           </button>
         </div>
       </div>
@@ -344,7 +358,7 @@ onMounted(() => {
             <span>{{ group.date }}</span>
             <span class="txn__day-sum" v-if="dayTotalsMap[group.date] !== undefined">
               <MoneyText :amount="dayTotalsMap[group.date].expense" :commodity="session.defaultCommodity" size="sm" />
-              <MoneyText :amount="dayTotalsMap[group.date].income" :commodity="session.defaultCommodity" size="sm" signed />
+              <MoneyText :amount="displayIncomeAbs(dayTotalsMap[group.date].income)" :commodity="session.defaultCommodity" size="sm" signed />
             </span>
           </div>
           <ul class="txn__list">

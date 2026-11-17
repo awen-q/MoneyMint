@@ -741,6 +741,13 @@ export interface ImportPadBalancePreview {
   diff: string
 }
 
+/** 导入预检警告（只提示、不阻断导入，不进 conflicts；如负债正余额疑似符号填反）。 */
+export interface ImportWarning {
+  line: number
+  account: string
+  message: string
+}
+
 /** POST /api/import/beancount/preview（只读解析预检，0.6.0 S5 支持 target=current|new）。 */
 export interface ImportPreviewResult {
   valid: boolean
@@ -756,6 +763,8 @@ export interface ImportPreviewResult {
   new_commodities: number
   pad_balance: ImportPadBalancePreview[]
   conflicts: ImportConflict[]
+  /** 非阻断性警告（additive；负债正余额疑似符号方向填反等），仅提示不阻断。 */
+  warnings?: ImportWarning[]
   /** 冲突汇总稳定码（如 import_account_conflict / import_pad_balance_unsupported）。 */
   code?: string
   /** target=new 时疑似重复导入（同名账本 + 相同交易数）：仅提示，不阻断。 */

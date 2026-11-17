@@ -163,6 +163,47 @@ describe('S5-B：冲突清单与 pad/balance 预览', () => {
   })
 })
 
+describe('S5-D：负债正余额警告（非阻断）', () => {
+  it('warnings 非空时逐条渲染黄色警告区块，且保留执行入口', async () => {
+    h.preview.mockResolvedValue({
+      valid: true,
+      title: '',
+      target: 'current',
+      ledger_name: '',
+      new_accounts: 1,
+      reuse_accounts: 0,
+      new_transactions: 1,
+      skip_transactions: 0,
+      new_commodities: 0,
+      pad_balance: [],
+      conflicts: [],
+      warnings: [
+        {
+          line: 9,
+          account: 'Liabilities:Card',
+          message: '负债账户 Liabilities:Card 导入后余额为正（CNY 100.00），疑似符号方向填反（本系统欠款应为负数），请核对源文件',
+        },
+      ],
+      duplicate: false,
+    })
+    const wrapper = mount(ImportView, { global: { plugins: [router] } })
+    await pasteAndPreview(wrapper, '2024-02-01 * "刷卡"\n  Liabilities:Card 100 CNY\n  Assets:Cash -100 CNY\n')
+    const text = wrapper.text()
+    expect(text).toContain('疑似符号方向填反')
+    expect(text).toContain('不阻断导入')
+    // 警告只提示：预检 valid 仍给出执行导入入口。
+    expect(wrapper.findAll('button').find((b) => b.text() === '执行导入')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it('warnings 缺省（旧响应兼容）时不渲染警告区块', async () => {
+    const wrapper = mount(ImportView, { global: { plugins: [router] } })
+    await pasteAndPreview(wrapper, '2024-01-01 open Assets:Cash\n')
+    expect(wrapper.text()).not.toContain('不阻断导入')
+    wrapper.unmount()
+  })
+})
+
 describe('S5-C：批次撤销（AC-6.9）', () => {
   it('导入成功后展示批次标识与撤销入口，撤销后展示回滚明细', async () => {
     const wrapper = mount(ImportView, { global: { plugins: [router] } })

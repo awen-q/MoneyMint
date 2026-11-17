@@ -21,6 +21,7 @@ import { ApiError, codeMessage } from '@/api/errors'
 import type { AccountView, BalancePreview, BalanceResult, TransactionView } from '@/api/types'
 import { affectedTransactionCount, balanceOf, isClosed } from '@/core/accounts'
 import { balanceDiff, hasTransactionsAfter, isPlainDecimal, previewText } from '@/core/balance'
+import { Money } from '@/core/Money'
 import {
   accountLabel,
   accountRunningBalances,
@@ -59,6 +60,8 @@ const balanceLoading = ref(false)
 const balanceSubmitting = ref(false)
 const balanceError = ref('')
 const balanceNotice = ref('')
+// 负债正目标的强制确认勾选（改目标值或收起面板即重置，防「勾选后再改数」绕过确认）。
+const liabilityConfirmChecked = ref(false)
 
 const accountId = computed<number | null>(() => {
   const raw = route.params.id
@@ -160,6 +163,32 @@ const laterTxns = computed(() => {
     dates.push(txn.date)
   }
   return hasTransactionsAfter(balanceAsOf.value, dates)
+})
+
+/**
+ * 负债账户目标余额为正数：疑似方向填反（本系统欠款记为负数）。
+ * 用 Money.from 解析判断（定点口径，禁浮点），非法串一律视为不命中；仅 Liabilities 生效。
+ */
+const liabilityPositiveTarget = computed(() => {
+  if (account.value === null || account.value.type !== 'Liabilities') {
+    return false
+  }
+  try {
+    const value = Money.from(balanceTarget.value)
+    return !value.isZero() && !value.isNegative()
+  } catch {
+    return false
+  }
+})
+
+// 目标值改动 / 确认面板收起时重置负债方向确认勾选。
+watch(balanceTarget, () => {
+  liabilityConfirmChecked.value = false
+})
+watch(showBalanceConfirm, (open) => {
+  if (!open) {
+    liabilityConfirmChecked.value = false
+  }
 })
 
 const balanceHistory = computed(() => {
@@ -286,6 +315,7 @@ function openBalanceConfirm(): void {
     return
   }
   balanceError.value = ''
+  liabilityConfirmChecked.value = false
   showBalanceConfirm.value = true
 }
 
@@ -488,13 +518,26 @@ onMounted(() => {
         <p v-if="laterTxns" class="acctd__warn acctd__warn--error">
           此操作会改变 D 之后的所有余额，请确认目标值无误。
         </p>
+        <!-- 负债账户目标余额为正：疑似方向填反，强制显式确认后才能生成。 -->
+        <p v-if="liabilityPositiveTarget" class="acctd__warn acctd__warn--error" role="alert">
+          负债账户目标余额为正数，疑似方向填反（本系统欠款记为负数，如 -11398.55），请确认。
+        </p>
+        <label v-if="liabilityPositiveTarget" class="acctd__confirm-check">
+          <input v-model="liabilityConfirmChecked" type="checkbox" />
+          <span>我已确认目标余额方向无误</span>
+        </label>
         <p class="acctd__hint">
           将新增一笔普通交易（日期 {{ balanceAsOf }} 的前一日），差额记入 Equity:Opening-Balances；
           同一日期再次设置会冲正旧校准并生成新版本，不覆盖原交易。
         </p>
         <div class="acctd__confirm-actions">
           <button type="button" class="fb-btn-ghost" @click="showBalanceConfirm = false">取消</button>
-          <button type="button" class="fb-btn-primary" :disabled="balanceSubmitting" @click="confirmBalance">
+          <button
+            type="button"
+            class="fb-btn-primary"
+            :disabled="balanceSubmitting || (liabilityPositiveTarget && !liabilityConfirmChecked)"
+            @click="confirmBalance"
+          >
             {{ balanceSubmitting ? '生成中…' : '确认生成' }}
           </button>
         </div>
@@ -718,6 +761,16 @@ onMounted(() => {
 
 .acctd__confirm-actions > button {
   flex: 1;
+}
+
+/* 负债正目标的强制确认勾选行。 */
+.acctd__confirm-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  font-size: 12px;
+  color: var(--fb-text, inherit);
 }
 
 .acctd__balance-panel {

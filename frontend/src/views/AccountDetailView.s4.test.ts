@@ -202,3 +202,128 @@ describe('S4 余额校准：预检文案 / 二次确认 / 版本历史', () => {
     wrapper.unmount()
   })
 })
+
+describe('S4 余额校准：负债账户正目标强制确认', () => {
+  const LIABILITY = {
+    id: 1,
+    uuid: 'a-1',
+    name: 'Liabilities:CreditCard',
+    display_name: '信用卡',
+    type: 'Liabilities',
+    open_date: '2026-01-01',
+    balances: { CNY: '-11398.55' },
+  }
+
+  /** 打开校准面板 → 填正目标 → 进入二次确认卡片。 */
+  async function openConfirm(wrapper: ReturnType<typeof mount>): Promise<void> {
+    await openPanel(wrapper)
+    await fillTarget(wrapper, '11398.55')
+    const submit = wrapper.findAll('button').find((b) => b.text() === '生成校准交易')
+    expect(submit).toBeDefined()
+    await submit?.trigger('click')
+    await flushPromises()
+  }
+
+  it('负债账户 + 正目标：红色警告出现，未勾选时确认按钮 disabled', async () => {
+    h.listAccounts.mockResolvedValue({ accounts: [LIABILITY] })
+    const wrapper = mount(AccountDetailView, { attachTo: document.body })
+    await flushPromises()
+    await openConfirm(wrapper)
+
+    const text = wrapper.text()
+    expect(text).toContain('疑似方向填反')
+    expect(text).toContain('我已确认目标余额方向无误')
+    const confirm = wrapper.findAll('button').find((b) => b.text() === '确认生成')
+    expect(confirm).toBeDefined()
+    expect(confirm?.attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it('勾选「我已确认目标余额方向无误」后可提交，payload 保持带符号目标值', async () => {
+    h.listAccounts.mockResolvedValue({ accounts: [LIABILITY] })
+    const wrapper = mount(AccountDetailView, { attachTo: document.body })
+    await flushPromises()
+    await openConfirm(wrapper)
+
+    const checkbox = wrapper.find('input[type="checkbox"]')
+    expect(checkbox.exists()).toBe(true)
+    await checkbox.setValue(true)
+    const confirm = wrapper.findAll('button').find((b) => b.text() === '确认生成')
+    expect(confirm?.attributes('disabled')).toBeUndefined()
+    await confirm?.trigger('click')
+    await flushPromises()
+
+    expect(h.balanceSet).toHaveBeenCalledTimes(1)
+    const [, body] = h.balanceSet.mock.calls[0] as [
+      string,
+      { targets: Array<{ commodity: string; target_balance: string }> },
+    ]
+    expect(body.targets).toEqual([{ commodity: 'CNY', target_balance: '11398.55' }])
+    wrapper.unmount()
+  })
+
+  it('改目标值后重置勾选状态（需重新确认）', async () => {
+    h.listAccounts.mockResolvedValue({ accounts: [LIABILITY] })
+    const wrapper = mount(AccountDetailView, { attachTo: document.body })
+    await flushPromises()
+    await openConfirm(wrapper)
+    await wrapper.find('input[type="checkbox"]').setValue(true)
+    await fillTarget(wrapper, '9000.00')
+    await flushPromises()
+    const confirm = wrapper.findAll('button').find((b) => b.text() === '确认生成')
+    expect(confirm?.attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it('资产账户正目标：不出现警告，确认按钮不受勾选约束', async () => {
+    const wrapper = mount(AccountDetailView, { attachTo: document.body })
+    await flushPromises()
+    await openConfirm(wrapper)
+    expect(wrapper.text()).not.toContain('疑似方向填反')
+    expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false)
+    const confirm = wrapper.findAll('button').find((b) => b.text() === '确认生成')
+    expect(confirm?.attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('负债账户负目标：不触发确认（欠款记负属正常方向）', async () => {
+    const wrapper = mount(AccountDetailView, { attachTo: document.body })
+    await flushPromises()
+    await openPanel(wrapper)
+    await fillTarget(wrapper, '-11398.55')
+    const submit = wrapper.findAll('button').find((b) => b.text() === '生成校准交易')
+    await submit?.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('疑似方向填反')
+    expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false)
+    const confirm = wrapper.findAll('button').find((b) => b.text() === '确认生成')
+    expect(confirm?.attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('收起确认面板再打开后勾选重置（防「勾选后取消再重开」绕过）', async () => {
+    h.listAccounts.mockResolvedValue({ accounts: [LIABILITY] })
+    const wrapper = mount(AccountDetailView, { attachTo: document.body })
+    await flushPromises()
+    await openConfirm(wrapper)
+    await wrapper.find('input[type="checkbox"]').setValue(true)
+    const confirm = wrapper.findAll('button').find((b) => b.text() === '确认生成')
+    expect(confirm?.attributes('disabled')).toBeUndefined()
+
+    // 取消收起面板 → 再走一次「生成校准交易」重开确认卡片。
+    const cancel = wrapper.findAll('button').find((b) => b.text() === '取消')
+    expect(cancel).toBeDefined()
+    await cancel?.trigger('click')
+    await flushPromises()
+    const submit = wrapper.findAll('button').find((b) => b.text() === '生成校准交易')
+    await submit?.trigger('click')
+    await flushPromises()
+
+    const reopenedConfirm = wrapper.findAll('button').find((b) => b.text() === '确认生成')
+    expect(reopenedConfirm?.attributes('disabled')).toBeDefined()
+    const checkbox = wrapper.find('input[type="checkbox"]')
+    expect((checkbox.element as HTMLInputElement).checked).toBe(false)
+    wrapper.unmount()
+  })
+})

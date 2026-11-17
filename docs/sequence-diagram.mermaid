@@ -1,0 +1,129 @@
+sequenceDiagram
+    autonumber
+    actor U as 用户
+    participant AL as AppLayout
+    participant RS as RecordSheet
+    participant SS as SessionStore
+    participant RSStore as RecordSheetStore
+    participant API as ApiClient
+    participant ST as CoreStorage
+    participant CR as CoreRecord
+    participant CB as CoreBean
+    participant PP as PostingPreview
+    participant AP as AdvancedPostings
+    participant RSLP as ReceiptSlip
+
+    %% ==================== A. 打开与首屏渲染 ====================
+    rect rgb(238, 243, 240)
+    Note over U,RSLP: A. 打开 → 渲染（新建 / 编辑）
+    U->>AL: 点击 ＋（或详情「修改这笔交易」）
+    AL->>RSStore: open() / openEdit(txn)
+    RSStore->>RS: v-if isOpen → mount(variant=auto)
+    RS->>SS: 读取 ledgerId / isViewer / defaultCommodity
+    RS->>ST: readDraft(ledgerId) 恢复表单
+    RS->>API: accountApi.list()
+    API-->>RS: AccountView[]（name=ASCII 导出名, display_name=中文）
+    RS->>API: commodityApi.list()
+    API-->>RS: CommodityView[]（symbol / precision）
+    alt 编辑态（editingTxn 非空）
+        RS->>RS: prefillFromEditTxn()：date/flag/desc/tags/postings
+        RS->>RS: advancedMode = true（高级双录）
+    else 新建态
+        RS->>ST: readDefaultAccounts(ledgerId) 预选
+        RS->>RS: fund/category/from/to 首个可用账户兜底
+    end
+    RS->>CR: buildPostings(form, accounts, defaultCommodity)
+    CR-->>RS: PostingDraft[]
+    RS->>CR: balanceGroups(postings) / buildPostingViews(postings, accounts)
+    CR-->>RS: BalanceGroup[] / PostingView[]
+    RS->>CB: buildBeanSnippet(date, flag, desc, tags, postings)
+    CB-->>RS: Beancount 文本片段
+    RS->>PP: 传入 postings / groups / bean
+    RS->>AP: 传入 rows / accounts / commodities（仅高级态）
+    RS->>RS: canSubmit = 配平 && 账户齐 && 金额>0 && 有权限
+    RS-->>U: 渲染（移动端全屏 H5 / PC 460px 弹窗）
+    end
+
+    %% ==================== B. 输入 → 配平 → 守门 ====================
+    rect rgb(246, 239, 223)
+    Note over U,PP: B. 简化态：键盘输入 / 分类选择 → 实时配平
+    U->>RS: 点键盘 7/8/9/＋/－/. /⌫（4 列键位）
+    RS->>RS: pressKey() 改写 form.amountExpression
+    RS->>CR: evaluateAmountExpression(expr) → Money
+    CR-->>RS: 定点金额
+    RS->>CR: buildPostings() → balanceGroups() → buildPostingViews()
+    CR-->>RS: 分录 + 按 commodity 分组结果
+    RS->>CB: buildBeanSnippet(...)
+    CB-->>RS: 最新片段（<details> 折叠预览）
+    RS->>PP: props 更新（借贷徽标 / 正负等宽金额 / 配平 chip）
+    RS->>RS: canSubmit 更新 → 键盘「再记/保存」disabled 同步
+    U->>RS: 点九宫格分类 / 完整列表下拉（同一字段）
+    RS->>RS: form.categoryAccountId = id，回显「已选」+ 真实导出名
+    RS->>ST: watch(form) → writeDraft(ledgerId, snapshot)
+    end
+
+    %% ==================== C. 高级双录 ====================
+    rect rgb(231, 239, 227)
+    Note over U,AP: C. 高级态：增删行 / 按差额补行 / 配平卡
+    U->>RS: 点「高级模式 · 逐条编辑」
+    RS->>RS: rows = preview 映射（账户/金额/币种）
+    RS->>AP: 渲染逐行 select(账户) + input(金额) + select(币种) + ✕
+    U->>AP: 改账户 → onAccountChange(i, id)
+    AP->>CR: resolveAccountCommodity(account, default) 带出币种
+    U->>AP: 点「按差额补一行（auto-balance）」
+    AP->>CR: balanceDiffByCommodity(rows)
+    CR-->>AP: 差额 diff（按币种）
+    AP->>AP: rows.push({accountId:null, amount:-diff, commodity:k})
+    Note right of AP: 补行后账户仍需用户选择，否则 canSubmit=false（禁保存）
+    U->>AP: 点「＋ 添加分录」/「✕ 删除」
+    AP->>AP: rows.push / splice（至少保留 2 行）
+    AP->>CR: balanceGroups(postings)
+    CR-->>AP: 借/贷/差额（按币种）
+    AP-->>RS: emit('update:rows') → canSubmit 同步 → 全宽保存条 disabled
+    end
+
+    %% ==================== D. 保存 → 幂等 / 离线 / 冲正 → 小票 ====================
+    rect rgb(247, 231, 226)
+    Note over U,RSLP: D. 保存（唯一主操作）→ 小票
+    U->>RS: 点键盘「保存」 或 .rs-foot button.fb-btn-primary
+    RS->>RS: canSubmit 守门（false 直接 return，不发请求）
+    alt 编辑态（PATCH 冲正+新建，仅在线）
+        RS->>API: transactionApi.update(uuid, payload[含 flag])
+        API-->>RS: TransactionUpdated(new_uuid)
+        RS->>RSStore: notifyChanged() → emit('updated', uuid)
+        RS->>RS: buildReceipt('updated', payload, new_uuid)
+    else 新建态
+        RS->>RS: payloadJson 快照比较 → 复用/新建 idempotencyKey
+        RS->>API: transactionApi.create(payload, key)
+        alt 成功 / 幂等命中
+            API-->>RS: TransactionCreateResult
+            RS->>ST: clearDraft / setDefaultAccount / resetIdempotencyKey
+            RS->>RSStore: notifySaved(result) → emit('saved', result)
+            RS->>RS: buildReceipt(saved|idempotent, payload, uuid)
+        else network_error → 离线兜底
+            RS->>RS: saveOffline(payload) → account_id 映射 account_uuid
+            RS->>RS: buildReceipt('offline', ...)（琥珀印章 + 待同步状态条）
+        else 409 幂等冲突
+            API-->>RS: ApiError(idempotency_key_deleted / payload_mismatch)
+            RS->>RS: resetIdempotencyKey()，保留表单供原样重试
+        end
+    end
+    RS->>CB: buildBeanSnippet(...) 供票面 bean 区
+    RS->>RS: showSuccess = true
+    RS->>RSLP: 渲染（纸面/齿边/印章/分录表/bean 片段/配平/感谢语）
+    RSLP-->>U: 绿印章「已保存」/ 琥珀「待同步」双态
+    U->>RS: 「再记一笔」/「复制上一笔」/「返回」
+    RS->>RS: resetForm() 或 copyLast() / close()
+    end
+
+    %% ==================== E. 形态切换 / 键盘避让 ====================
+    rect rgb(238, 238, 246)
+    Note over U,RS: E. 全屏/弹窗 + visualViewport + kbd-open（横切全周期）
+    RS->>RS: CSS media query (max-width:1023px) → 全屏 H5；>=1024 → 460px 弹窗
+    RS->>RS: onMounted: syncVv() 读 visualViewport.height → --vvh(px)
+    RS->>RS: visualViewport.resize / window.resize → 再次 syncVv()
+    RS->>RS: focusin(input.inp-text) → body.kbd-open（压缩 amount-stage）
+    RS->>RS: focusout(input.inp-text) → 移除 body.kbd-open
+    U->>AL: 关闭（✕ / 点遮罩自身）
+    AL->>RS: unmount → 移除 resize 监听 / kbd-open / 恢复 --vvh
+    end

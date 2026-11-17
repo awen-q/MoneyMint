@@ -29,6 +29,13 @@ type PadBalancePreview struct {
 	Diff         string `json:"diff"`
 }
 
+// ImportWarning 是导入预检警告（只提示、不阻断导入，不进 Conflicts）。
+type ImportWarning struct {
+	Line    int    `json:"line"`
+	Account string `json:"account"`
+	Message string `json:"message"`
+}
+
 // ImportPreview 是导入预检结果（只读，不写库）。
 //
 // Valid=false 且 Errors 非空：文件含不支持语法，整体拒绝（列出全部错误行号）。
@@ -47,6 +54,8 @@ type ImportPreview struct {
 	NewCommodities   int                 `json:"new_commodities"`
 	PadBalance       []PadBalancePreview `json:"pad_balance"`
 	Conflicts        []ImportConflict    `json:"conflicts"`
+	// Warnings 是非阻断性警告清单（additive；如负债正余额疑似符号填反）。
+	Warnings []ImportWarning `json:"warnings"`
 	Code             string              `json:"code,omitempty"`
 	Duplicate        bool                `json:"duplicate,omitempty"`
 	Errors           []beancount.ParseError `json:"errors,omitempty"`
@@ -211,6 +220,14 @@ func applyAnalysis(prev *ImportPreview, a *repository.ImportAnalysis) {
 			Type:   c.Type,
 			Name:   c.Name,
 			Reason: c.Reason,
+		})
+	}
+	prev.Warnings = make([]ImportWarning, 0, len(a.Warnings))
+	for _, w := range a.Warnings {
+		prev.Warnings = append(prev.Warnings, ImportWarning{
+			Line:    w.Line,
+			Account: w.Account,
+			Message: w.Message,
 		})
 	}
 }

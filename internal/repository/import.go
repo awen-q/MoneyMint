@@ -42,18 +42,28 @@ type ImportConflict struct {
 	Reason string `json:"reason"`
 }
 
+// ImportWarning 是一条预检警告（只提示、不阻断导入，不进 Conflicts）。
+// 典型场景：负债账户导入后余额为正，疑似符号方向填反。
+type ImportWarning struct {
+	Line    int    `json:"line"`
+	Account string `json:"account"`
+	Message string `json:"message"`
+}
+
 // ImportAnalysis 是导入预检的只读分析结果（不写库）。
 type ImportAnalysis struct {
-	Valid           bool                 `json:"valid"`
-	Code            string               `json:"code,omitempty"`
-	Error           string               `json:"error,omitempty"`
-	NewAccounts     int                  `json:"new_accounts"`
-	ReuseAccounts   int                  `json:"reuse_accounts"`
-	NewTransactions int                  `json:"new_transactions"`
+	Valid            bool                `json:"valid"`
+	Code             string              `json:"code,omitempty"`
+	Error            string              `json:"error,omitempty"`
+	NewAccounts      int                 `json:"new_accounts"`
+	ReuseAccounts    int                 `json:"reuse_accounts"`
+	NewTransactions  int                 `json:"new_transactions"`
 	SkipTransactions int                 `json:"skip_transactions"`
-	NewCommodities  int                  `json:"new_commodities"`
-	PadBalance      []PadBalancePreview   `json:"pad_balance"`
-	Conflicts       []ImportConflict      `json:"conflicts"`
+	NewCommodities   int                 `json:"new_commodities"`
+	PadBalance       []PadBalancePreview `json:"pad_balance"`
+	Conflicts        []ImportConflict    `json:"conflicts"`
+	// Warnings 是非阻断性警告清单（additive；如负债正余额疑似符号填反）。
+	Warnings []ImportWarning `json:"warnings"`
 }
 
 // ImportResult 是导入执行结果（两种模式共用，mode 区分）。
@@ -533,7 +543,12 @@ func (s *Store) AnalyzeImport(
 func (s *Store) analyzeImportOn(
 	tx *sql.Tx, ledgerID int64, p *beancount.ParseResult, target string,
 ) (*ImportAnalysis, error) {
-	a := &ImportAnalysis{Code: "", PadBalance: []PadBalancePreview{}, Conflicts: []ImportConflict{}}
+	a := &ImportAnalysis{
+		Code:       "",
+		PadBalance: []PadBalancePreview{},
+		Conflicts:  []ImportConflict{},
+		Warnings:   []ImportWarning{},
+	}
 
 	// 逐笔借贷平衡校验（P0，C-07 定点口径，禁浮点）。
 	for _, t := range p.Transactions {
@@ -566,6 +581,14 @@ func (s *Store) analyzeImportOn(
 		// target=current：校验账户 / 币种冲突与 pad/balance 累计差额。
 		s.analyzeCurrentConflictsOn(tx, a, ledgerID, p)
 	}
+
+	// 负债正余额警告（只警告不阻断，不进 Conflicts）：结合既有 DB 余额与本次
+	// 解析分录，计算每个 Liabilities 账户的「导入后余额」，任一币种 > 0 即提示。
+	warnings, werr := s.analyzeLiabilityWarningsOn(tx, ledgerID, p, target)
+	if werr != nil {
+		return nil, werr
+	}
+	a.Warnings = warnings
 
 	a.Valid = len(a.Conflicts) == 0
 	if !a.Valid {
@@ -712,6 +735,116 @@ func (s *Store) analyzeCurrentConflictsOn(tx *sql.Tx, a *ImportAnalysis, ledgerI
 			a.NewTransactions++
 		}
 	}
+}
+
+// analyzeLiabilityWarningsOn 计算负债正余额警告（只读，禁浮点，parseDecimalRat 累加）。
+//
+// 口径：
+//   - 账户类型一律由账户名前缀推断（accountType）：beancount.ParseResult 的
+//     Account 结构无 type 字段，本系统账户类型与名称前缀强绑定，且复用账户的
+//     「文件类型 vs 账本类型」一致性已由冲突检查兜底，故按前缀判断不会误报；
+//   - 「导入后余额」= 既有 DB 余额（computeBalancesOn，仅 target=current）+
+//     本次解析分录按币种累加；任一币种 > 0 即生成一条警告；
+//   - target=new 时目标账本尚不存在（余额为空），只按本次分录累加——预检路径
+//     传入的是当前账本 id，直接算 DB 余额会拿错账本，必须跳过；
+//   - 账户在文件中新建（DB 无该账户）同样检查（DB 余额按 0 处理）；
+//   - 余额为 0 或负不警告；金额非法的分录已由借贷平衡检查报冲突，此处跳过。
+func (s *Store) analyzeLiabilityWarningsOn(
+	tx *sql.Tx, ledgerID int64, p *beancount.ParseResult, target string,
+) ([]ImportWarning, error) {
+	// 本次分录按「负债账户 × 币种」累加（ Liability 之外的分录不参与）。
+	fileDelta := map[string]map[string]*big.Rat{}
+	firstLine := map[string]int{}
+	for _, t := range p.Transactions {
+		for _, ps := range t.Postings {
+			if accountType(ps.Account) != domain.TypeLiabilities {
+				continue
+			}
+			r, err := parseDecimalRat(ps.Amount)
+			if err != nil {
+				continue // 非法金额已在借贷平衡检查中报 unbalanced 冲突
+			}
+			if fileDelta[ps.Account] == nil {
+				fileDelta[ps.Account] = map[string]*big.Rat{}
+				firstLine[ps.Account] = t.Line
+			}
+			if fileDelta[ps.Account][ps.Commodity] == nil {
+				fileDelta[ps.Account][ps.Commodity] = new(big.Rat)
+			}
+			fileDelta[ps.Account][ps.Commodity].Add(fileDelta[ps.Account][ps.Commodity], r)
+		}
+	}
+	if len(fileDelta) == 0 {
+		return []ImportWarning{}, nil
+	}
+
+	// 既有 DB 余额：仅 target=current（写入当前账本）才与现有余额叠加。
+	dbBalances := map[int64]map[string]*big.Rat{}
+	if target != ImportTargetNew {
+		var err error
+		dbBalances, err = computeBalancesOn(tx, ledgerID, "")
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// 既有账户 id（新建账户 DB 无余额，按 0 处理）。
+	existingID := map[string]int64{}
+	for name := range fileDelta {
+		id, _, found, _, _, _, err := accountByNameTx(tx, ledgerID, name)
+		if err != nil {
+			return nil, err
+		}
+		if found {
+			existingID[name] = id
+		}
+	}
+
+	warnings := []ImportWarning{}
+	for name, comms := range fileDelta {
+		after := map[string]*big.Rat{}
+		if id, ok := existingID[name]; ok {
+			for comm, bal := range dbBalances[id] {
+				after[comm] = new(big.Rat).Set(bal)
+			}
+		}
+		for comm, v := range comms {
+			if after[comm] == nil {
+				after[comm] = new(big.Rat)
+			}
+			after[comm].Add(after[comm], v)
+		}
+		for _, comm := range sortedKeys(after) {
+			if after[comm].Sign() > 0 {
+				warnings = append(warnings, ImportWarning{
+					Line:    firstLine[name],
+					Account: name,
+					Message: fmt.Sprintf(
+						"负债账户 %s 导入后余额为正（%s %s），疑似符号方向填反（本系统欠款应为负数），请核对源文件",
+						name, comm, after[comm].FloatString(2),
+					),
+				})
+			}
+		}
+	}
+	// 按账户名 + 消息排序，保证同一输入的警告顺序确定（map 遍历无序）。
+	sort.Slice(warnings, func(i, j int) bool {
+		if warnings[i].Account != warnings[j].Account {
+			return warnings[i].Account < warnings[j].Account
+		}
+		return warnings[i].Message < warnings[j].Message
+	})
+	return warnings, nil
+}
+
+// sortedKeys 返回 map 的 key 升序切片（遍历确定性辅助，禁依赖 map 顺序）。
+func sortedKeys(m map[string]*big.Rat) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // appendPadBalancePreview 把单条 pad/balance 的累计 / 差额填入预览（target=current）。

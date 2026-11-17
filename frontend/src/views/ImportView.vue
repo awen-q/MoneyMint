@@ -15,7 +15,7 @@ import { useRouter } from 'vue-router'
 
 import { importApi } from '@/api/client'
 import { ApiError } from '@/api/errors'
-import type { ImportPreviewResult, ImportResult, ImportUndoResult } from '@/api/types'
+import type { ImportPreviewResult, ImportResult, ImportUndoResult, ImportWarning } from '@/api/types'
 import {
   formatImportConflicts,
   formatImportErrors,
@@ -50,6 +50,10 @@ const conflictLines = computed<string[]>(() =>
   preview.value !== null && preview.value.conflicts.length > 0
     ? formatImportConflicts(preview.value.conflicts)
     : [],
+)
+// 非阻断性警告（如负债正余额疑似符号填反）：仅提示，不进冲突清单、不影响导入。
+const warnings = computed<ImportWarning[]>(() =>
+  preview.value === null || preview.value.warnings === undefined ? [] : preview.value.warnings,
 )
 
 function onFileChange(event: Event): void {
@@ -219,6 +223,12 @@ function gotoLedgers(): void {
         <ul v-if="conflictLines.length > 0" class="im__errors">
           <li v-for="line in conflictLines" :key="line">{{ line }}</li>
         </ul>
+        <div v-if="warnings.length > 0" class="im__warnbox">
+          <p class="im__warnbox-title">发现 {{ warnings.length }} 条警告（不阻断导入，请核对源文件）：</p>
+          <ul class="im__warnlist">
+            <li v-for="w in warnings" :key="`r-${w.line}-${w.account}-${w.message}`">{{ w.message }}</li>
+          </ul>
+        </div>
         <div v-if="preview.pad_balance.length > 0" class="im__padbox">
           <p class="im__desc">文件含 pad / balance 指令（{{ preview.pad_balance.length }} 条），按当前账本重算：</p>
           <table class="im__table">
@@ -257,6 +267,12 @@ function gotoLedgers(): void {
         <p v-if="target === 'new' && preview.duplicate" class="im__must" role="alert">
           已存在同名账本且交易数相同，疑似重复导入；确认无误可继续（不会覆盖原账本）。
         </p>
+        <div v-if="warnings.length > 0" class="im__warnbox">
+          <p class="im__warnbox-title">发现 {{ warnings.length }} 条警告（不阻断导入，请核对源文件）：</p>
+          <ul class="im__warnlist">
+            <li v-for="w in warnings" :key="`c-${w.line}-${w.account}-${w.message}`">{{ w.message }}</li>
+          </ul>
+        </div>
         <div v-if="preview.pad_balance.length > 0" class="im__padbox">
           <p class="im__desc">文件含 pad / balance 指令（{{ preview.pad_balance.length }} 条）：</p>
           <table class="im__table">
@@ -345,6 +361,10 @@ function gotoLedgers(): void {
 .im__errors { margin: 0 0 10px; padding-left: 18px; font-size: 11px; line-height: 1.8; color: var(--fb-danger); }
 .im__must { margin: 10px 0 0; padding: 8px 12px; border-radius: var(--fb-radius-input); font-size: 12px; background: var(--fb-warn-soft); color: var(--fb-warn-ink); font-weight: 600; }
 .im__targets { display: flex; gap: 8px; margin-bottom: 8px; }
+/* 非阻断性警告（黄色）：区别于红色冲突/拒绝，仅提示用户核对源文件。 */
+.im__warnbox { margin: 8px 0; padding: 8px 12px; border-radius: var(--fb-radius-input); background: var(--fb-warn-soft); color: var(--fb-warn-ink); }
+.im__warnbox-title { margin: 0 0 4px; font-size: 12px; font-weight: 600; }
+.im__warnlist { margin: 0; padding-left: 18px; font-size: 11px; line-height: 1.8; }
 .im__target { flex: 1; padding: 8px 10px; font-size: 12px; border: 1.5px solid var(--fb-line); border-radius: var(--fb-radius-input); background: transparent; color: var(--fb-text, inherit); }
 .im__target--on { border-color: var(--fb-primary); font-weight: 600; background: var(--fb-primary-soft); }
 .im__padbox { margin: 8px 0; }

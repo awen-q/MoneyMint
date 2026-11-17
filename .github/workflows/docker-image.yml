@@ -112,7 +112,7 @@ jobs:
       - name: Vitest 全量 + 用例数下限（防假绿）
         working-directory: frontend
         env:
-          TEST_FLOOR: '356'   # 0.6.0 实测 47 文件 / 356 用例；只增不减，增用例后同步上调
+          TEST_FLOOR: '466'   # 负债防线修复后实测 58 文件 / 466 用例；只增不减，增用例后同步上调
         run: |
           npx vitest run --reporter=default --reporter=json --outputFile=vitest-report.json
           node ../scripts/check-test-floor.mjs vitest-report.json "$TEST_FLOOR"
