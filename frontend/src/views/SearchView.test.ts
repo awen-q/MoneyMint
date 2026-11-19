@@ -451,3 +451,59 @@ describe('SearchView：移动端返回条', () => {
     expect(h.push).toHaveBeenCalledWith({ name: 'bills' })
   })
 })
+
+/**
+ * 审计 P1：chips 是给人看的，**不能显示裸 id**。
+ *
+ * 这组用例存在的理由：`filters.account` 只存 id 是**对的**（URL 只该有 id），
+ * 但渲染层偷懒拼 ``账户 id：3`` 时没有任何测试会红 —— 功能全对、文案不可读。
+ */
+describe('SearchView：已选条件 chips 显示名称（P1）', () => {
+  function seedAccounts(): void {
+    const data = useLedgerDataStore()
+    data.accounts = [
+      {
+        id: 3,
+        uuid: 'acc-3',
+        name: 'Assets:Bank:CMB',
+        display_name: '招商银行卡',
+        type: 'Assets',
+        open_date: '2020-01-01',
+        sort_order: 1,
+      },
+      {
+        id: 7,
+        uuid: 'acc-7',
+        name: 'Expenses:Food:Coffee',
+        type: 'Expenses',
+        open_date: '2020-01-01',
+        sort_order: 2,
+      },
+    ]
+  }
+
+  it('账户显示 display_name，分类回落 account.name', async () => {
+    seedAccounts()
+    h.route.query = { account: '3', category: '7' }
+    h.listPage.mockResolvedValue(page([1]))
+    const wrapper = mountView()
+    await flushPromises()
+
+    const chips = wrapper.findAll('.search-bar__chip').map((chip) => chip.text())
+    expect(chips.some((text) => text.includes('账户：招商银行卡'))).toBe(true)
+    expect(chips.some((text) => text.includes('分类：Expenses:Food:Coffee'))).toBe(true)
+    // 反向断言：任何 chip 都不该出现「id：」
+    expect(chips.some((text) => text.includes('id：'))).toBe(false)
+  })
+
+  it('账户已不在列表里（已删除）时保留 id 并标注，不留空', async () => {
+    seedAccounts()
+    h.route.query = { account: '99' }
+    h.listPage.mockResolvedValue(page([1]))
+    const wrapper = mountView()
+    await flushPromises()
+
+    const chips = wrapper.findAll('.search-bar__chip').map((chip) => chip.text())
+    expect(chips.some((text) => text.includes('账户：#99（已删除）'))).toBe(true)
+  })
+})

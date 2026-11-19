@@ -34,6 +34,7 @@ import {
   hasActiveFilters,
   type TransactionFilters,
 } from '@/core/filters'
+import { accountLabel } from '@/core/record'
 import { buildTxnRow, type TxnRowView } from '@/core/txnRow'
 import { useLedgerDataStore } from '@/stores/ledgerData'
 import MoneyText from '@/components/MoneyText.vue'
@@ -248,6 +249,26 @@ const pageState = computed<'loading' | 'error' | 'empty' | 'ready'>(() => {
   return 'ready'
 })
 
+/**
+ * 账户 / 分类 id → 展示名。
+ *
+ * `filters.account` / `filters.category` 只存 id（URL 里也只该有 id），但 chips 是给人看的：
+ * 直接渲染 `账户 id：3` 用户读不懂（这是审计 P1）。名称一律走 `core/record.ts` 的
+ * `accountLabel`（`display_name` 优先），**不在页面里再抄一份取名逻辑**。
+ *
+ * 查不到时**不留空**：账户被删 / 关户后不在 `data.accounts` 里，此时显示
+ * `#3（已删除）`——保留 id 才能和 URL、Exporter 对照，标注「已删除」才不会让人
+ * 以为筛选失效。
+ */
+function labelOfAccountId(id: number): string {
+  for (const account of data.accounts) {
+    if (account.id === id) {
+      return accountLabel(account)
+    }
+  }
+  return `#${id}（已删除）`
+}
+
 /** 已选条件 chips（`key` 用于单独移除）。 */
 const chips = computed<Array<{ key: string; label: string }>>(() => {
   const out: Array<{ key: string; label: string }> = []
@@ -259,8 +280,8 @@ const chips = computed<Array<{ key: string; label: string }>>(() => {
     const map: Record<string, string> = { expense: '支出', income: '收入', transfer: '转账' }
     out.push({ key: 'kind', label: `类型：${map[filters.kind] ?? filters.kind}` })
   }
-  if (filters.account !== null) out.push({ key: 'account', label: `账户 id：${filters.account}` })
-  if (filters.category !== null) out.push({ key: 'category', label: `分类 id：${filters.category}` })
+  if (filters.account !== null) out.push({ key: 'account', label: `账户：${labelOfAccountId(filters.account)}` })
+  if (filters.category !== null) out.push({ key: 'category', label: `分类：${labelOfAccountId(filters.category)}` })
   if (filters.tag !== '') out.push({ key: 'tag', label: `标签：${filters.tag}` })
   if (filters.member !== '') out.push({ key: 'member', label: `成员：${filters.member}` })
   return out
@@ -327,7 +348,10 @@ async function exportCsv(): Promise<void> {
 
     <header class="search__hero">
       <h1 class="search__title">搜索账单</h1>
-      <p class="search__sub">关键词 + 七维筛选：日期范围 / 类型 / 账户 / 分类 / 标签 / 成员</p>
+      <!-- 稿 906 的口径：**一个维度可以有两个控件**（日期范围 = 从 + 到），
+           所以「控件 7 个、维度 6 个」并不矛盾。这里按维度数说话（六维），
+           与后面列出的六项一一对应；不要写成「七维」却只列六项。 -->
+      <p class="search__sub">关键词 + 六维筛选：日期范围 / 类型 / 账户 / 分类 / 标签 / 成员</p>
     </header>
 
     <!-- 搜索卡在四态之外：空态不能让人失去出口（改到 StateCard 里，用例会红） -->
@@ -349,8 +373,10 @@ async function exportCsv(): Promise<void> {
       </SearchBar>
     </section>
 
-    <!-- 汇总卡（T36）：口径是**筛选全集**，与翻到第几页无关；summary 缺失时整块不渲染 -->
-    <section v-if="summary !== null" class="search__summary" aria-label="命中汇总">
+    <!-- 汇总卡（T36）：口径是**筛选全集**，与翻到第几页无关；summary 缺失时整块不渲染。
+         `aria-live="polite"`（稿 938）让读屏用户在换筛选后听到新的笔数，而不是
+         自己再跑去翻列表。 -->
+    <section v-if="summary !== null" class="search__summary" aria-label="命中汇总" aria-live="polite">
       <!-- 笔数不是金额，隐私遮挡时**不遮**（用户仍需要知道筛出了多少笔） -->
       <p class="search__summary-total">共 {{ summary.total }} 笔</p>
       <ul class="search__summary-list">
@@ -539,12 +565,6 @@ async function exportCsv(): Promise<void> {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-}
-
-.search__count {
-  color: var(--fb-sub);
-  font-size: 11px;
-  font-variant-numeric: var(--fb-font-numeric);
 }
 
 .search__export {
