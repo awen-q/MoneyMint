@@ -38,6 +38,25 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
     target: 'es2015',
+    rollupOptions: {
+      output: {
+        // echarts 与 zrender 合并成**一个**确定性命名的 chunk：
+        // ①不给 Rollup 自由拆成 2~3 片的机会（否则三页各拉一次碎片）；
+        // ②账单/统计/资产统计三页共享同一份缓存，第二页不再重复下载；
+        // ③命名固定含 "echarts"，供 scripts/check-bundle-size.mjs 定位与门禁。
+        // 注意：不能用 legacy- / polyfills- 前缀（scripts/compat.mjs 会跳过该前缀，
+        // 等于让兼容扫描对 echarts 形同虚设）。
+        // 刻意**不**把 tslib 并进来：目前只有 echarts/zrender 声明它，无害；但将来任何
+        // 模块静态 import 'tslib'，就会被迫连带下载整个 echarts chunk（约 174 KB），
+        // 而「单块 + 总量」两条门禁恰好都查不出这种搭车。
+        manualChunks(id: string) {
+          if (/[\\/]node_modules[\\/](echarts|zrender)[\\/]/.test(id)) {
+            return 'echarts'
+          }
+          return undefined
+        },
+      },
+    },
   },
   server: {
     proxy: {

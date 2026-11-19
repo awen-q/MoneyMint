@@ -14,10 +14,12 @@
     "test": "vitest run",
     "typecheck": "vue-tsc --noEmit",
     "compat": "node scripts/compat.mjs",
-    "check:theme": "node scripts/check-theme-sources.mjs"
+    "check:theme": "node scripts/check-theme-sources.mjs",
+    "check:bundle": "node scripts/check-bundle-size.mjs"
   },
   "dependencies": {
     "decimal.js": "^10.4.3",
+    "echarts": "5.6.0",
     "pinia": "^2.3.0",
     "vue": "^3.5.0",
     "vue-router": "^4.5.0"

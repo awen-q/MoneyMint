@@ -78,8 +78,19 @@ function contrast(foreground: string, background: string): number {
   return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05)
 }
 
-/** 饼图六色顺序：与 getChartPalette().pie 及 DOM 图例 --0~--5 一一对应。 */
-const PIE_KEYS = ['blue', 'green', 'warn', 'chart4', 'danger', 'chart6'] as const
+/** 饼图十色顺序：与 getChartPalette().pie 一一对应（B1 由 6 档扩到 10 档）。 */
+const PIE_KEYS = [
+  'blue',
+  'green',
+  'warn',
+  'chart4',
+  'danger',
+  'chart6',
+  'chart7',
+  'chart8',
+  'chart9',
+  'chart10',
+] as const
 
 describe('阶段 3 图表暖色：单一色源与纸底对比度', () => {
   it('chart4 / chart6 在 CSS token、JS 兜底与 golden 三处逐字一致', () => {
@@ -90,7 +101,7 @@ describe('阶段 3 图表暖色：单一色源与纸底对比度', () => {
     expect(DEFAULT_TOKENS.chart6).toBe(goldenTokens.chart6)
   })
 
-  it('六色饼图在纸底上的图形对比度全部 ≥ 3.0:1', () => {
+  it('十色饼图在纸底上的图形对比度全部 ≥ 3.0:1', () => {
     const paper = rootDeclarations().get('--fb-card') ?? ''
     expect(paper).not.toBe('')
     const ratios = PIE_KEYS.map((key) => ({
@@ -100,16 +111,18 @@ describe('阶段 3 图表暖色：单一色源与纸底对比度', () => {
     for (const item of ratios) {
       expect(item.ratio, `${item.key} on --fb-card`).toBeGreaterThanOrEqual(3.0)
     }
-    // fog-cyan 是本次换暖的重点：由旧冷色的 2.68:1 提升到 3.73:1。
-    const chart6 = ratios[ratios.length - 1]
-    expect(chart6?.key).toBe('chart6')
+    // fog-cyan 是阶段 3 换暖的重点：由旧冷色的 2.68:1 提升到 3.73:1。
+    // 用按键查找而不是「取数组最后一个」——扩色后顺序变了，脆弱断言会假红。
+    const chart6 = ratios.find((item) => item.key === 'chart6')
     expect(chart6?.ratio.toFixed(2)).toBe('3.73')
   })
 
   it('Canvas 调色板与 DOM 图例共用同一组 token，无组件色值副本', () => {
-    expect(themeTokensSource).toContain(
-      'pie: [tokens.blue, tokens.green, tokens.warn, tokens.chart4, tokens.danger, tokens.chart6]',
-    )
+    // 断子串而不是整行：pie 已改为多行数组（10 档可读性更好），
+    // 但「每一档都从 token 取名、不自造色值」这个意图必须保留。
+    for (const token of ['chart4', 'chart6', 'chart7', 'chart8', 'chart9', 'chart10']) {
+      expect(themeTokensSource).toContain(`tokens.${token}`)
+    }
     expect(reportChartsSource).toContain('getChartPalette(readThemeTokens())')
     expect(reportsViewSource).toContain('background: var(--fb-chart-4)')
     expect(reportsViewSource).toContain('background: var(--fb-chart-6)')

@@ -44,7 +44,7 @@
 | Node.js | **22.x 区间**（`engines: ">=22.22 <23"` + `engine-strict=true`）；`.nvmrc` 钉 **22.23.4**（CI/镜像同版） | 仅**构建阶段**需要，运行时镜像无 Node。三处（.nvmrc / engines / Dockerfile ARG）升级须同步改 |
 | Python | 项目内 `.venv` | 仅用于 `bean-check`（`beancount` 包），不污染系统 |
 | Go 依赖代理 | 国内网络可用 `https://goproxy.cn,direct` | `proxy.golang.org` 国内不可达；仅影响构建机，按各自网络环境配置，不写入仓库 |
-| 前端依赖 | 见 `frontend/package.json` | 版本按方案 §14.7 钉版；**禁装** ECharts / Vuetify / Framework7 / moment / monaco / leaflet / swiper |
+| 前端依赖 | 见 `frontend/package.json` | 版本按方案 §14.7 钉版；**禁装** Vuetify / Framework7 / moment / monaco / leaflet / swiper。**ECharts 已于 2026-11-19 由老板拍板解禁**（仅限 5.6.0 精确版 + `echarts/core` 按需 + SVG renderer，唯一入口 `frontend/src/core/charts/echarts.ts`；禁 `import 'echarts'` 全量、禁 echarts-gl、禁 CanvasRenderer）。计划与兼容验证见 `docs/reports-redesign-dev-plan.md` §0 |
 
 ~~Flutter~~：批 6 已清退，Flutter SDK 与 `PUB_HOSTED_URL` 镜像不再是本项目依赖；旧源码从 git 历史（批 ≤5 提交）找回。
 

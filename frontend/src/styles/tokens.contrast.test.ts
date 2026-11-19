@@ -159,6 +159,11 @@ const GRAPHIC_PAIRS: readonly Pair[] = [
   { label: '警示填充 on 纸面', foreground: '--fb-warn', background: '--fb-card' },
   { label: '品牌墨绿 on 墨绿浅底', foreground: '--fb-blue', background: '--fb-blue-soft' },
   { label: '印章红 on 警示浅底', foreground: '--fb-seal', background: '--fb-warn-soft' },
+  // B1 扩色：分类色第 7~10 档，10 个分类以上仍要能区分且可读
+  { label: '图表第 7 色 on 纸面', foreground: '--fb-chart-7', background: '--fb-card' },
+  { label: '图表第 8 色 on 纸面', foreground: '--fb-chart-8', background: '--fb-card' },
+  { label: '图表第 9 色 on 纸面', foreground: '--fb-chart-9', background: '--fb-card' },
+  { label: '图表第 10 色 on 纸面', foreground: '--fb-chart-10', background: '--fb-card' },
 ]
 
 /** 阶段 4 夜纸：正文 ≥4.5:1 的关键配对（token 名驱动，测试内无裸 hex）。 */
@@ -188,6 +193,10 @@ const NIGHT_GRAPHIC_PAIRS: readonly Pair[] = [
   { label: '夜纸成功色 on 夜纸成功浅底', foreground: '--fb-green', background: '--fb-green-soft' },
   { label: '夜纸图表第 4 色 on 卡片', foreground: '--fb-chart-4', background: '--fb-card' },
   { label: '夜纸图表第 6 色 on 卡片', foreground: '--fb-chart-6', background: '--fb-card' },
+  { label: '夜纸图表第 7 色 on 卡片', foreground: '--fb-chart-7', background: '--fb-card' },
+  { label: '夜纸图表第 8 色 on 卡片', foreground: '--fb-chart-8', background: '--fb-card' },
+  { label: '夜纸图表第 9 色 on 卡片', foreground: '--fb-chart-9', background: '--fb-card' },
+  { label: '夜纸图表第 10 色 on 卡片', foreground: '--fb-chart-10', background: '--fb-card' },
 ]
 
 /** 夜纸不覆盖 paper 五兄弟：小票仍是浅纸。 */

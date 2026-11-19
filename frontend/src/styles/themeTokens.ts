@@ -21,6 +21,10 @@ export interface ThemeTokens {
   danger: string
   chart4: string
   chart6: string
+  chart7: string
+  chart8: string
+  chart9: string
+  chart10: string
 }
 
 /** 报表 Canvas 绘制使用的调色板。 */
@@ -30,7 +34,19 @@ export interface ChartPalette {
   inkDeep: string
   expense: string
   income: string
-  pie: [string, string, string, string, string, string]
+  /** 分类色，固定 10 档顺序；由 `pickColor` 取用，禁止调用方自行取模。 */
+  pie: [
+    string,
+    string,
+    string,
+    string,
+    string,
+    string,
+    string,
+    string,
+    string,
+    string,
+  ]
 }
 
 /**
@@ -52,6 +68,10 @@ export const DEFAULT_TOKENS: Readonly<ThemeTokens> = Object.freeze({
   danger: '#b4463c',
   chart4: '#8a6d4f',
   chart6: '#5c8a86',
+  chart7: '#6f5a7d',
+  chart8: '#6f7038',
+  chart9: '#a5567a',
+  chart10: '#4a6790',
 })
 
 /**
@@ -95,6 +115,10 @@ export function readThemeTokens(): ThemeTokens {
     danger: withFallback(readVar('--fb-danger'), DEFAULT_TOKENS.danger),
     chart4: withFallback(readVar('--fb-chart-4'), DEFAULT_TOKENS.chart4),
     chart6: withFallback(readVar('--fb-chart-6'), DEFAULT_TOKENS.chart6),
+    chart7: withFallback(readVar('--fb-chart-7'), DEFAULT_TOKENS.chart7),
+    chart8: withFallback(readVar('--fb-chart-8'), DEFAULT_TOKENS.chart8),
+    chart9: withFallback(readVar('--fb-chart-9'), DEFAULT_TOKENS.chart9),
+    chart10: withFallback(readVar('--fb-chart-10'), DEFAULT_TOKENS.chart10),
   }
 }
 
@@ -114,12 +138,50 @@ export function getChartPalette(tokens: ThemeTokens): ChartPalette {
     inkDeep: tokens.ink,
     expense: tokens.blue,
     income: tokens.green,
-    pie: [tokens.blue, tokens.green, tokens.warn, tokens.chart4, tokens.danger, tokens.chart6],
+    pie: [
+      tokens.blue,
+      tokens.green,
+      tokens.warn,
+      tokens.chart4,
+      tokens.danger,
+      tokens.chart6,
+      tokens.chart7,
+      tokens.chart8,
+      tokens.chart9,
+      tokens.chart10,
+    ],
   }
 }
 
 /** 阶段 4 深色模式重绘信号：useTheme.setTheme() 经 refreshThemeTokens() 递增。 */
 export const themeEpoch = ref<number>(0)
+
+/**
+ * 按索引取分类色，相邻同色自动顺延一档。
+ *
+ * 为什么需要：10 档色遇到 11 个分类时，第 11 个必然回落到 `pie[0]`。
+ * 如果它正好与第 10 个相邻就出现「两块同色贴在一起」，下钻时无法确认
+ * 点的是哪一块。顺延一档把「相邻撞色」降成「不相邻重复」，视觉上可接受。
+ *
+ * @param palette `getChartPalette().pie`
+ * @param index 分类序号
+ * @param previous 上一个分类实际用的颜色（用于判相邻）
+ */
+export function pickColor(
+  palette: readonly string[],
+  index: number,
+  previous?: string,
+): string {
+  const size = palette.length
+  if (size === 0) return 'currentColor'
+  let slot = ((index % size) + size) % size
+  let color = palette[slot]
+  if (previous !== undefined && color === previous) {
+    slot = (slot + 1) % size
+    color = palette[slot]
+  }
+  return color
+}
 
 /**
  * 主题持久化键与 PWA theme-color（阶段 4）。

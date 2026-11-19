@@ -35,7 +35,13 @@ describe('themeTokens：CSS token → JS 读桥', () => {
       DEFAULT_TOKENS.chart4,
       DEFAULT_TOKENS.danger,
       DEFAULT_TOKENS.chart6,
+      DEFAULT_TOKENS.chart7,
+      DEFAULT_TOKENS.chart8,
+      DEFAULT_TOKENS.chart9,
+      DEFAULT_TOKENS.chart10,
     ])
+    // 10 档分类色两两不同，否则环图会出现同色块
+    expect(new Set(palette.pie).size).toBe(10)
   })
 
   it('getPropertyValue 返回空串时逐项用 DEFAULT_TOKENS 兜底', () => {
