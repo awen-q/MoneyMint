@@ -119,9 +119,14 @@ describe('T48 StatsView：数据来源与分页口径', () => {
     await mountView()
     expect(h.accountList).toHaveBeenCalledTimes(1)
     expect(h.txnList).toHaveBeenCalledTimes(1)
-    // 调用参数必须是「无参」——一旦有人塞 { limit } / { query }，聚合就只覆盖当前页
+    // 分页参数必须缺席——一旦有人塞 { limit } / { cursor }，聚合就只覆盖当前页。
+    // 注意 `accountApi.list` 现在会带 `{ includeClosed: true }`（账本全量快照需要
+    // 关户账户，见 ledgerData.includeClosed.test.ts）；这里只断言**没有分页参数**，
+    // 不要改成 `toEqual([])`——那会把「快照要含关户」这条正当行为判成缺陷。
     expect(h.txnList.mock.calls[0]).toEqual([])
-    expect(h.accountList.mock.calls[0]).toEqual([])
+    const accountOpts = h.accountList.mock.calls[0][0] as Record<string, unknown> | undefined
+    expect(accountOpts?.limit).toBeUndefined()
+    expect(accountOpts?.cursor).toBeUndefined()
   })
 
   it('窗口过滤：10 月的交易不进 11 月指标', async () => {

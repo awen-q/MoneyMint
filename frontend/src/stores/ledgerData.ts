@@ -80,7 +80,13 @@ export const useLedgerDataStore = defineStore('ledgerData', () => {
     error.value = ''
     try {
       const [accountRes, transactionRes] = await Promise.all([
-        accountApi.list(),
+        // **必须带 `includeClosed: true`**：这里是「账本全量原始数据」，关户账户也在
+        // 其中（资产页要统计它们、历史交易要显示其名称）。
+        // 过滤责任留给**需要过滤的界面**：选择器一律自己排除关户账户
+        // （如 `RecordSheet` 的 `openAccounts`、`SearchFilters` 的 close_date 判断）。
+        // 若这里改回默认（不含关户），资产页的 `closedCount` 会恒为 0、
+        // 「含 N 个已关户账户」永远不出现——有 `ledgerData.includeClosed.test.ts` 守着。
+        accountApi.list({ includeClosed: true }),
         transactionApi.list(),
       ])
       if (token !== epoch) {
