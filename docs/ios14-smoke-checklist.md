@@ -115,8 +115,8 @@ Get-NetIPAddress -AddressFamily IPv4 |
 ## I. 五视图（v4 主链）
 
 > **本节是待执行清单，不是已验收记录**（`## 执行记录` 留空给真机执行时填）。
-> 页面结构以 `docs/reports-redesign-mockup/reports-redesign-mockup.html` 为准，产品口径见
-> `docs/reports-redesign-prd.md`；本批前端主链已换成「账单页做首页 + 搜索/统计/资产/资产统计」，
+> 页面结构以交付包内高保真稿 `reports-redesign-mockup.html`（v4.1，不入库）为准，产品口径见
+> 交付包内 `reports-redesign-prd.md`（不入库）；本批前端主链已换成「账单页做首页 + 搜索/统计/资产/资产统计」，
 > A~H 章里关于「流水页」的条目（D1/D2）已由 I2 承接。
 >
 > **前置依赖（执行前先确认，否则相关条目标 `BLOCKED` 并写清缺什么）**
