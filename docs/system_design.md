@@ -255,7 +255,7 @@ const payload: CreateTransactionRequest = {
   - `frontend/src/components/RecordSheet.defaults.test.ts`（核验/必要最小适配）
   - `frontend/src/views/TransactionDetailView.s6.test.ts`（核验/必要最小适配）
 - **要点**：跑全量 48 文件 / 361 用例 + `npm run typecheck` + `npm run compat`；核对 §8 的「避坑清单」逐条落地；选择器若重命名必须同步测试，**断言不得降低**。
-- **验收**：`npm test` 全绿（≥361 用例，新增用例只增不减）；`npm run typecheck` 无错；`npm run compat` PASS 且 `dist/legacy/` 快照未变；无新增 npm 依赖。
+- **验收**：`npm test` 全绿（≥361 用例，新增用例只增不减）；`npm run typecheck` 无错；`npm run compat` PASS 且 `dist/legacy/` 快照未变（**该验收项随 `/legacy/` 通道废弃而失效**，见 `AGENTS.md` §1）；无新增 npm 依赖。
 
 #### 任务依赖图
 
