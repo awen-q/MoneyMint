@@ -241,7 +241,7 @@ func (h *Handler) HandleListTrash(w http.ResponseWriter, r *http.Request) {
 // Body `{confirm:"删除"}`；响应 `{ok,count,deleted:[{uuid,description,was_in_trash}],
 // purged_postings, already_purged?}`。仅 owner；物理删除不可恢复。
 func (h *Handler) HandlePurgeTransaction(w http.ResponseWriter, r *http.Request) {
-	ledgerID, userID, ok := purgedContext(h, w, r)
+	ledgerID, userID, ok := purgeContext(w, r)
 	if !ok {
 		return
 	}
@@ -258,7 +258,7 @@ func (h *Handler) HandlePurgeTransaction(w http.ResponseWriter, r *http.Request)
 // Body `{confirm:"删除"}`（前端让用户手输「清空」后映射成本词）；响应结构同上，
 // 但**不带** already_purged（空回收站是正常结果，不是幂等命中）。
 func (h *Handler) HandlePurgeTrash(w http.ResponseWriter, r *http.Request) {
-	ledgerID, userID, ok := purgedContext(h, w, r)
+	ledgerID, userID, ok := purgeContext(w, r)
 	if !ok {
 		return
 	}
@@ -289,10 +289,9 @@ func readPurgeConfirm(r *http.Request) string {
 	return req.Confirm
 }
 
-// purgedContext 取账本 + 用户上下文（两条永久删除端点共用）。
+// purgeContext 取账本 + 用户上下文（两条永久删除端点共用）。
 // 缺失账本上下文 → 403；缺失用户 → 401（与既有 handler 同款口径）。
-func purgedContext(h *Handler, w http.ResponseWriter, r *http.Request) (ledgerID, userID int64, ok bool) {
-	_ = h // 保留签名对称性：后续若要在 handler 层加审计/限流，需要 handler 本身
+func purgeContext(w http.ResponseWriter, r *http.Request) (ledgerID, userID int64, ok bool) {
 	ledgerID, hasLedger := auth.LedgerID(r.Context())
 	if !hasLedger {
 		writeError(w, domain.ErrForbidden)

@@ -573,10 +573,10 @@ func TestPurgeTransactionsWritesAuditAndSyncLog(t *testing.T) {
 	if aActor != 2 {
 		t.Fatalf("actor_id 应为操作人 2，实际 %d", aActor)
 	}
-	// 金额摘要取自 postings.amount 的 CAST(... AS TEXT)。注意 amount 列是 NUMERIC
-	// 亲和类型：'−10.00' 落库后被归一为数值 −10，CAST 回文本即 "-10"（尾随 0 不保留）。
-	// 审计是**展示字段**，不补精度、不求和、不做符号归一（复刻前端 formatMoney 只会漂移）。
-	if aNote != "-10 CNY / 10 CNY" {
+	// 金额摘要取自 postings.amount 的 CAST(... AS TEXT)。amount 列是 NUMERIC 亲和类型：
+	// '-10.00' 落库后被归一为数值 -10，CAST 回文本即 "-10"。审计里统一**纯字符串补零**到
+	// 两位（与回收站页其他金额同口径），但不动符号、不加千分位、不求和、不读币种精度。
+	if aNote != "-10.00 CNY / 10.00 CNY" {
 		t.Fatalf("金额摘要格式不符：%q", aNote)
 	}
 }
@@ -602,8 +602,8 @@ func TestPurgeTransactionsAmountNote(t *testing.T) {
 	if err := f.store.db.QueryRow(`SELECT amount_note FROM txn_purge_log WHERE uuid='multi'`).Scan(&note); err != nil {
 		t.Fatalf("读取金额摘要: %v", err)
 	}
-	// 最多 3 条 + " …"；金额是 CAST(... AS TEXT) 的数值文本（NUMERIC 亲和去掉尾随 0）。
-	want := "-10 CNY / 6 CNY / 4 CNY …"
+	// 最多 3 条 + " …"；金额是 CAST(... AS TEXT) 后再补两位小数。
+	want := "-10.00 CNY / 6.00 CNY / 4.00 CNY …"
 	if note != want {
 		t.Fatalf("金额摘要应为 %q，实际 %q", want, note)
 	}
@@ -828,5 +828,26 @@ func TestPlaceholdersAndChunk(t *testing.T) {
 	}
 	if got := chunkStrings([]string{"a", "b"}, 0); len(got) != 1 || strings.Join(got[0], ",") != "a,b" {
 		t.Fatalf("size<=0 应按 purgeBatchSize 单块，实际 %v", got)
+	}
+}
+
+// TestPadAuditAmount 审计金额补零：只在「小数位不足两位」时补，绝不改动既有精度。
+func TestPadAuditAmount(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"-10", "-10.00"},
+		{"10", "10.00"},
+		{"0", "0.00"},
+		{"-10.5", "-10.50"},    // 一位小数补一个 0（符号不动）
+		{"10.00", "10.00"},     // 已两位原样
+		{"0.0001", "0.0001"},   // precision=4 的币种不得被截成 0.00
+		{"10.", "10.00"},       // 小数点后为空
+		{"1.0e+15", "1.0e+15"}, // 指数写法不动
+		{" 8.5 ", "8.50"},      // 前后空白先 trim
+		{"", ""},               // 空串原样
+	}
+	for _, c := range cases {
+		if got := padAuditAmount(c.in); got != c.want {
+			t.Fatalf("padAuditAmount(%q) = %q，期望 %q", c.in, got, c.want)
+		}
 	}
 }

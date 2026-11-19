@@ -531,7 +531,7 @@ func attachAmountNotesOn(e execer, cands []PurgeCandidate) error {
 				truncated[txnID] = true
 				continue
 			}
-			parts[txnID] = append(parts[txnID], amount+" "+commodity)
+			parts[txnID] = append(parts[txnID], padAuditAmount(amount)+" "+commodity)
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
@@ -548,6 +548,35 @@ func attachAmountNotesOn(e execer, cands []PurgeCandidate) error {
 		cands[i].AmountNote = note
 	}
 	return nil
+}
+
+// padAuditAmount 把 audit 金额补到两位小数（**纯字符串补零**）。
+//
+// 为什么需要：postings.amount 是 NUMERIC 亲和，'−10.00' 落库即归一为 −10，
+// CAST 回文本就是 "-10"；而回收站页其他金额都是 "-10.00"。同一个页面出现两种
+// 金额写法，用户会当成两个口径。所以审计里统一补到两位。
+//
+// 边界（刻意保守）：
+//   - 不动符号、不加千分位、不四舍五入、**不读币种精度**（那不是 formatMoney）；
+//   - 已有 ≥2 位小数一律原样保留（precision=4 的币种 "0.0001" 不能被补成 "0.00"）；
+//   - 形如 "1.0e+15" 的指数写法不动（含小数点的尾巴长度 ≥2 自然跳过）。
+func padAuditAmount(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return s
+	}
+	dot := strings.IndexByte(s, '.')
+	if dot < 0 {
+		return s + ".00"
+	}
+	switch frac := len(s) - dot - 1; {
+	case frac == 0:
+		return s + "00"
+	case frac == 1:
+		return s + "0"
+	default:
+		return s
+	}
 }
 
 // deletePostingsByTxnIDs 分批删分录，返回删除行数。
