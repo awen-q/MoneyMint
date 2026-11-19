@@ -167,7 +167,7 @@ async function exportFile(kind: 'beancount' | 'archive'): Promise<void> {
 
 async function exportCsv(): Promise<void> {
   try {
-    const [txnRes, accountRes] = await Promise.all([transactionApi.list(), accountApi.list()])
+    const [txnRes, accountRes] = await Promise.all([transactionApi.list(), accountApi.list({ includeClosed: true })])
     const rows = buildCsvRowsFromTransactions(
       Array.isArray(txnRes.transactions) ? txnRes.transactions : [],
       Array.isArray(accountRes.accounts) ? accountRes.accounts : [],

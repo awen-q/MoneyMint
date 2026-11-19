@@ -108,7 +108,7 @@ async function load(): Promise<void> {
   loading.value = true
   loadError.value = ''
   try {
-    const res = await accountApi.list()
+    const res = await accountApi.list({ includeClosed: true })
     accounts.value = Array.isArray(res.accounts) ? res.accounts : []
   } catch (err) {
     loadError.value = err instanceof ApiError ? err.message : '账户加载失败'

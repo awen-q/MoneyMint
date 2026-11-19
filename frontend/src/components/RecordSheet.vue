@@ -207,6 +207,15 @@ const containerClass = computed(() =>
   props.variant === 'auto' ? 'rs-mask--auto' : `rs-mask--${props.variant}`,
 )
 
+/**
+ * 记账可选账户：**排除已关户**。
+ *
+ * ⚠️ 这里能拦住关户账户依赖两个前提，改任何一条都要重看本处：
+ * ① 本组件**自己调 `accountApi.list()`**（默认不含关户），不走 `ledgerData` 的
+ *    includeClosed 快照；
+ * ② `accountApi.list` 的默认值仍是「排除关户」（见 `api/client.ts` 的 accountApi.list）。
+ * 两条都成立时这里是「双保险的第二道」；若将来改走 store，这道过滤就变成唯一防线。
+ */
 const openAccounts = computed(() => accounts.value.filter((account) => !account.close_date))
 const expenseAccounts = computed(() => openAccounts.value.filter((account) => account.type === 'Expenses'))
 const incomeAccounts = computed(() => openAccounts.value.filter((account) => account.type === 'Income'))
@@ -423,6 +432,8 @@ function defaultAccountId(uuid: string | undefined): number | null {
     return null
   }
   for (const account of accounts.value) {
+    // 提交前再校验一次：即使下拉被绕过（例如草稿恢复带回旧 uuid），也不允许
+    // 把已关户账户写进新交易。关户账户的来源见 `openAccounts` 上方的前提说明。
     if (account.uuid === uuid && !account.close_date) {
       return account.id
     }

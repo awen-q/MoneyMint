@@ -267,7 +267,7 @@ async function load(): Promise<void> {
   loading.value = true
   loadError.value = ''
   try {
-    const [accountRes, txnRes] = await Promise.all([accountApi.list(), transactionApi.list()])
+    const [accountRes, txnRes] = await Promise.all([accountApi.list({ includeClosed: true }), transactionApi.list()])
     accounts.value = Array.isArray(accountRes.accounts) ? accountRes.accounts : []
     transactions.value = Array.isArray(txnRes.transactions) ? txnRes.transactions : []
     if (account.value === null) {

@@ -116,7 +116,7 @@ async function loadDefaults(): Promise<void> {
   }
   defaults.value = readDefaultAccounts(id)
   try {
-    const res = await accountApi.list()
+    const res = await accountApi.list({ includeClosed: true })
     accounts.value = Array.isArray(res.accounts) ? res.accounts : []
   } catch {
     accounts.value = []

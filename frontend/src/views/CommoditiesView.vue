@@ -145,7 +145,7 @@ async function load(): Promise<void> {
   loadError.value = ''
   try {
     const [accountRes, txnRes, cmdRes] = await Promise.all([
-      accountApi.list(),
+      accountApi.list({ includeClosed: true }),
       transactionApi.list(),
       commodityApi.list(),
     ])

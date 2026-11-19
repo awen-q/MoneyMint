@@ -282,7 +282,7 @@ async function load(): Promise<void> {
   loading.value = true
   loadError.value = ''
   try {
-    const res = await accountApi.list()
+    const res = await accountApi.list({ includeClosed: true })
     accounts.value = Array.isArray(res.accounts) ? res.accounts : []
     // §14.5 #2：恢复本地持久化的拖拽顺序（按账本命名空间）。
     if (session.ledgerId !== null) {
