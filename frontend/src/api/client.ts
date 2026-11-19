@@ -18,6 +18,7 @@ import { API_ROUTES, isNoLedgerPath } from './routes'
 import type {
   AccountCreated,
   AccountListResponse,
+  AssetSeriesResponse,
   AddMemberRequest,
   AddMemberResponse,
   AuthResult,
@@ -463,6 +464,20 @@ export const api = {
   },
   delete<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
     return request<T>(path, { ...options, method: 'DELETE' })
+  },
+}
+
+/**
+ * 资产序列端点（B6 / T61）：年度资产 / 负债 / 净资产月末末值。
+ *
+ * **必须显式传 `commodity`**：省略时服务端取账本默认币种，用户切币种后曲线会不变
+ * （且不报错）。返回恒 12 个点，金额是定点字符串 —— 前端直接显示，不要 parseFloat。
+ */
+export const assetSeriesApi = {
+  series(year: number, commodity: string): Promise<AssetSeriesResponse> {
+    return api.get<AssetSeriesResponse>(API_ROUTES.assetsSeries, {
+      query: { year, commodity },
+    })
   },
 }
 

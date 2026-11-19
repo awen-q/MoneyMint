@@ -852,3 +852,28 @@ export interface ImportUndoResult {
   removed_accounts: number
   removed_commodities: number
 }
+
+// ---------- 资产序列（0.6.0 B6 / T61） ----------
+
+/**
+ * 资产序列的一个月点（月末末值，定点串）。
+ *
+ * **恒 12 个点**（没有交易的月份也会出现，值为 `"0.00"`）：前端画线不能缺点，
+ * 缺了会断线或压缩横轴。
+ */
+export interface AssetSeriesPoint {
+  /** `YYYY-MM` */
+  month: string
+  /** ΣAssets，正数。 */
+  assets: MoneyString
+  /** ΣLiabilities，**负数**（不取 abs）。 */
+  liabilities: MoneyString
+  /** `assets + liabilities`，由**服务端**相加（前端不得重算，否则两份口径）。 */
+  net: MoneyString
+}
+
+/** GET /api/assets/series?year=YYYY&commodity=CNY */
+export interface AssetSeriesResponse {
+  commodity: string
+  points: AssetSeriesPoint[]
+}
