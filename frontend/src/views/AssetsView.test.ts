@@ -166,6 +166,12 @@ describe('AssetsView：数据与四态', () => {
     // 列表侧则**应当**仍能看到 CNY 余额 —— 那是「外币单列」，不是回退
     expect(wrapper.text()).toContain('12,000.00')
     expect(wrapper.text()).toContain('CNY')
+    // 反向护栏：该账本没有任何 JPY 余额，因此**不允许**出现带 JPY 标签的行
+    // （否则就是「JPY 标签 + 非 0 金额」，正是回退行为会造成的静默改口）。
+    const codes = wrapper.findAll('.asset-row__code').map((node) => node.text())
+    expect(codes).not.toContain('JPY')
+    // 明细仍按各自真实币种展示（外币单列），只是 hero 口径不切
+    expect(codes.indexOf('CNY') >= 0).toBe(true)
   })
 
   it('隐私遮挡：开启后不出现真实金额，只出现遮挡符', async () => {
