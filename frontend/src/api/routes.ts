@@ -1,5 +1,6 @@
 /**
- * 后端端点路径常量（批 0 起，批 4 扩至 36 条）
+ * 后端端点路径常量（批 0 起，**现为 41 条**：批 4 扩至 36 条后，B3 搜索分页、
+ * B5 资产页、B6 资产时序陆续补齐；数量由 `api/client.contract.test.ts` 硬断言）
  *
  * 与 `internal/server/router.go` 的 `mux.HandleFunc("/api/...")` 一一对应；
  * 同一路径上的多 HTTP 方法（如 GET/POST /api/accounts）共用一个常量。
@@ -40,6 +41,8 @@ export const API_ROUTES = {
   accountBalance: '/api/accounts/{uuid}/balance',
   /** DELETE /api/accounts/{uuid} */
   accountByUuid: '/api/accounts/{uuid}',
+  /** GET /api/assets/series（B6 资产统计：年度余额时序，月末末值） */
+  assetsSeries: '/api/assets/series',
   /** GET /api/commodities · POST /api/commodities（0.6.0 S2 币种增删） */
   commodities: '/api/commodities',
   /** DELETE /api/commodities/{uuid}（0.6.0 S2 软删币种） */
@@ -53,7 +56,7 @@ export const API_ROUTES = {
   transactionsTrash: '/api/transactions/trash',
   /** POST /api/transactions/{uuid}/restore */
   transactionRestore: '/api/transactions/{uuid}/restore',
-  /** DELETE /api/transactions/{uuid} */
+  /** PATCH /api/transactions/{uuid} · DELETE /api/transactions/{uuid} */
   transactionByUuid: '/api/transactions/{uuid}',
 
   /** GET /api/ledgers · POST /api/ledgers */
