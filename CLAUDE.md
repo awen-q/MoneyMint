@@ -57,7 +57,7 @@
 - **posting 字段**：在线 `POST /api/transactions` 用 `account_id`（整数）；离线 `sync/push` 用 `account_uuid`（字符串）。混用必错。
 - **不可变**：改账 = 新增冲正交易，删除 = 软删；交易不原地改。
 - **兼容性（iOS 14.8 / Safari 14.1.2）**：`build.target: 'es2015'` + plugin-legacy；禁 WASM / WebGL / CanvasKit / OffscreenCanvas；禁 `structuredClone` / `crypto.randomUUID` / `.at()` / `findLast` / `Object.hasOwn` / `showModal` / `BroadcastChannel` / `navigator.locks`；CSS 不用 `aspect-ratio` / `:has()` / `dvh` / `inset`。
-- **依赖钉版**：按方案 §14.7，`.nvmrc` / `engines` / Dockerfile ARG 三处同步。**禁装** Vuetify / Framework7 / moment / monaco / leaflet / swiper。**图表用 ECharts 5.6.0（SVG renderer，`echarts/core` 按需，唯一入口 `core/charts/echarts.ts`）**——2026-11-19 老板拍板推翻「Canvas 2D 自绘」，解禁条件与兼容实测记录见交付包内设计文档 `reports-redesign-dev-plan.md` §0（不入库）。升级依赖必须过 `web-compat` + 真机冒烟。
+- **依赖钉版**：按方案 §14.7，`.nvmrc` / `engines` / Dockerfile ARG 三处同步。**禁装** Vuetify / Framework7 / moment / monaco / leaflet / swiper。**图表用 ECharts 5.6.0（SVG renderer，`echarts/core` 按需，唯一入口 `core/charts/echarts.ts`）**——2026-11-19 老板拍板推翻「Canvas 2D 自绘」。升级依赖必须过 `web-compat` + 真机冒烟。
 - **备份**：只能用 `VACUUM INTO` + `integrity_check` + 行数比对，**禁止复制 db 文件**（WAL 会静默丢数据）。备份/下载/恢复校验 `users.is_admin`，不是账本 owner。
 - **注释**：代码注释用中文。
 
