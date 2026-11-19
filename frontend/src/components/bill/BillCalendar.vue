@@ -51,9 +51,30 @@ const props = withDefaults(
 const emit = defineEmits<{
   /** 点某个当月日（是否切换选中由父级决定）。 */
   pick: [day: number]
-  /** 点「✕」清除日期筛选。 */
-  clear: []
 }>()
+
+function twoDigits(value: number): string {
+  return value < 10 ? `0${value}` : String(value)
+}
+
+/**
+ * 今天（本地时区）的 `YYYY-MM-DD`。
+ *
+ * **每次调用都取一次**，不在 setup 里存常量：桌面端标签页可能跨零点不关，
+ * 存下来的值第二天就会把昨天标成「今天」。
+ */
+function todayKey(): string {
+  const now = new Date()
+  return `${now.getFullYear()}-${twoDigits(now.getMonth() + 1)}-${twoDigits(now.getDate())}`
+}
+
+/** 该格是不是今天（稿 370 `.cal-cell.today` / app.js:584）。补位格永不命中。 */
+function isToday(cell: CalendarDay): boolean {
+  if (!cell.inMonth) {
+    return false
+  }
+  return `${props.year}-${twoDigits(props.month)}-${twoDigits(cell.day)}` === todayKey()
+}
 
 /** 取某天的四态数据；补位格与越界一律 `undefined`。 */
 function cellOf(day: number, inMonth: boolean): BillCell | undefined {
@@ -82,24 +103,24 @@ function hasIncomeDot(cell: CalendarDay): boolean {
   return data !== undefined && data.incomeDot
 }
 
-/** 逐格读屏文案：未遮挡沿用 core 的精确文案，遮挡换中性文案（见文件头第 3 条）。 */
+/**
+ * 逐格读屏文案：未遮挡沿用 core 的精确文案，遮挡换中性文案（见文件头第 3 条）。
+ * 今天在末尾补「，今天」（稿 app.js:592 同口径）—— 视觉上的高亮对读屏不可见。
+ */
 function cellLabel(cell: CalendarDay): string {
   if (!cell.inMonth) {
     return ''
   }
+  const suffix = isToday(cell) ? '，今天' : ''
   if (props.masked) {
-    return `${props.month}月${cell.day}日，金额已隐藏`
+    return `${props.month}月${cell.day}日，金额已隐藏${suffix}`
   }
   const data = cellOf(cell.day, cell.inMonth)
-  return data === undefined ? `${props.month}月${cell.day}日` : data.ariaLabel
+  return data === undefined ? `${props.month}月${cell.day}日${suffix}` : `${data.ariaLabel}${suffix}`
 }
 
 function isSelected(cell: CalendarDay): boolean {
   return cell.inMonth && props.selectedDay === cell.day
-}
-
-function twoDigits(value: number): string {
-  return value < 10 ? `0${value}` : String(value)
 }
 </script>
 
@@ -130,7 +151,7 @@ function twoDigits(value: number): string {
         class="cal__cell"
         :class="[
           `cal__cell--${cell.inMonth ? cellKind(cell) : 'padding'}`,
-          { 'cal__cell--on': isSelected(cell) },
+          { 'cal__cell--today': isToday(cell), 'cal__cell--on': isSelected(cell) },
         ]"
         :type="cell.inMonth ? 'button' : undefined"
         :aria-hidden="cell.inMonth ? undefined : 'true'"
@@ -143,18 +164,6 @@ function twoDigits(value: number): string {
         <span v-if="cellText(cell) !== ''" class="cal__amount">{{ cellText(cell) }}</span>
       </component>
     </div>
-
-    <p v-if="selectedDay !== null" class="bill-cal__filter">
-      <span class="bills__filter-chip">
-        已选 {{ month }}-{{ twoDigits(selectedDay) }}
-        <button
-          type="button"
-          class="bills__filter-clear"
-          aria-label="取消日期筛选"
-          @click="emit('clear')"
-        >✕</button>
-      </span>
-    </p>
   </div>
 </template>
 
@@ -224,6 +233,13 @@ function twoDigits(value: number): string {
   cursor: default;
 }
 
+/* 今天：稿 370 `.cal-cell.today`（brand-line 边 + green-soft 底）。
+   放在 `--on` 之前 —— 选中态必须盖过今天，否则「我点了哪一天」看不出来。 */
+.cal__cell--today {
+  border-color: var(--fb-green);
+  background: var(--fb-green-soft);
+}
+
 .cal__cell--on {
   border-color: var(--fb-blue);
   background: var(--fb-blue-soft);
@@ -265,35 +281,5 @@ function twoDigits(value: number): string {
   height: 4px;
   border-radius: 50%;
   background: var(--fb-green);
-}
-
-.bill-cal__filter {
-  margin: 8px 0 0;
-}
-
-.bills__filter-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  border-radius: var(--fb-radius-pill);
-  background: var(--fb-blue-soft);
-  color: var(--fb-blue);
-  font-size: 11px;
-  font-variant-numeric: var(--fb-font-numeric);
-}
-
-.bills__filter-clear {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  margin: -6px -4px -6px 0;
-  border: none;
-  background: transparent;
-  color: inherit;
-  font-size: 11px;
-  cursor: pointer;
 }
 </style>

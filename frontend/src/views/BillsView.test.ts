@@ -285,24 +285,29 @@ describe('BillsView：日历', () => {
     expect(cells[15].classes()).toContain('cal__cell--income-only')
   })
 
-  it('点某日 → 列表只剩该日并出现 chip；再点同日 → 恢复整月', async () => {
+  it('点某日 → 列表只剩该日并出现日筛选行；再点同日 → 恢复整月', async () => {
     const wrapper = mountWith(TXNS)
     expect(wrapper.findAll('.bills__row')).toHaveLength(3)
 
     await wrapper.findAll('button.cal__cell')[2].trigger('click')
     expect(wrapper.findAll('.bills__row')).toHaveLength(1)
-    expect(wrapper.find('.bills__filter-chip').text()).toContain('已选 11-03')
+    // 稿 app.js:634「已选 11-03 · 1 笔」：笔数必须跟着变
+    const chip = wrapper.find('.bills__dayfilter-chip')
+    expect(chip.text()).toContain('已选 11-03')
+    expect(chip.text()).toContain('1 笔')
 
     await wrapper.findAll('button.cal__cell')[2].trigger('click')
     expect(wrapper.findAll('.bills__row')).toHaveLength(3)
-    expect(wrapper.find('.bills__filter-chip').exists()).toBe(false)
+    expect(wrapper.find('.bills__dayfilter-chip').exists()).toBe(false)
   })
 
-  it('点「✕」也能取消日期筛选', async () => {
+  it('点「查看整月 ✕」也能取消日期筛选', async () => {
     const wrapper = mountWith(TXNS)
     await wrapper.findAll('button.cal__cell')[2].trigger('click')
-    await wrapper.find('.bills__filter-clear').trigger('click')
+    expect(wrapper.findAll('.bills__row')).toHaveLength(1)
+    await wrapper.find('.bills__dayfilter-clear').trigger('click')
     expect(wrapper.findAll('.bills__row')).toHaveLength(3)
+    expect(wrapper.find('.bills__dayfilter').exists()).toBe(false)
   })
 })
 

@@ -158,6 +158,18 @@ const groups = computed<DayGroup[]>(() => {
   return out
 })
 
+/**
+ * 日筛选行显示的笔数（稿 app.js:634「已选 11-05 · 3 笔」）。
+ * 数量取自当前已过滤的分组，不重新筛一遍原始数组。
+ */
+const selectedCount = computed(() => {
+  let count = 0
+  for (const group of groups.value) {
+    count += group.rows.length
+  }
+  return count
+})
+
 /** 图表配色跟随主题：`themeEpoch` 让夜间主题切换后重新取色。 */
 const palette = computed(() => {
   void themeEpoch.value
@@ -276,8 +288,9 @@ function openDetail(id: number): void {
 }
 
 function goSearch(): void {
-  // B3 上线前先落到现网流水页（两者都是明细检索入口），避免死链。
-  void router.push({ name: 'transactions' })
+  // 直连搜索页。**不要**再经过 `/transactions`：T38 起那是函数式重定向路由，
+  // 走它只是多一跳，而且会让人以为这里还依赖一笔「旧流水页」的历史。
+  void router.push({ name: 'search' })
 }
 
 function goStats(): void {
@@ -368,7 +381,6 @@ function goStats(): void {
           :selected-day="selectedDay"
           :masked="privacy.enabled"
           @pick="toggleDay"
-          @clear="selectedDay = null"
         />
       </section>
 
@@ -390,6 +402,14 @@ function goStats(): void {
       <!-- ⑥ 月列表卡：按日分组，行用 TxnRow bill 档 -->
       <section class="bills__card">
         <h2 class="bills__card-title">当月明细</h2>
+        <!-- 日筛选行（稿 889-892）：搬到这里而不是留在日历卡里 ——
+             「查看整月 ✕」清的是**这个列表**的日筛选，放在要清的东西旁边才不会让人找。 -->
+        <div v-if="selectedDay !== null" class="bills__dayfilter">
+          <span class="bills__dayfilter-chip">
+            已选 {{ month }}-{{ twoDigits(selectedDay) }} · {{ selectedCount }} 笔
+          </span>
+          <button type="button" class="bills__dayfilter-clear" @click="selectedDay = null">查看整月 ✕</button>
+        </div>
         <div v-for="group in groups" :key="group.date" class="bills__group">
           <div class="bills__group-head">
             <span class="bills__group-date">{{ group.label }}</span>
@@ -620,10 +640,6 @@ function goStats(): void {
   box-shadow: var(--fb-shadow-card);
 }
 
-.bills__card-head {
-  margin-bottom: 8px;
-}
-
 .bills__card-title {
   margin: 0;
   color: var(--fb-ink-deep);
@@ -631,15 +647,40 @@ function goStats(): void {
   font-weight: 700;
 }
 
-.bills__card-sub {
+/* ⑥ 列表：日筛选行（稿 889-892 的 .day-filter-row / .ts-chip / .ts-clear） */
+.bills__dayfilter {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px;
-  margin: 3px 0 0;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.bills__dayfilter-chip {
+  padding: 3px 10px;
+  border-radius: var(--fb-radius-pill);
+  background: var(--fb-blue-soft);
+  color: var(--fb-blue);
+  font-size: 11px;
+  font-variant-numeric: var(--fb-font-numeric);
+}
+
+.bills__dayfilter-clear {
+  min-height: 32px;
+  padding: 4px 10px;
+  border: none;
+  border-radius: var(--fb-radius-pill);
+  background: transparent;
   color: var(--fb-sub);
-  font-size: 12px;
-  line-height: 1.5;
+  font-family: inherit;
+  font-size: 11px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.bills__dayfilter-clear:focus-visible {
+  outline: 2px solid var(--fb-blue);
+  outline-offset: 1px;
 }
 
 /* ⑥ 列表 */
@@ -674,10 +715,6 @@ function goStats(): void {
 }
 
 @media (min-width: 900px) {
-  .metrics {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-
   .bills__card {
     padding: 16px;
   }

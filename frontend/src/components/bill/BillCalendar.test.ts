@@ -4,8 +4,11 @@
  * - 42 格；补位格是 `div` + `aria-hidden`，当月格是 `button`；
  * - 四态：`empty` 只显示日号、`expense-only` 带 `-`、`income-only` 带 `+`、`both` 有收入圆点；
  * - 读屏文案：未遮挡用 core 的 `ariaLabel`，遮挡后换成「N月D日，金额已隐藏」且格子只显示遮挡符；
- * - 交互：点格 emit `pick(day)`，选中态出 chip，点 ✕ emit `clear`；
+ * - 交互：点格 emit `pick(day)`，选中态带 `cal__cell--on`；今天带 `cal__cell--today`；
  * - 卡头摘要：支出 / 收入 / 记账 N 天。
+ *
+ * 注：「已选 11-03 · N 笔」与「查看整月 ✕」**不在本组件里**（审计 B-17/B-18：
+ * 它清的是列表的日筛选，搬到 `BillsView` 的列表卡内），所以本文件不再断言 chip。
  */
 import { createPinia } from 'pinia'
 import { mount } from '@vue/test-utils'
@@ -40,6 +43,28 @@ function makeGrid(): CalendarDay[] {
       key: `2026-11-${String(day).padStart(2, '0')}-${index}`,
       day,
       inMonth: index < 30,
+      expense: '0.00',
+      income: '0.00',
+    })
+  }
+  return out
+}
+
+/**
+ * 当月 1..31 全部「在月内」的 42 格。
+ *
+ * 「今天」用例专用：当月天数由真实日期决定（28~31），用固定 30 格的 `makeGrid()`
+ * 会在 31 号那天找不到格子。这里宁可可重复，也不让用例按日期飘。
+ */
+function makeFullMonthGrid(year: number, month: number): CalendarDay[] {
+  const prefix = `${year}-${String(month).padStart(2, '0')}`
+  const out: CalendarDay[] = []
+  for (let index = 0; index < 42; index += 1) {
+    const day = index < 31 ? index + 1 : index - 30
+    out.push({
+      key: `${prefix}-${String(day).padStart(2, '0')}-${index}`,
+      day,
+      inMonth: index < 31,
       expense: '0.00',
       income: '0.00',
     })
@@ -118,19 +143,41 @@ describe('BillCalendar：交互与摘要', () => {
     expect(wrapper.emitted('pick')?.[0]).toEqual([3])
   })
 
-  it('选中态：chip 出现、格子 aria-pressed=true，点 ✕ emit clear', async () => {
+  it('选中态：格子 aria-pressed=true 且带 cal__cell--on', () => {
     const wrapper = mountCalendar({ selectedDay: 3 })
     const cells = wrapper.findAll('button.cal__cell')
     expect(cells[2].attributes('aria-pressed')).toBe('true')
     expect(cells[2].classes()).toContain('cal__cell--on')
-    const chip = wrapper.find('.bills__filter-chip')
-    expect(chip.text()).toContain('已选 11-03')
-    await wrapper.find('.bills__filter-clear').trigger('click')
-    expect(wrapper.emitted('clear')).toHaveLength(1)
+    expect(wrapper.findAll('.cal__cell--on')).toHaveLength(1)
   })
 
-  it('未选日时不渲染 chip', () => {
-    expect(mountCalendar().find('.bills__filter-chip').exists()).toBe(false)
+  it('未选日时没有任何选中格', () => {
+    const wrapper = mountCalendar()
+    expect(wrapper.findAll('.cal__cell--on')).toHaveLength(0)
+    expect(wrapper.findAll('button.cal__cell')[2].attributes('aria-pressed')).toBe('false')
+  })
+
+  it('今天：唯一一格带 cal__cell--today，且读屏文案补「，今天」', () => {
+    const now = new Date()
+    const wrapper = mount(BillCalendar, {
+      global: { plugins: [createPinia()] },
+      props: {
+        year: now.getFullYear(),
+        month: now.getMonth() + 1,
+        grid: makeFullMonthGrid(now.getFullYear(), now.getMonth() + 1),
+        cells: [],
+        totals: TOTALS,
+        commodity: 'CNY',
+        activeDays: 0,
+        selectedDay: null,
+      },
+    })
+    const cells = wrapper.findAll('button.cal__cell')
+    const todayCell = cells[now.getDate() - 1]
+    expect(todayCell.classes()).toContain('cal__cell--today')
+    expect(todayCell.attributes('aria-label')).toContain('，今天')
+    // 视觉高亮只该有今天一格（不能因为「没数据」就把好几格都点亮）
+    expect(wrapper.findAll('.cal__cell--today')).toHaveLength(1)
   })
 
   it('卡头摘要：日期 + 支出/收入 + 记账天数', () => {
