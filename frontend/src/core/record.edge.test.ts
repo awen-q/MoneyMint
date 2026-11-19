@@ -273,6 +273,35 @@ describe('边界 C：computeBalanceSummary 严格 ΣAssets + ΣLiabilities（AC-
     expect(empty.netWorthTotal).toBe('0.00')
   })
 
+  it('allowFallback: false —— 用户选定的币种无数据时给 0.00，不回退（明细仍完整）', () => {
+    const accounts = [account(1, 'Assets', { CNY: '100.00' })]
+    const summary = computeBalanceSummary(accounts, 'USD', { allowFallback: false })
+    // 口径不切换：标题说 USD，数字就必须是 USD 的
+    expect(summary.commodity).toBe('USD')
+    expect(summary.assetTotal).toBe('0.00')
+    expect(summary.netWorthTotal).toBe('0.00')
+    // 但**明细不能被抹掉**：CNY 的真实余额仍在
+    expect(summary.assets.CNY).toBe('100.00')
+    expect(summary.netWorth.CNY).toBe('100.00')
+  })
+
+  it('不传 opts 时保持旧行为：默认币种无数据 → 回退首个有数据的币种', () => {
+    const accounts = [account(1, 'Assets', { CNY: '100.00' })]
+    expect(computeBalanceSummary(accounts, 'USD').commodity).toBe('CNY')
+    expect(computeBalanceSummary(accounts, 'USD', { allowFallback: true }).commodity).toBe('CNY')
+    expect(computeBalanceSummary(accounts, 'USD').assetTotal).toBe('100.00')
+  })
+
+  it('allowFallback: false 且该币种有数据时，与默认行为结果一致', () => {
+    const accounts = [
+      account(1, 'Assets', { CNY: '100.00' }),
+      account(2, 'Liabilities', { CNY: '-30.00' }),
+    ]
+    const strict = computeBalanceSummary(accounts, 'CNY', { allowFallback: false })
+    const legacy = computeBalanceSummary(accounts, 'CNY')
+    expect(strict).toEqual(legacy)
+  })
+
   it('非法余额字符串按 0 容错，不抛错、不污染其它币种', () => {
     const summary = computeBalanceSummary(
       [

@@ -343,12 +343,32 @@ function bucketToStrings(bucket: MoneyBuckets): Record<string, string> {
 }
 
 /**
+ * `computeBalanceSummary` 的选项。
+ */
+export interface BalanceSummaryOptions {
+  /**
+   * 主币种无数据时是否回退到「第一个有数据的币种」。
+   *
+   * - `true`（**默认**，与历史行为一致）：用于传**账本默认币种**的页面
+   *   （`CommoditiesView` / `ReportsView`）—— 那里 `defaultCommodity` 不是用户
+   *   显式选的，回退到有数据的币种可避免「首页误显示 0.00」；
+   * - `false`：用于传**用户显式选择币种**的页面（资产页）—— 用户选了 USD 却把
+   *   CNY 的数字顶上来、标题还写 USD，是静默改口，比显示 0.00 糟得多。
+   *
+   * 无论取何值，`assets` / `liabilities` / `netWorth` 三个**明细**都按真实币种
+   * 完整返回，不会被抹掉 —— 只是「主币种口径」（三个合计）是否切换。
+   */
+  allowFallback?: boolean
+}
+
+/**
  * 统一净资产口径：ΣAssets + ΣLiabilities（后端余额本身带符号，负债为负）。
  * 禁止 abs() / 按类型乘系数；净资产为负时原样保留负号（AC-12）。
  */
 export function computeBalanceSummary(
   accounts: SummaryAccount[],
   defaultCommodity: string,
+  opts: BalanceSummaryOptions = {},
 ): BalanceSummary {
   const assets: MoneyBuckets = {}
   const liabilities: MoneyBuckets = {}
@@ -378,8 +398,11 @@ export function computeBalanceSummary(
 
   const allCodes = Object.keys(net)
   // 账本默认币种若无任何余额数据，退回第一个实际有数据的币种，避免首页误显示 0.00。
+  // `allowFallback === false` 时**不回退**：用户显式选了币种，就按该币种口径给 0.00，
+  // 绝不能把另一个币种的数字顶上来（标题写 USD、数字是 CNY 属静默改口）。
+  const allowFallback = opts.allowFallback !== false
   let main = defaultCommodity === '' ? 'CNY' : defaultCommodity
-  if (net[main] === undefined && allCodes.length > 0) {
+  if (allowFallback && net[main] === undefined && allCodes.length > 0) {
     main = allCodes[0]
   }
   const assetMain = assets[main] === undefined ? Money.zero() : assets[main]

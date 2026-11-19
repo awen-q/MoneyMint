@@ -13,7 +13,7 @@
  *
  * 本 store 只存数字与字符串，不碰 DOM、不 import 任何组件，也不做浮点运算。
  */
-import { ref, watch, type Ref } from 'vue'
+import { computed, ref, watch, type Ref } from 'vue'
 import { defineStore } from 'pinia'
 
 import { useSessionStore } from '@/stores/session'
@@ -116,6 +116,15 @@ export const usePeriodStore = defineStore('period', () => {
   })
   const assets: Ref<AssetsPeriod> = ref<AssetsPeriod>({ year: startYear })
 
+  /**
+   * 当前币种（**只读别名**，值恒等于 `bills.commodity` ≡ `stats.commodity`）。
+   *
+   * 存在的理由：非账单 / 非统计的页面（如资产页）也需要币种，但不该去读
+   * `bills.commodity` 或 `stats.commodity` —— 那会让「资产页取哪个页的币种」
+   * 变成每次随手的偏好。写入仍只能走 `setCommodity` / `resetCommodity`。
+   */
+  const commodity = computed<string>(() => bills.value.commodity)
+
   /** 账单页切月：只改 bills，不影响统计页。 */
   function setBillsMonth(year: number, month: number): void {
     bills.value = {
@@ -184,6 +193,7 @@ export const usePeriodStore = defineStore('period', () => {
     bills,
     stats,
     assets,
+    commodity,
     setBillsMonth,
     setStatsMonth,
     setCommodity,

@@ -155,6 +155,8 @@ describe('period：币种单源（关键）', () => {
 
     expect(period.bills.commodity).toBe('USD')
     expect(period.stats.commodity).toBe('USD')
+    // 只读别名与两页恒等（资产页等第三方页面用它，不必猜该读 bills 还是 stats）
+    expect(period.commodity).toBe('USD')
   })
 
   it('setCommodity("") 保持原币种；resetCommodity 两页一起改', () => {
