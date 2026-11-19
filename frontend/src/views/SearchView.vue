@@ -24,7 +24,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { transactionApi } from '@/api/client'
-import type { TransactionListPage, TransactionView } from '@/api/types'
+import type { TransactionListPage, TransactionSummary, TransactionView } from '@/api/types'
 import { buildCsvRowsFromTransactions, buildTransactionsCsv, downloadCsv } from '@/core/csv'
 import {
   emptyFilters,
@@ -36,6 +36,7 @@ import {
 } from '@/core/filters'
 import { buildTxnRow, type TxnRowView } from '@/core/txnRow'
 import { useLedgerDataStore } from '@/stores/ledgerData'
+import MoneyText from '@/components/MoneyText.vue'
 import SearchBar from '@/components/search/SearchBar.vue'
 import SearchFilters from '@/components/search/SearchFilters.vue'
 import StateCard from '@/components/shell/StateCard.vue'
@@ -53,7 +54,7 @@ const filters = reactive<TransactionFilters>(filtersFromQuery(route.query))
 const items = ref<TransactionView[]>([])
 const cursor = ref<string | null>(null)
 const hasMore = ref(false)
-const total = ref<number | null>(null)
+const summary = ref<TransactionSummary | null>(null)
 const loading = ref(false)
 const loadingMore = ref(false)
 const loadError = ref('')
@@ -98,10 +99,11 @@ async function loadFirst(): Promise<void> {
   items.value = []
   cursor.value = null
   hasMore.value = false
-  total.value = null
+  summary.value = null
   try {
     const page = await transactionApi.listPage(
-      { ...baseQuery(), limit: PAGE_SIZE },
+      // 只在首屏带 `with: 'summary'`：汇总口径是筛选全集，翻页时不必再算一遍。
+      { ...baseQuery(), limit: PAGE_SIZE, with: 'summary' },
       { signal: controller.signal },
     )
     if (myGen !== gen) {
@@ -140,9 +142,6 @@ async function loadMore(): Promise<void> {
     items.value = items.value.concat(page.transactions)
     cursor.value = page.next_cursor === undefined ? null : page.next_cursor
     hasMore.value = page.has_more === true
-    if (typeof page.total === 'number') {
-      total.value = page.total
-    }
   } catch (err) {
     if (myGen !== gen) {
       return
@@ -159,7 +158,9 @@ function applyPage(page: TransactionListPage): void {
   items.value = page.transactions
   cursor.value = page.next_cursor === undefined ? null : page.next_cursor
   hasMore.value = page.has_more === true
-  total.value = typeof page.total === 'number' ? page.total : null
+  // 汇总缺失（服务端未带 `with=summary` 或旧响应）时保持 null —— 页面整块不渲染，
+  // **不要**退回 `total ?? 0` 或 `items.length`：那会显示一个错的笔数。
+  summary.value = page.summary === undefined ? null : page.summary
 }
 
 /**
@@ -247,9 +248,6 @@ const pageState = computed<'loading' | 'error' | 'empty' | 'ready'>(() => {
   return 'ready'
 })
 
-/** 「共 N 笔」：分页必须用服务端的 total，不能用本页行数。 */
-const totalLabel = computed(() => (total.value === null ? '' : `共 ${total.value} 笔`))
-
 /** 已选条件 chips（`key` 用于单独移除）。 */
 const chips = computed<Array<{ key: string; label: string }>>(() => {
   const out: Array<{ key: string; label: string }> = []
@@ -293,6 +291,10 @@ const memberOptions = computed(() => {
   return out.sort()
 })
 
+function goBills(): void {
+  void router.push({ name: 'bills' })
+}
+
 function openDetail(id: number): void {
   void router.push({ name: 'transaction-detail', query: { id: String(id) } })
 }
@@ -316,6 +318,13 @@ async function exportCsv(): Promise<void> {
 
 <template>
   <section class="search">
+    <!-- 移动端二级页返回条（稿 `page-search` 的 back-bar only-mobile）：≤899 显示，PC 隐藏。
+         用 router.push 而不是 history.back()：用户可能是直接打开分享链接进来，
+         back() 会把他退出应用。 -->
+    <div class="search__back">
+      <button type="button" class="search__back-btn" @click="goBills">‹ 返回账单</button>
+    </div>
+
     <header class="search__hero">
       <h1 class="search__title">搜索账单</h1>
       <p class="search__sub">关键词 + 七维筛选：日期范围 / 类型 / 账户 / 分类 / 标签 / 成员</p>
@@ -340,6 +349,25 @@ async function exportCsv(): Promise<void> {
       </SearchBar>
     </section>
 
+    <!-- 汇总卡（T36）：口径是**筛选全集**，与翻到第几页无关；summary 缺失时整块不渲染 -->
+    <section v-if="summary !== null" class="search__summary" aria-label="命中汇总">
+      <!-- 笔数不是金额，隐私遮挡时**不遮**（用户仍需要知道筛出了多少笔） -->
+      <p class="search__summary-total">共 {{ summary.total }} 笔</p>
+      <ul class="search__summary-list">
+        <li
+          v-for="row in summary.by_commodity"
+          :key="row.commodity"
+          class="search__summary-row"
+        >
+          <span class="search__summary-chip">{{ row.commodity }}</span>
+          <span class="search__summary-label">收入</span>
+          <MoneyText :amount="row.income" :commodity="row.commodity" size="sm" />
+          <span class="search__summary-label">支出</span>
+          <MoneyText :amount="row.expense" :commodity="row.commodity" size="sm" />
+        </li>
+      </ul>
+    </section>
+
     <p v-if="notice" class="search__notice" role="status">{{ notice }}</p>
 
     <StateCard :state="pageState" :desc="cardDesc" @action="loadFirst">
@@ -347,7 +375,6 @@ async function exportCsv(): Promise<void> {
         <header class="search__result-head">
           <span class="search__result-title">搜索结果</span>
           <span class="search__result-actions">
-            <span v-if="totalLabel !== ''" class="search__count">{{ totalLabel }}</span>
             <button type="button" class="search__export" @click="exportCsv">⇩ 导出 CSV</button>
           </span>
         </header>
@@ -378,6 +405,34 @@ async function exportCsv(): Promise<void> {
   gap: 12px;
 }
 
+.search__back {
+  display: flex;
+}
+
+.search__back-btn {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--fb-line);
+  border-radius: var(--fb-radius-pill);
+  background: var(--fb-card);
+  color: var(--fb-sub);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.search__back-btn:focus-visible {
+  outline: 2px solid var(--fb-blue);
+  outline-offset: 2px;
+}
+
+/* PC 无移动端返回条（稿：only-mobile） */
+@media (min-width: 900px) {
+  .search__back {
+    display: none;
+  }
+}
+
 .search__hero {
   padding: 4px 0 2px;
 }
@@ -401,6 +456,52 @@ async function exportCsv(): Promise<void> {
   border-radius: var(--fb-radius-card);
   background: var(--fb-card);
   box-shadow: var(--fb-shadow-card);
+}
+
+.search__summary {
+  padding: 12px;
+  border-radius: var(--fb-radius-card);
+  background: var(--fb-card);
+  box-shadow: var(--fb-shadow-card);
+}
+
+.search__summary-total {
+  margin: 0 0 6px;
+  color: var(--fb-ink-deep);
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: var(--fb-font-numeric);
+}
+
+.search__summary-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.search__summary-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--fb-sub);
+  font-size: 12px;
+}
+
+.search__summary-chip {
+  padding: 1px 8px;
+  border-radius: var(--fb-radius-pill);
+  background: var(--fb-soft);
+  color: var(--fb-sub);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.search__summary-label {
+  color: var(--fb-sub);
 }
 
 .search__notice {

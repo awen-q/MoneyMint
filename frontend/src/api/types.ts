@@ -476,6 +476,23 @@ export interface TransactionListQuery {
   with?: 'summary'
 }
 
+/** `with=summary` 时按币种给出的一行汇总（金额为定点串，**禁跨币种求和**）。 */
+export interface TransactionSummaryCommodity {
+  commodity: string
+  /** 收入合计，正数，定点串。 */
+  income: string
+  /** 支出合计，正数，定点串。 */
+  expense: string
+}
+
+/** `with=summary` 时的筛选**全集**汇总（与翻到第几页无关，服务端保证）。 */
+export interface TransactionSummary {
+  /** 全量命中笔数（「共 N 笔」的唯一来源）。 */
+  total: number
+  /** 按币种分行；跨币种不合并。 */
+  by_commodity: TransactionSummaryCommodity[]
+}
+
 /**
  * 分页响应。
  *
@@ -489,6 +506,8 @@ export interface TransactionListPage {
   total?: number
   has_more?: boolean
   next_cursor?: string
+  /** 仅当请求带 `with=summary` 时返回；缺失时页面**整块不渲染**汇总（不要显示 0）。 */
+  summary?: TransactionSummary
 }
 
 /** POST /api/transactions 请求体（在线记账必须用 account_id）。 */

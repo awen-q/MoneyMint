@@ -17,6 +17,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { TransactionListPage, TransactionView } from '@/api/types'
 import { useLedgerDataStore } from '@/stores/ledgerData'
+import { usePrivacyStore } from '@/stores/privacy'
+import { PRIVACY_MASK } from '@/core/privacy'
 
 import SearchView from './SearchView.vue'
 
@@ -68,6 +70,16 @@ function page(ids: number[], extra: Partial<TransactionListPage> = {}): Transact
   return { transactions: ids.map(makeTxn), ...extra }
 }
 
+/** 带 `with=summary` 的响应（汇总口径 = 筛选全集）。 */
+function pageWithSummary(
+  ids: number[],
+  total: number,
+  byCommodity: Array<{ commodity: string; income: string; expense: string }>,
+  extra: Partial<TransactionListPage> = {},
+): TransactionListPage {
+  return { transactions: ids.map(makeTxn), total, summary: { total, by_commodity: byCommodity }, ...extra }
+}
+
 /** 手动可控的 Promise：用于构造乱序响应。 */
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolveFn: (value: T) => void = () => undefined
@@ -104,7 +116,12 @@ beforeEach(() => {
 
 describe('SearchView：首屏与分页', () => {
   it('首屏请求带 limit: 20 且不带 cursor；「共 N 笔」取 total 不是行数', async () => {
-    h.listPage.mockResolvedValue(page([1, 2, 3], { total: 57, has_more: true, next_cursor: 'c1' }))
+    h.listPage.mockResolvedValue(
+      pageWithSummary([1, 2, 3], 57, [{ commodity: 'CNY', income: '5000.00', expense: '3200.00' }], {
+        has_more: true,
+        next_cursor: 'c1',
+      }),
+    )
     const wrapper = mountView()
     await flushPromises()
 
@@ -112,10 +129,12 @@ describe('SearchView：首屏与分页', () => {
     const query = h.listPage.mock.calls[0][0] as Record<string, unknown>
     expect(query.limit).toBe(20)
     expect(query.cursor).toBeUndefined()
+    // 首屏必须带 with=summary（汇总口径是筛选全集，翻页不必再算）
+    expect(query.with).toBe('summary')
 
     expect(wrapper.findAll('.search__row')).toHaveLength(3)
-    // 关键：57 来自 total，不是 3
-    expect(wrapper.find('.search__count').text()).toBe('共 57 笔')
+    // 关键：57 来自 summary.total，不是本页 3 行
+    expect(wrapper.find('.search__summary-total').text()).toBe('共 57 笔')
   })
 
   it('「加载更多」带上次 next_cursor，其余筛选参数原样带上，追加后无重复 id', async () => {
@@ -189,15 +208,15 @@ describe('SearchView：首屏与分页', () => {
     await wrapper.find('[aria-label="类型筛选"]').setValue('expense')
     await wrapper.find('[aria-label="类型筛选"]').setValue('income')
 
-    fast.resolve(page([22], { total: 1, has_more: false }))
+    fast.resolve(pageWithSummary([22], 1, [{ commodity: 'CNY', income: '0.00', expense: '1.00' }], { has_more: false }))
     await flushPromises()
     expect(wrapper.findAll('.search__row')).toHaveLength(1)
 
     // 慢的 A（expense）现在才回来：必须被代际丢弃
-    slow.resolve(page([11, 12], { total: 2, has_more: false }))
+    slow.resolve(pageWithSummary([11, 12], 2, [{ commodity: 'CNY', income: '0.00', expense: '2.00' }], { has_more: false }))
     await flushPromises()
     expect(wrapper.findAll('.search__row')).toHaveLength(1)
-    expect(wrapper.find('.search__count').text()).toBe('共 1 笔')
+    expect(wrapper.find('.search__summary-total').text()).toBe('共 1 笔')
   })
 })
 
@@ -347,5 +366,88 @@ describe('关键词端到端（T38 从旧流水页迁移）', () => {
     expect((h.listPage.mock.calls[0][0] as Record<string, unknown>).q).toBe('绝不存在的词')
     expect(wrapper.findAll('.search__row')).toHaveLength(0)
     expect(wrapper.text()).toContain('暂无数据')
+  })
+})
+
+describe('SearchView：汇总卡（T36）', () => {
+  it('summary 缺失 → 整块不渲染（不显示「共 0 笔」）', async () => {
+    h.listPage.mockResolvedValue(page([1, 2], { has_more: false }))
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.find('.search__summary').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('共 0 笔')
+  })
+
+  it('多币种按行展示，各自带币种 chip，且不做跨币种合计', async () => {
+    h.listPage.mockResolvedValue(
+      pageWithSummary([1, 2], 2, [
+        { commodity: 'CNY', income: '5000.00', expense: '3200.00' },
+        { commodity: 'USD', income: '120.00', expense: '30.00' },
+      ]),
+    )
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.find('.search__summary-total').text()).toBe('共 2 笔')
+    const rows = wrapper.findAll('.search__summary-row')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].find('.search__summary-chip').text()).toBe('CNY')
+    expect(rows[1].find('.search__summary-chip').text()).toBe('USD')
+    // 定点串直显（不 parseFloat 再格式化）：$120.00 / $30.00 原样出现
+    expect(rows[1].text()).toContain('$ 120.00')
+    expect(rows[1].text()).toContain('$ 30.00')
+    // 绝不出现跨币种求和（5000+120 之类）
+    expect(wrapper.text()).not.toContain('5,120')
+  })
+
+  it('隐私遮挡：金额被遮，但「共 N 笔」不遮（笔数不是金额）', async () => {
+    h.listPage.mockResolvedValue(
+      pageWithSummary([1], 1, [{ commodity: 'CNY', income: '5000.00', expense: '3200.00' }]),
+    )
+    const wrapper = mountView()
+    await flushPromises()
+
+    usePrivacyStore(pinia).setEnabled(true)
+    await flushPromises()
+
+    expect(wrapper.find('.search__summary').text()).toContain(PRIVACY_MASK)
+    expect(wrapper.find('.search__summary').text()).not.toContain('5,000.00')
+    // 笔数不被遮
+    expect(wrapper.find('.search__summary-total').text()).toBe('共 1 笔')
+  })
+
+  it('翻页请求不再带 with=summary（汇总口径与页无关，少一次聚合）', async () => {
+    h.listPage.mockResolvedValueOnce(
+      pageWithSummary([1], 3, [{ commodity: 'CNY', income: '0.00', expense: '1.00' }], {
+        has_more: true,
+        next_cursor: 'c1',
+      }),
+    )
+    const wrapper = mountView()
+    await flushPromises()
+
+    h.listPage.mockResolvedValueOnce(page([2, 3], { has_more: false }))
+    await wrapper.find('.search__more-btn').trigger('click')
+    await flushPromises()
+
+    const moreQuery = h.listPage.mock.calls[1][0] as Record<string, unknown>
+    expect(moreQuery.with).toBeUndefined()
+    expect(moreQuery.cursor).toBe('c1')
+    // 汇总仍是首屏那份，不因翻页而改变
+    expect(wrapper.find('.search__summary-total').text()).toBe('共 3 笔')
+  })
+})
+
+describe('SearchView：移动端返回条', () => {
+  it('渲染返回条并回账单页（用 push 而不是 history.back）', async () => {
+    h.listPage.mockResolvedValue(page([], { has_more: false }))
+    const wrapper = mountView()
+    await flushPromises()
+
+    const back = wrapper.find('.search__back-btn')
+    expect(back.exists()).toBe(true)
+    expect(back.text()).toContain('返回账单')
+    await back.trigger('click')
+    expect(h.push).toHaveBeenCalledWith({ name: 'bills' })
   })
 })
