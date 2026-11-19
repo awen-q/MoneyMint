@@ -80,10 +80,11 @@ const emit = defineEmits<{
 </template>
 
 <style scoped>
+/* X-06：宽度对齐设计 `--sidebar-w: 232px`（原 240，窄 8px 且挤压内容区） */
 .sb {
   display: none;
-  width: 240px;
-  flex: 0 0 240px;
+  width: 232px;
+  flex: 0 0 232px;
   flex-direction: column;
   background: var(--fb-sidebar);
   color: var(--fb-side-fg);
@@ -93,7 +94,7 @@ const emit = defineEmits<{
   padding: 20px;
   color: var(--fb-white);
   font-size: 17px;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.02em;
 }
 

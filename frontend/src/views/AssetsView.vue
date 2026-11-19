@@ -181,33 +181,37 @@ const closedNote = computed(() => {
   padding-bottom: 20px;
 }
 
+/* X-02：横向内边距归零 —— 水平留白只由 `.layout__content` 一处给，
+   否则「layout 16 + 视图 16」= 32px，与账单页、统计页对不齐。 */
 .assets__hero {
-  padding: calc(16px + env(safe-area-inset-top, 0px)) 16px 10px;
+  padding: 0 0 10px;
 }
 
 .assets__title {
   margin: 0;
-  color: var(--fb-ink);
-  font-size: 20px;
+  color: var(--fb-ink-deep);
+  font-size: 21px;
   font-weight: 700;
 }
 
 .assets__desc {
-  margin: 6px 0 0;
+  margin: 4px 0 0;
   color: var(--fb-sub);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .assets__card {
-  margin: 10px 16px 0;
+  margin: 14px 0 0;
   padding: 14px;
+  border: 1px solid var(--fb-line);
   border-radius: var(--fb-radius-card);
   background: var(--fb-card);
   box-shadow: var(--fb-shadow-card);
 }
 
+/* A-02：工具卡内边距与设计 `.card` 一致（16，移动 14） */
 .assets__card--tool {
-  padding: 10px 14px;
+  padding: 16px;
 }
 
 /* 稿 `page-assets` 的 `.tool-row`：标题在左、入口在右（tool-spacer 撑开） */
@@ -218,32 +222,39 @@ const closedNote = computed(() => {
   gap: 12px;
 }
 
-/* 稿 `.link-btn`：文字型链接按钮，不是实体按钮（工具卡里实体按钮会抢走注意力） */
+/* 稿 `.link-btn`：文字型链接按钮，13/700，不是实体按钮（会抢走注意力） */
 .assets__link {
   flex: none;
-  padding: 0;
+  padding: 6px 4px;
   border: none;
   background: transparent;
   color: var(--fb-blue);
   font-family: inherit;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 700;
   cursor: pointer;
 }
 
+.assets__link:focus-visible {
+  outline: 2px solid var(--fb-blue);
+  outline-offset: 2px;
+}
+
+/* A-06：卡头与内容间距 12（设计 `.card-head`） */
 .assets__card-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 8px;
+  margin-bottom: 12px;
 }
 
+/* A-02：卡标题 15/700（设计 `.card-title`） */
 .assets__card-title {
   margin: 0;
   color: var(--fb-ink);
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 700;
 }
 
 .assets__card-note {
@@ -251,12 +262,13 @@ const closedNote = computed(() => {
   font-size: 11px;
 }
 
+/* X-02：提示条不再自带横向外边距 */
 .assets__stale {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin: 10px 16px 0;
+  margin: 14px 0 0;
   padding: 8px 12px;
   border-radius: var(--fb-radius-card);
   background: var(--fb-danger-soft);
@@ -283,4 +295,9 @@ const closedNote = computed(() => {
   line-height: 1.5;
 }
 
+@media (max-width: 768px) {
+  .assets__card--tool {
+    padding: 14px;
+  }
+}
 </style>

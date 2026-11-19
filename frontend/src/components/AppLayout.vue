@@ -17,8 +17,8 @@
  * 3. **路由零改动**：`router/index.ts` 一个字符都没动，本批只改呈现。
  *
  * 断点：900px（LO-04，由 1024 下调）——≥900 出侧栏、隐底栏；<900 反之。
- * 底部留白 104px = 底栏 68 + FAB 上溢 24 + 12 间隙。`content` 与 `notice`
- * 两处必须同步，否则末卡会被 FAB 压住（LO-03 的复发点）。
+ * 底部留白 94px = 底栏 58（X-07 对齐设计 `--tabbar-h`）+ FAB 上溢 24 + 12 间隙。
+ * `content` 与 `notice` 两处必须同步，否则末卡会被 FAB 压住（LO-03 的复发点）。
  */
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -193,17 +193,17 @@ function goChangePassword(): void {
   font-size: 12px;
 }
 
-/* 底部留白 = 底栏 68 + FAB 上溢 24 + 间隙 12（LO-03 复发点，别只改一处） */
+/* 底部留白 = 底栏 58 + FAB 上溢 24 + 间隙 12 = 94（LO-03 复发点，别只改一处） */
 .layout__content {
   flex: 1;
   padding: 16px;
-  padding-bottom: calc(104px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(94px + env(safe-area-inset-bottom, 0px));
 }
 
 .layout__notice {
   position: fixed;
   left: 50%;
-  bottom: calc(104px + env(safe-area-inset-bottom, 0px));
+  bottom: calc(94px + env(safe-area-inset-bottom, 0px));
   z-index: 40;
   margin: 0;
   padding: 8px 14px;
@@ -216,13 +216,16 @@ function goChangePassword(): void {
 
 /* ---------- 断点 900（LO-04：由 1024 下调，消除 769–1023 的空白带） ---------- */
 @media (min-width: 900px) {
+  /* X-02：PC 内边距对齐设计 `.page`（`26px 28px`）。移动端保持 16px ——
+     四页视图内部已把自带横向 margin 归零，标题与卡片左边界因此对齐。 */
   .layout__content {
-    padding: 24px;
+    padding: 26px 28px;
     padding-bottom: 24px;
   }
 
+  /* X-08：内容最大宽对齐设计 `--max: 1080px`（原 1180，PC 上指标带与图表过长） */
   .layout__content > * {
-    max-width: 1180px;
+    max-width: 1080px;
     margin-left: auto;
     margin-right: auto;
   }

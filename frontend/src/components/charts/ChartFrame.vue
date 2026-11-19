@@ -10,7 +10,9 @@
  * 3. **四态不可省** —— 加载失败时绝不渲染 0 值，否则断网时用户会读成
  *    「这个月没花钱」，是静默错账里最危险的一种。
  */
-withDefaults(
+import { computed } from 'vue'
+
+const props = withDefaults(
   defineProps<{
     title: string
     /** 一句话口径说明，如「按已过 17 天」；不传则不渲染。 */
@@ -20,6 +22,14 @@ withDefaults(
     chartLabel: string
     /** 占位高度（px）。折线 220、小图 200。 */
     height?: number
+    /**
+     * PC（≥900px）占位高度（px）。不传则沿用 `height`。
+     *
+     * 为什么用两个 prop 而不是在调用方读 `window.innerWidth`：容器高度必须由
+     * CSS 决定（媒体查询），JS 断点会在窗口缩放时与样式表打架，且要给三个图表
+     * 组件各挂一个 resize 监听 —— 与「永不注册 window.resize」的约定冲突。
+     */
+    wideHeight?: number
     state?: 'ready' | 'loading' | 'empty' | 'error'
     emptyText?: string
     legend?: Array<{ name: string; color: string; shape?: 'line' | 'dot' | 'rect' }>
@@ -32,6 +42,15 @@ withDefaults(
     legend: () => [],
   },
 )
+
+/**
+ * 高度以 CSS 自定义属性下发，而不是写成 `height: 220px` 内联样式：
+ * 内联样式的优先级高于样式表，媒体查询永远盖不掉它。
+ */
+const bodyStyle = computed<Record<string, string>>(() => ({
+  '--chart-frame-h': `${props.height}px`,
+  '--chart-frame-h-wide': `${props.wideHeight ?? props.height}px`,
+}))
 </script>
 
 <template>
@@ -55,7 +74,7 @@ withDefaults(
 
     <div
       class="fb-chart__body"
-      :style="{ height: `${height}px` }"
+      :style="bodyStyle"
       role="img"
       :aria-label="chartLabel"
     >
@@ -83,9 +102,12 @@ withDefaults(
   flex-wrap: wrap;
 }
 
+/* 卡标题对齐设计 `.card-title`（15px / 700 / `--fb-ink`）。
+   这是**卡标题**档位；卡内小标题（如 `DonutRankCard` 的 `.donut-rank__block-title`）
+   另有 13/700 一档，两者是不同元素、不冲突。 */
 .fb-chart__title {
   margin: 0;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 700;
   color: var(--fb-ink);
 }
@@ -139,6 +161,15 @@ withDefaults(
   position: relative;
   width: 100%;
   min-width: 0;
+  /* 高度经 CSS 变量下发（见 bodyStyle）：内联 px 会挡住下面的媒体查询 */
+  height: var(--chart-frame-h);
+}
+
+/* 设计 `.chart-h` 在 PC 是 240、移动 220（`mockup:335` / `:742`） */
+@media (min-width: 900px) {
+  .fb-chart__body {
+    height: var(--chart-frame-h-wide);
+  }
 }
 
 .fb-chart__state {

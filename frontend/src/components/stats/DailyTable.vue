@@ -114,17 +114,20 @@ withDefaults(
   gap: 8px;
 }
 
+/* 卡头标题（S-06）：设计 `.card-title` 15/700 */
 .daily__title {
   color: var(--fb-ink);
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 700;
 }
 
+/* 卡头合计（S-10）：设计 `.daily-sum` 12px `--muted` / 右对齐 / tabular */
 .daily__sum {
   margin-left: auto;
-  color: var(--fb-ink);
-  font-size: 11px;
+  color: var(--fb-sub);
+  font-size: 12px;
   font-variant-numeric: var(--fb-font-numeric);
+  text-align: right;
 }
 
 .daily__sum-text {
@@ -148,23 +151,24 @@ withDefaults(
   overflow-y: auto;
 }
 
+/* 设计 `.dt-table` 12.5px；表头线用 `--line-strong`（比行线重），th 字重 600 */
 .daily__table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: 12.5px;
   font-variant-numeric: var(--fb-font-numeric);
 }
 
 .daily__table th {
-  padding: 6px 4px;
-  border-bottom: 1px solid var(--fb-line);
+  padding: 7px 6px;
+  border-bottom: 1px solid var(--fb-line-strong);
   color: var(--fb-sub);
-  font-weight: 500;
+  font-weight: 600;
   text-align: left;
 }
 
 .daily__table td {
-  padding: 7px 4px;
+  padding: 6px 6px;
   border-bottom: 1px solid var(--fb-line);
   color: var(--fb-ink);
 }

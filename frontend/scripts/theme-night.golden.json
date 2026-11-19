@@ -35,12 +35,12 @@
     "--fb-on-hero-pill": "rgba(232, 226, 210, 0.16)",
     "--fb-chart-4": "#b89268",
     "--fb-chart-6": "#74a9a4",
+    "--fb-chart-7": "#9fae82",
+    "--fb-chart-8": "#b39ac6",
+    "--fb-chart-9": "#8fb4cc",
+    "--fb-chart-10": "#c98a76",
     "--fb-brand": "var(--fb-blue)",
     "--fb-primary": "var(--fb-blue)",
-    "--fb-primary-soft": "var(--fb-blue-soft)",
-    "--fb-chart-7": "#b39ac6",
-    "--fb-chart-8": "#b8b57a",
-    "--fb-chart-9": "#d69ab6",
-    "--fb-chart-10": "#8fa9cc"
+    "--fb-primary-soft": "var(--fb-blue-soft)"
   }
 }

@@ -31,6 +31,8 @@ const props = withDefaults(
     /** 隐私遮挡：Y 轴不出数值，tooltip 出遮罩符。 */
     masked?: boolean
     height?: number
+    /** PC（≥900px）占位高度；不传沿用 `height`（设计 `.chart-h` PC 240 / 移动 220）。 */
+    wideHeight?: number
     state?: 'ready' | 'loading' | 'empty' | 'error'
     emptyText?: string
   }>(),
@@ -339,6 +341,7 @@ onBeforeUnmount(() => {
     :note="note"
     :chart-label="chartLabel"
     :height="height"
+    :wide-height="wideHeight"
     :state="frameState"
     :empty-text="emptyText"
     :legend="legendItems"

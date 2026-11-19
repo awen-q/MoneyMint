@@ -94,10 +94,11 @@ function deltaTone(delta: string | null): 'pos' | 'neg' | 'none' {
   gap: 8px;
 }
 
+/* 卡头标题（AS-03 / S-06 同源）：设计 `.card-title` 15/700 */
 .mo__title {
   color: var(--fb-ink);
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 700;
 }
 
 .mo__note {
@@ -105,18 +106,19 @@ function deltaTone(delta: string | null): 'pos' | 'neg' | 'none' {
   font-size: 11px;
 }
 
+/* 设计 `.mo-row`：56px / 1fr / 110px / 84px，12.5px，8px 4px 内边距 */
 .mo__table {
   margin-top: 8px;
-  font-size: 12px;
+  font-size: 12.5px;
   font-variant-numeric: var(--fb-font-numeric);
 }
 
 .mo__row {
   display: grid;
-  grid-template-columns: 56px minmax(0, 1.2fr) minmax(0, 1fr) 76px;
+  grid-template-columns: 56px minmax(0, 1fr) 110px 84px;
   align-items: center;
   gap: 8px;
-  padding: 7px 0;
+  padding: 8px 4px;
   border-bottom: 1px solid var(--fb-line);
   color: var(--fb-ink);
 }
@@ -125,7 +127,9 @@ function deltaTone(delta: string | null): 'pos' | 'neg' | 'none' {
   border-bottom: none;
 }
 
+/* 表头（AS-02 ②）：线更重（`--line-strong`）、11px `--fb-sub` */
 .mo__row--head {
+  border-bottom: 1px solid var(--fb-line-strong);
   color: var(--fb-sub);
   font-size: 11px;
 }
@@ -134,28 +138,65 @@ function deltaTone(delta: string | null): 'pos' | 'neg' | 'none' {
   text-align: right;
 }
 
+/* 月份列（AS-02 ③）：设计 `.mo-m` 未设色 → 继承墨色，原实现是灰色 */
 .mo__month {
-  color: var(--fb-sub);
+  color: var(--fb-ink);
 }
 
 .mo__dash {
   color: var(--fb-sub);
 }
 
-/* 变化方向只用颜色表达；符号本身由 MoneyText 的 signed 决定，不重复拼 + */
+/* 「月末总资产」是四列里最长的一串。375px 下可用宽 307px，
+   固定列 46+96+72=214 + gap 24 → 1fr 列只剩 69px，而 `¥123,456.78`
+   在 12.5px tabular 下约 78px：没有这条守卫时它不会换行，而是**画到环比列上**。
+   宁可截断，也不要两个数字叠在一起。 */
+.mo__amount {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * 上面那条只负责「不越界」：`.money-text` 是 `inline-block`，父级的
+ * `text-overflow` 对它是**裁剪**而不是省略号（读者只会看到半个数字，不知道被截了）。
+ * 把省略号下沉到金额元素本身，截断才有可见信号。
+ */
+.mo__amount :deep(.money-text) {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 变化方向只用颜色表达；符号本身由 MoneyText 的 signed 决定，不重复拼 +。
+   色值按设计 `.mo-delta.ci/.ce`：`--income` / `--expense` 在卡面上实测 4.72 / 5.22，过 AA。 */
 .mo__delta--pos {
-  color: var(--fb-green-ink);
+  color: var(--fb-green);
 }
 
 .mo__delta--neg {
-  color: var(--fb-danger-ink);
+  color: var(--fb-danger);
 }
 
 .mo__delta--none {
   color: var(--fb-sub);
 }
 
-/* 320px：两列（月份 + 金额），环比折到第二行，避免四列挤成两条线 */
+/* 设计 ≤768：46px / 1fr / 96px / 72px，12px（AS-02） */
+@media (max-width: 768px) {
+  .mo__row {
+    grid-template-columns: 46px minmax(0, 1fr) 96px 72px;
+    font-size: 12px;
+  }
+}
+
+/* ≤360：两列两行（月份 + 月末资产 / 环比额 + 占比），避免四列挤成两条线。
+   **必须显式 `grid-row`**：`.mo__delta` 与 `.mo__ratio` 都声明了 `grid-column: 2/3`，
+   纯自动放置会各占一行（第 1 列空两行、行高翻三倍）。这里把它们按行拆到
+   第 2 行的左右两列，才是真正的「两列 × 两行」。 */
 @media (max-width: 360px) {
   .mo__row {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -167,17 +208,26 @@ function deltaTone(delta: string | null): 'pos' | 'neg' | 'none' {
   }
 
   .mo__month {
+    grid-row: 1;
     grid-column: 1 / 2;
     color: var(--fb-ink);
     font-weight: 600;
   }
 
   .mo__row .mo__amount {
+    grid-row: 1;
     grid-column: 2 / 3;
   }
 
-  .mo__row .mo__delta,
+  .mo__row .mo__delta {
+    grid-row: 2;
+    grid-column: 1 / 2;
+    font-size: 11px;
+    text-align: left;
+  }
+
   .mo__row .mo__ratio {
+    grid-row: 2;
     grid-column: 2 / 3;
     font-size: 11px;
   }

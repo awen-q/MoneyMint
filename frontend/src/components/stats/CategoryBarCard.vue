@@ -13,6 +13,7 @@ import { computed } from 'vue'
 
 import type { CategoryShare } from '@/core/reports'
 import type { DailyRow } from '@/core/stats'
+import { getChartPalette, readThemeTokens, themeEpoch } from '@/styles/themeTokens'
 import BarChart from '@/components/charts/BarChart.vue'
 
 const props = withDefaults(
@@ -39,6 +40,23 @@ const emit = defineEmits<{
 }>()
 
 const drilled = computed(() => props.drilledId !== null)
+
+/**
+ * 图表配色跟随主题（X-05）。
+ *
+ * 与 `DonutRankCard` / 两个折线页同一条取色路径；**禁止**给 ECharts 传
+ * `'var(--fb-green)'` 这类字符串 —— SVG renderer 把它们写进 `stroke` / `fill`
+ * 表现属性，`var()` 在其上的解析在 Safari 14 / iOS 14 基线不可靠。
+ */
+const palette = computed(() => {
+  void themeEpoch.value
+  return getChartPalette(readThemeTokens())
+})
+
+/** 柱色：收入方向用成功绿，支出方向用危险红（与全站「收支」语义一致）。 */
+const barColor = computed(() =>
+  props.direction === 'income' ? palette.value.income : palette.value.danger,
+)
 
 /** 全部分类时：柱 = 各分类金额；下钻时：柱 = 该分类逐日金额。 */
 const chartData = computed(() => {
@@ -110,7 +128,7 @@ function onPick(index: number): void {
       :title="title"
       :chart-label="`${title}，${commodity} 口径`"
       :data="chartData"
-      :color="direction === 'income' ? 'var(--fb-green)' : 'var(--fb-danger)'"
+      :color="barColor"
       :masked="masked"
       :dense="drilled"
       :empty-text="emptyText"
@@ -121,51 +139,73 @@ function onPick(index: number): void {
 </template>
 
 <style scoped>
+/* 卡头（设计 `.bar-head` gap 8 / margin-bottom 10） */
 .cat-bar__head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 
+/* 方向 seg（S-08）：容器描边 + 选中「实心墨绿 + 米白字」（原实现反色） */
 .cat-bar__seg {
   display: inline-flex;
-  padding: 2px;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--fb-line);
   border-radius: var(--fb-radius-pill);
   background: var(--fb-soft);
 }
 
 .cat-bar__seg-btn {
-  padding: 4px 12px;
+  min-height: 30px;
+  padding: 6px 14px;
   border: none;
   border-radius: var(--fb-radius-pill);
   background: transparent;
   color: var(--fb-sub);
   font-family: inherit;
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
 }
 
 .cat-bar__seg-btn--on {
-  background: var(--fb-card);
-  color: var(--fb-ink);
+  background: var(--fb-blue);
+  color: var(--fb-white);
   font-weight: 600;
 }
 
+.cat-bar__seg-btn:focus-visible {
+  outline: 2px solid var(--fb-blue);
+  outline-offset: 2px;
+}
+
+/* 标题 13.5/700（设计 `.bar-title`） */
 .cat-bar__title {
   color: var(--fb-ink);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 13.5px;
+  font-weight: 700;
 }
 
+/* 「返回全部分类」（S-08）：设计 `.back-chip` —— brand-soft 底 + brand-line 描边胶囊，
+   原来是纯文字蓝字，看不出是个按钮 */
 .cat-bar__back {
   margin-left: auto;
-  border: none;
-  background: transparent;
+  padding: 5px 12px;
+  border: 1px solid var(--fb-brand-line);
+  border-radius: var(--fb-radius-pill);
+  background: var(--fb-brand-soft);
   color: var(--fb-blue);
   font-family: inherit;
   font-size: 12px;
+  font-weight: 600;
   cursor: pointer;
+}
+
+.cat-bar__back:focus-visible {
+  outline: 2px solid var(--fb-blue);
+  outline-offset: 2px;
 }
 </style>

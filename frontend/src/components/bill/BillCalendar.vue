@@ -126,17 +126,23 @@ function isSelected(cell: CalendarDay): boolean {
 
 <template>
   <div class="bill-cal">
+    <!-- 卡头（B-06）：左 = 卡标题，右 = 本月合计（tabular 右对齐）+ 口径说明。
+         标题文案受 `BillCalendar.test.ts` 精确断言锁定（「2026 年 11 月」），
+         故只对齐字号/字重与双列结构，不改字。 -->
     <header class="bill-cal__head">
       <h2 class="bill-cal__title">{{ year }} 年 {{ month }} 月</h2>
-      <p class="bill-cal__sub">
-        支出
-        <MoneyText :amount="totals.expense" :commodity="commodity" size="sm" />
-        <span aria-hidden="true">·</span>
-        收入
-        <MoneyText :amount="totals.income" :commodity="commodity" size="sm" />
-        <span aria-hidden="true">·</span>
-        记账 {{ activeDays }} 天
-      </p>
+      <span class="bill-cal__head-right">
+        <span class="bill-cal__sum">
+          支出
+          <MoneyText :amount="totals.expense" :commodity="commodity" size="sm" />
+          <span aria-hidden="true">·</span>
+          收入
+          <MoneyText :amount="totals.income" :commodity="commodity" size="sm" />
+          <span aria-hidden="true">·</span>
+          记账 {{ activeDays }} 天
+        </span>
+        <span class="bill-cal__note">点击日期查看当日流水</span>
+      </span>
     </header>
 
     <div class="bill-cal__week" aria-hidden="true">
@@ -164,37 +170,76 @@ function isSelected(cell: CalendarDay): boolean {
         <span v-if="cellText(cell) !== ''" class="cal__amount">{{ cellText(cell) }}</span>
       </component>
     </div>
+
+    <!-- 操作说明（B-06 ④ / 设计 `.tap-hint`）：移动端第一次用不知道格子可点 -->
+    <p class="bill-cal__hint">
+      点击日期：选中该日并弹出当日交易流水（再点同日取消选中）；格内金额为简写：支出（红）/
+      纯收入日（绿），同日有收入时右上角加点
+    </p>
   </div>
 </template>
 
 <style scoped>
+/* 卡头（B-06）：设计 `.card-head` 双列 —— 基线对齐、两端拉开、下方 12px */
 .bill-cal__head {
-  margin-bottom: 8px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
 }
 
 .bill-cal__title {
   margin: 0;
-  color: var(--fb-ink-deep);
-  font-size: 14px;
+  color: var(--fb-ink);
+  font-size: 15px;
   font-weight: 700;
 }
 
-.bill-cal__sub {
+/* 卡头右端多件（设计 `.card-head-right`）：上=合计，下=口径说明 */
+.bill-cal__head-right {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px;
-  margin: 3px 0 0;
-  color: var(--fb-sub);
-  font-size: 12px;
-  line-height: 1.5;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
 }
 
+.bill-cal__sum {
+  color: var(--fb-sub);
+  font-size: 12px;
+  font-variant-numeric: var(--fb-font-numeric);
+  text-align: right;
+}
+
+.bill-cal__note {
+  color: var(--fb-sub);
+  font-size: 11px;
+}
+
+/* 设计 `.card-head--stack`（≤768）：竖排、左对齐，避免标题被挤成两行 */
+@media (max-width: 768px) {
+  .bill-cal__head {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+  }
+
+  .bill-cal__head-right {
+    align-items: flex-start;
+    gap: 1px;
+  }
+
+  .bill-cal__sum {
+    text-align: left;
+  }
+}
+
+/* 格间隙 3px（B-11，设计 `.cal-grid`），周表头 11px（设计 `.cal-week`） */
 .bill-cal__week,
 .bill-cal__grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  gap: 4px;
+  gap: 3px;
 }
 
 .bill-cal__week {
@@ -203,46 +248,68 @@ function isSelected(cell: CalendarDay): boolean {
 
 .bill-cal__week-cell {
   color: var(--fb-sub);
-  font-size: 10px;
+  font-size: 11px;
   text-align: center;
 }
 
-/* 46px 格高：LO-01 的实测结论（低于此值简写金额放不下） */
+/* 42 格日历格（B-02，设计 `.cal-cell`）：
+   **无框 + 透明底 + 日号左对齐** —— 原来每格 1px 实线 + 卡底 + 居中，42 格变成 Excel 表格。
+   46px 格高是 LO-01 实测结论（低于此值简写金额放不下），勿降。 */
 .cal__cell {
   position: relative;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   justify-content: flex-start;
   min-height: 46px;
-  padding: 3px 2px 4px;
-  border: 1px solid var(--fb-line);
-  border-radius: var(--fb-radius-input);
-  background: var(--fb-card);
+  padding: 3px 4px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
   color: var(--fb-ink);
   font-family: inherit;
-  font-size: 10px;
-  line-height: 1.2;
+  font-size: 11.5px;
+  line-height: 1.35;
+  text-align: left;
   overflow: hidden;
   cursor: pointer;
 }
 
+/* 补位格：不可见但仍占格（不能「不渲染」——42 格恒 6 行是版式不变量） */
 .cal__cell--padding {
-  border-color: transparent;
-  color: var(--fb-sub);
-  cursor: default;
+  visibility: hidden;
 }
 
-/* 今天：稿 370 `.cal-cell.today`（brand-line 边 + green-soft 底）。
+.cal__day {
+  color: var(--fb-ink);
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: var(--fb-font-numeric);
+}
+
+.cal__amount {
+  margin-top: 0;
+  font-size: 8.5px;
+  font-weight: 400;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: var(--fb-font-numeric);
+}
+
+/* 今天：设计 `.cal-cell.today`（淡绿描边 + green-soft 底）。
    放在 `--on` 之前 —— 选中态必须盖过今天，否则「我点了哪一天」看不出来。 */
 .cal__cell--today {
-  border-color: var(--fb-green);
+  border-color: var(--fb-brand-line);
   background: var(--fb-green-soft);
 }
 
+/* 选中：设计 `.cal-cell.sel`（墨绿描边 + brand-soft 底 + 1px 内阴影） */
 .cal__cell--on {
   border-color: var(--fb-blue);
-  background: var(--fb-blue-soft);
+  background: var(--fb-brand-soft);
+  box-shadow: 0 0 0 1px var(--fb-blue) inset;
 }
 
 .cal__cell:focus-visible {
@@ -250,36 +317,48 @@ function isSelected(cell: CalendarDay): boolean {
   outline-offset: 1px;
 }
 
-.cal__day {
-  font-variant-numeric: var(--fb-font-numeric);
-  font-size: 10px;
-}
-
-.cal__amount {
-  margin-top: 2px;
-  font-size: 9px;
-  font-weight: 600;
-  white-space: nowrap;
-  font-variant-numeric: var(--fb-font-numeric);
-}
-
-/* 四态配色：支出红、收入绿；soft 底上的正文用 ink 版才达 AA */
+/* 四态配色（B-10）：无填充格直接用设计值 `--expense` / `--income`
+   （在 `--fb-card` 上实测 5.22 / 4.72，均过 AA 正文门禁）。 */
 .cal__cell--expense-only .cal__amount,
 .cal__cell--both .cal__amount {
-  color: var(--fb-danger-ink);
+  color: var(--fb-danger);
 }
 
 .cal__cell--income-only .cal__amount {
+  color: var(--fb-green);
+}
+
+/* 唯一例外：今天 / 选中格有 soft 填充，`--fb-green` on `--fb-green-soft` 只有
+   4.14:1 不过 AA，故在这两态里覆盖回 ink 变体（这是 ink 色存在的理由，
+   不是可随手替换的等价色）。 */
+.cal__cell--today.cal__cell--income-only .cal__amount,
+.cal__cell--on.cal__cell--income-only .cal__amount {
   color: var(--fb-green-ink);
 }
 
+.cal__cell--today.cal__cell--expense-only .cal__amount,
+.cal__cell--today.cal__cell--both .cal__amount,
+.cal__cell--on.cal__cell--expense-only .cal__amount,
+.cal__cell--on.cal__cell--both .cal__amount {
+  color: var(--fb-danger-ink);
+}
+
+/* 收入圆点：设计 `.i-dot`（top/right 4px） */
 .cal__dot {
   position: absolute;
-  top: 3px;
-  right: 3px;
+  top: 4px;
+  right: 4px;
   width: 4px;
   height: 4px;
   border-radius: 50%;
   background: var(--fb-green);
+}
+
+/* 底部操作说明（设计 `.tap-hint`） */
+.bill-cal__hint {
+  margin: 8px 0 0;
+  color: var(--fb-sub);
+  font-size: 11px;
+  line-height: 1.7;
 }
 </style>

@@ -34,6 +34,18 @@ export interface ChartPalette {
   inkDeep: string
   expense: string
   income: string
+  /**
+   * 品牌墨绿（`--fb-blue`，历史变量名，纸感主题下语义=墨绿）。
+   *
+   * 资产趋势「总资产」线专用：设计稿 `assets/app.js:1212` 用 `--accent`。
+   * 与 `expense` 区分开 —— `expense` 是旧报表口径（= blue），账单页的「支出」线
+   * 必须用 `danger`，两者不可互相顶替。
+   */
+  brand: string
+  /** 警示暖金（`--fb-warn`，= 设计稿 `--accent2`）：资产趋势「净资产」线。 */
+  warn: string
+  /** 危险红（`--fb-danger`）：支出折线 / 分类柱支出方向 / 「总负债」线。 */
+  danger: string
   /** 分类色，固定 10 档顺序；由 `pickColor` 取用，禁止调用方自行取模。 */
   pie: [
     string,
@@ -68,10 +80,10 @@ export const DEFAULT_TOKENS: Readonly<ThemeTokens> = Object.freeze({
   danger: '#b4463c',
   chart4: '#8a6d4f',
   chart6: '#5c8a86',
-  chart7: '#6f5a7d',
-  chart8: '#6f7038',
-  chart9: '#a5567a',
-  chart10: '#4a6790',
+  chart7: '#6e7f5a',
+  chart8: '#7b5a86',
+  chart9: '#4a7b95',
+  chart10: '#a05d4a',
 })
 
 /**
@@ -128,6 +140,15 @@ export function readThemeTokens(): ThemeTokens {
  * inkDeep 为饼图中心主标题色（--fb-ink），ink 为坐标轴/副标题色（--fb-sub）；
  * 两者均从 CSS token 读取，阶段 1 起随暖纸主题自动变化。
  *
+ * 语义色三兄弟（**不要在组件里直接给 ECharts 传 `'var(--fb-*)'` 字符串**：
+ * ECharts 的 SVG renderer 会把颜色写进 `stroke` / `fill` **表现属性**，
+ * 而 `var()` 在 SVG 表现属性上的解析在 Safari 14 / iOS 14 基线不可靠，
+ * 可能退化为默认黑或透明。设计稿 `charts.js:18-33` 也是先 `cssVar()` 取实色再传）：
+ * - `expense`  = blue（旧报表口径，勿动：`themeTokens.test.ts` 锚定）
+ * - `brand`    = blue（资产趋势「总资产」）
+ * - `warn`     = warn（资产趋势「净资产」，设计刻意用暖金标「答案线」）
+ * - `danger`   = danger（账单「支出」折线 / 分类柱支出 / 「总负债」）
+ *
  * @param tokens readThemeTokens() 的结果
  * @returns Canvas 调色板
  */
@@ -138,6 +159,9 @@ export function getChartPalette(tokens: ThemeTokens): ChartPalette {
     inkDeep: tokens.ink,
     expense: tokens.blue,
     income: tokens.green,
+    brand: tokens.blue,
+    warn: tokens.warn,
+    danger: tokens.danger,
     pie: [
       tokens.blue,
       tokens.green,

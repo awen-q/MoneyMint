@@ -185,6 +185,10 @@ const dayLabels = computed(() => series.value.map((point) => String(point.day)))
  *
  * 两条线都取正值：与现网报表页的双正线口径一致，避免同一笔数据在两页
  * 一正一负、用户以为方向标错了。
+ *
+ * 取色（B-08 ③）：收入 = `income`（成功绿）、支出 = `danger`（危险红）。
+ * **不能**用 `palette.expense` —— 那是旧报表口径，映射到 `--fb-blue`（墨绿），
+ * 会让「支出」画成绿色，与全站「支出=红」的语义冲突（设计图例：收入绿 / 支出红）。
  */
 const trendSeries = computed<LineSeriesInput[]>(() => [
   {
@@ -194,7 +198,7 @@ const trendSeries = computed<LineSeriesInput[]>(() => [
   },
   {
     name: '支出',
-    color: palette.value.expense,
+    color: palette.value.danger,
     points: series.value.map((point) => ({ value: Number(point.expense), amount: point.expense })),
   },
 ])
@@ -302,62 +306,58 @@ function goStats(): void {
 
 <template>
   <section class="bills">
-    <!-- ① hero：页名 + 当期摘要（12px 单行）。答案放首屏，避免日历卡把指标挤到第二屏 -->
+    <!-- ① hero：页名 + 一句话说明（设计稿 `mockup:812-815` 原句）。
+         这里**不再**重复「支出 / 收入 / 结余」三个金额 —— 它们在下方的
+         `BillMetrics` 指标带里，同屏重复两遍会把首屏答案说两次（B-03）。 -->
     <header class="bills__hero">
       <h1 class="bills__title">账单</h1>
-      <p class="bills__summary">
-        <span class="bills__summary-item">
-          支出
-          <MoneyText :amount="totals.expense" :commodity="commodity" size="sm" />
-        </span>
-        <span class="bills__summary-sep" aria-hidden="true">·</span>
-        <span class="bills__summary-item">
-          收入
-          <MoneyText :amount="totals.income" :commodity="commodity" size="sm" />
-        </span>
-        <span class="bills__summary-sep" aria-hidden="true">·</span>
-        <span class="bills__summary-item">
-          结余
-          <MoneyText :amount="totals.balance" :commodity="commodity" size="sm" signed />
-        </span>
-      </p>
+      <p class="bills__summary">当月总览：日历 + 统计 + 收支折线 + 交易列表</p>
     </header>
 
-    <!-- ② 工具卡：账本 chip ｜ 月份 chip ｜ 币种 seg ｜ 搜索 / 统计 -->
+    <!-- ② 工具卡（B-01）：一张白卡承载两行工具，与下方日历卡同为「卡」，不再夹心。
+         行1 = 账本 chip + spacer + 月份组；行2 = 币种 seg + spacer + 搜索 / 统计图标。 -->
     <div class="bills__tools">
-      <button type="button" class="bills__chip" @click="ledgerOpen = true">
-        <span class="bills__chip-label">{{ session.ledgerName }}</span>
-        <span class="bills__chip-caret" aria-hidden="true">⌄</span>
-      </button>
-
-      <span class="bills__month">
-        <button type="button" class="bills__arrow" aria-label="上个月" @click="shiftMonth(-1)">‹</button>
-        <button type="button" class="bills__chip bills__chip--month" @click="monthOpen = true">
-          {{ year }} 年 {{ month }} 月
+      <div class="bills__tools-row">
+        <button type="button" class="bills__chip" @click="ledgerOpen = true">
+          <span class="bills__chip-label">{{ session.ledgerName }}</span>
+          <span class="bills__chip-caret" aria-hidden="true">⌄</span>
         </button>
-        <button type="button" class="bills__arrow" aria-label="下个月" @click="shiftMonth(1)">›</button>
-      </span>
 
-      <span v-if="commodities.length > 1" class="bills__seg" role="group" aria-label="币种">
-        <button
-          v-for="item in commodities"
-          :key="item"
-          type="button"
-          class="bills__seg-btn"
-          :class="{ 'bills__seg-btn--on': item === commodity }"
-          :aria-pressed="item === commodity"
-          @click="setCommodity(item)"
-        >{{ item }}</button>
-      </span>
+        <span class="bills__spacer"></span>
 
-      <span class="bills__tools-end">
-        <button type="button" class="bills__icon" aria-label="搜索账单" @click="goSearch">
-          <span aria-hidden="true">🔍</span>
-        </button>
-        <button type="button" class="bills__icon" aria-label="统计账单" @click="goStats">
-          <span aria-hidden="true">◔</span>
-        </button>
-      </span>
+        <span class="bills__month">
+          <button type="button" class="bills__arrow" aria-label="上个月" @click="shiftMonth(-1)">‹</button>
+          <button type="button" class="bills__chip bills__chip--month" @click="monthOpen = true">
+            {{ year }} 年 {{ month }} 月
+          </button>
+          <button type="button" class="bills__arrow" aria-label="下个月" @click="shiftMonth(1)">›</button>
+        </span>
+      </div>
+
+      <div class="bills__tools-row">
+        <span v-if="commodities.length > 1" class="bills__seg" role="group" aria-label="币种">
+          <button
+            v-for="item in commodities"
+            :key="item"
+            type="button"
+            class="bills__seg-btn"
+            :class="{ 'bills__seg-btn--on': item === commodity }"
+            :aria-pressed="item === commodity"
+            @click="setCommodity(item)"
+          >{{ item }}</button>
+        </span>
+
+        <span class="bills__spacer"></span>
+
+        <span class="bills__tools-end">
+          <button type="button" class="bills__icon" aria-label="搜索账单" @click="goSearch">
+            <span aria-hidden="true">🔍</span>
+          </button>
+          <button type="button" class="bills__icon" aria-label="统计账单" @click="goStats">
+            <span aria-hidden="true">◔</span>
+          </button>
+        </span>
+      </div>
     </div>
 
     <!-- 刷新失败但有旧快照：留在 ready，只出内联提示条（组件不改，页面自己画） -->
@@ -387,21 +387,28 @@ function goStats(): void {
       <!-- ④ 指标带 -->
       <BillMetrics :totals="totals" :commodity="commodity" />
 
-      <!-- ⑤ 折线卡 -->
+      <!-- ⑤ 折线卡（B-08）：标题与口径文案照设计稿 `.card-title` / `.card-note`；
+           PC 高度 240（设计 `.chart-h`，移动 220） -->
       <section class="bills__card bills__card--chart">
         <TrendChart
-          title="每日收支"
+          title="当月收支趋势"
+          note="每日收入 / 支出折线"
           :chart-label="`${month} 月每日收入与支出，按自然日`"
           :labels="dayLabels"
           :series="trendSeries"
           :commodity="commodity"
           :masked="privacy.enabled"
+          :height="220"
+          :wide-height="240"
         />
       </section>
 
       <!-- ⑥ 月列表卡：按日分组，行用 TxnRow bill 档 -->
       <section class="bills__card">
-        <h2 class="bills__card-title">当月明细</h2>
+        <div class="bills__card-head">
+          <h2 class="bills__card-title">当月明细</h2>
+          <span class="bills__card-note">日期 · 类型 · 金额 · 备注</span>
+        </div>
         <!-- 日筛选行（稿 889-892）：搬到这里而不是留在日历卡里 ——
              「查看整月 ✕」清的是**这个列表**的日筛选，放在要清的东西旁边才不会让人找。 -->
         <div v-if="selectedDay !== null" class="bills__dayfilter">
@@ -450,11 +457,11 @@ function goStats(): void {
 .bills {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
   padding-bottom: 8px;
 }
 
-/* ① hero */
+/* ① hero（B-03）：标题 21/700 `--fb-ink-deep`，说明 13px，间距 4px */
 .bills__hero {
   padding: 4px 0 2px;
 }
@@ -462,53 +469,70 @@ function goStats(): void {
 .bills__title {
   margin: 0;
   color: var(--fb-ink-deep);
-  font-size: 20px;
-  font-weight: 800;
+  font-size: 21px;
+  font-weight: 700;
   letter-spacing: 0.01em;
 }
 
 .bills__summary {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px;
   margin: 4px 0 0;
   color: var(--fb-sub);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.5;
 }
 
-.bills__summary-item {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 4px;
-}
-
-.bills__summary-sep {
-  color: var(--fb-line-strong);
-}
-
-/* ② 工具卡 */
+/* ② 工具卡（B-01）：设计与下方日历卡同为 `.card`，缺了容器这四件控件会直接浮在
+   纸底，形成「有卡 / 无卡」夹心。行内两段用 `.bills__spacer` 撑开左右。 */
 .bills__tools {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--fb-line);
+  border-radius: var(--fb-radius-card);
+  background: var(--fb-card);
+  box-shadow: var(--fb-shadow-card);
 }
 
+.bills__tools-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 100%;
+}
+
+.bills__spacer {
+  flex: 1;
+}
+
+/* chip（B-05）：设计 13px/600、min-height 36、padding 7px 12px。
+   视觉收小但命中区不缩 —— `::after` 四向外扩 4px 补回 44px 触控目标。 */
 .bills__chip {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-height: 44px;
-  padding: 8px 12px;
+  min-height: 36px;
+  padding: 7px 12px;
   border: 1px solid var(--fb-line);
   border-radius: var(--fb-radius-pill);
   background: var(--fb-card);
   color: var(--fb-ink);
   font-family: inherit;
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
+}
+
+.bills__chip::after {
+  content: '';
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  bottom: -4px;
+  left: -4px;
 }
 
 .bills__chip-label {
@@ -520,6 +544,7 @@ function goStats(): void {
 
 .bills__chip-caret {
   color: var(--fb-sub);
+  font-size: 10px;
 }
 
 .bills__chip--month {
@@ -533,68 +558,79 @@ function goStats(): void {
   gap: 4px;
 }
 
+/* 方向按钮（B-05）：收成设计 `.icon-btn` 规格 36×36 / 描边 / 品牌绿 */
 .bills__arrow {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
+  width: 36px;
+  height: 36px;
+  padding: 0;
   border: 1px solid var(--fb-line);
   border-radius: var(--fb-radius-input);
   background: var(--fb-card);
-  color: var(--fb-ink);
+  color: var(--fb-blue);
   font-family: inherit;
   font-size: 16px;
+  font-weight: 700;
   line-height: 1;
   cursor: pointer;
 }
 
+/* 币种 seg（B-05）：选中态是「实心墨绿 + 米白字」，不是「白底 + 绿字」（原实现反色） */
 .bills__seg {
   display: inline-flex;
-  padding: 2px;
+  gap: 2px;
+  padding: 3px;
   border: 1px solid var(--fb-line);
   border-radius: var(--fb-radius-pill);
   background: var(--fb-soft);
 }
 
 .bills__seg-btn {
-  min-width: 44px;
-  min-height: 40px;
-  padding: 6px 10px;
+  min-height: 30px;
+  padding: 6px 14px;
   border: none;
   border-radius: var(--fb-radius-pill);
   background: transparent;
   color: var(--fb-sub);
   font-family: inherit;
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
 }
 
 .bills__seg-btn--on {
-  background: var(--fb-card);
-  color: var(--fb-blue);
-  font-weight: 700;
+  background: var(--fb-blue);
+  color: var(--fb-white);
+  font-weight: 600;
 }
 
 .bills__tools-end {
   display: inline-flex;
-  margin-left: auto;
   gap: 6px;
 }
 
+/* 图标按钮（B-05）：36×36 / 品牌绿（原 44×44 次要色） */
 .bills__icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
+  width: 36px;
+  height: 36px;
   padding: 0;
   border: 1px solid var(--fb-line);
   border-radius: var(--fb-radius-input);
   background: var(--fb-card);
-  color: var(--fb-sub);
+  color: var(--fb-blue);
   font-size: 16px;
   cursor: pointer;
+}
+
+@media (max-width: 768px) {
+  .bills__tools {
+    padding: 14px;
+  }
 }
 
 .bills__chip:focus-visible,
@@ -632,19 +668,37 @@ function goStats(): void {
   cursor: pointer;
 }
 
-/* 卡片通用 */
+/* 卡片通用。内衬 14px 与统计页 `.stats__card`、资产页 `.assets__card`、
+   资产统计 `.astats__card` 一致 —— 横向左边界已统一，内衬再差 2px，
+   切页时会看出卡片「胖瘦」不同。 */
 .bills__card {
-  padding: 12px;
+  padding: 14px;
+  border: 1px solid var(--fb-line);
   border-radius: var(--fb-radius-card);
   background: var(--fb-card);
   box-shadow: var(--fb-shadow-card);
 }
 
+/* 卡头（B-09）：设计 `.card-head` —— 标题 15/700 在左，字段说明 11px 在右 */
+.bills__card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
 .bills__card-title {
   margin: 0;
-  color: var(--fb-ink-deep);
-  font-size: 14px;
+  color: var(--fb-ink);
+  font-size: 15px;
   font-weight: 700;
+}
+
+.bills__card-note {
+  flex: none;
+  color: var(--fb-sub);
+  font-size: 11px;
 }
 
 /* ⑥ 列表：日筛选行（稿 889-892 的 .day-filter-row / .ts-chip / .ts-clear） */

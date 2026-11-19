@@ -37,6 +37,7 @@ import { elapsedDays } from '@/core/calendar'
 import { emptyFilters, filtersToQuery } from '@/core/filters'
 import { categoryShares, inBuckets, memberContributions, periodBuckets, trendSeries, trialBalanceRows, type ReportPeriod, type ReportTxn } from '@/core/reports'
 import { averagePerDay, dailyRows, statsTotals, tagShares, type StatsTotals } from '@/core/stats'
+import { getChartPalette, readThemeTokens, themeEpoch } from '@/styles/themeTokens'
 import { useLedgerDataStore } from '@/stores/ledgerData'
 import { usePeriodStore } from '@/stores/period'
 import { usePrivacyStore } from '@/stores/privacy'
@@ -283,10 +284,31 @@ function onTagDrill(tag: string): void {
   })
 }
 
+/**
+ * 图表配色跟随主题（X-05）。
+ *
+ * **禁止**把 `'var(--fb-green)'` 这类字符串直接交给 ECharts：SVG renderer 会把颜色
+ * 写进 `stroke` / `fill` **表现属性**，`var()` 在其上的解析在 Safari 14 / iOS 14
+ * 基线不可靠（可能退化成默认黑或透明）。设计稿 `charts.js:18-33` 也是先取实色再传。
+ * 这里与 `BillsView` / `DonutRankCard` 走同一条路径：`getChartPalette(readThemeTokens())`。
+ */
+const palette = computed(() => {
+  void themeEpoch.value
+  return getChartPalette(readThemeTokens())
+})
+
 /** 折线序列：金额与几何量同源（value 由定点串派生，禁止另算一遍）。 */
 const trendSeriesInput = computed(() => [
-  { name: '收入', color: 'var(--fb-green)', points: trend.value.income.map((amount) => ({ value: Number(amount), amount })) },
-  { name: '支出', color: 'var(--fb-danger)', points: trend.value.expense.map((amount) => ({ value: Number(amount), amount })) },
+  {
+    name: '收入',
+    color: palette.value.income,
+    points: trend.value.income.map((amount) => ({ value: Number(amount), amount })),
+  },
+  {
+    name: '支出',
+    color: palette.value.danger,
+    points: trend.value.expense.map((amount) => ({ value: Number(amount), amount })),
+  },
 ])
 
 /** 月份组标签（周周期时显示周区间，避免「点着上/下月却在看周」的错位）。 */
@@ -302,8 +324,11 @@ const rangeLabel = computed(() => {
   return `${year.value} 年 ${month.value} 月`
 })
 
-/** 当月天数（Date 溢出法：下个月第 0 天 = 本月最后一天），避免模板里写算术。 */
-const days = computed(() => new Date(year.value, month.value, 0).getDate())
+/**
+ * 工具卡说明行按设计稿改为**操作提示**（S-12），不再展示「当前 CNY · N 天/月」——
+ * 因此原先派生天数的 computed 一并移除：留一个无人使用的计算只会让读者
+ * 以为还有第二处「天数口径」。
+ */
 
 const currencyOptions = computed(() => {
   const out: string[] = []
@@ -329,18 +354,26 @@ const currencyOptions = computed(() => {
       <p class="stats__desc">月度聚合分析：统计信息 / 趋势 / 分类圆环 / 分类柱状 / 每日明细 + 标签维度</p>
     </header>
 
-    <!-- 工具卡：子页 chips ｜ 周期 seg ｜ 月份组 ｜ 币种 seg（都在 StateCard 之外） -->
+    <!-- 工具卡（S-01 / S-05）：第一行 = 子页 chips + spacer + 月份组；
+         第二行 = 周期 seg + spacer + 币种 seg。
+         设计稿第一行只有 chips + 月份组（`mockup:963-975`）。周/月/年 seg 是
+         `layout-scope D-3` 的拍板产物**不能删**，但从第一行挪到第二行左端 ——
+         否则窄屏必然换行，把「不可拆」的月份组挤下去。 -->
     <section class="stats__card stats__card--tool">
       <div class="stats__tool-row">
         <StatsTabs :tab="tab" @select="setTab" />
-        <PeriodSeg :period="granularity" @select="setPeriod" />
+        <span class="stats__spacer"></span>
         <span class="stats__month">
           <button type="button" class="stats__arrow" aria-label="上一期" @click="shiftMonth(-1)">‹</button>
-          <button type="button" class="stats__chip" @click="monthOpen = true">{{ rangeLabel }}</button>
+          <button type="button" class="stats__chip" @click="monthOpen = true">
+            <span class="stats__chip-text">{{ rangeLabel }}</span>
+            <span class="stats__caret" aria-hidden="true">▾</span>
+          </button>
           <button type="button" class="stats__arrow" aria-label="下一期" @click="shiftMonth(1)">›</button>
         </span>
       </div>
       <div class="stats__tool-row">
+        <PeriodSeg :period="granularity" @select="setPeriod" />
         <span class="stats__spacer"></span>
         <span v-if="currencyOptions.length > 1" class="stats__seg" role="group" aria-label="统计币种">
           <button
@@ -355,7 +388,7 @@ const currencyOptions = computed(() => {
         </span>
       </div>
       <p class="stats__note">
-        币种口径见下方各项（禁跨币种求和）· 当前 {{ commodity }} · {{ days }} 天/月
+        左箭头上月 / 右箭头下月 / 点击当前月弹月份选择 · 币种口径见页脚（禁跨币种求和）
       </p>
     </section>
 
@@ -456,33 +489,37 @@ const currencyOptions = computed(() => {
   padding-bottom: 20px;
 }
 
+/* X-02：横向内边距归零 —— 水平留白只由 `.layout__content` 一处给，
+   否则「layout 16 + 视图 16」= 32px，与账单页的 16px 对不齐。 */
 .stats__hero {
-  padding: calc(16px + env(safe-area-inset-top, 0px)) 16px 10px;
+  padding: 0 0 10px;
 }
 
+/* S-11：设计 `.hero h1` 21/700 `--ink-deep`、`.hero p` 13px / margin-top 4px */
 .stats__title {
   margin: 0;
-  color: var(--fb-ink);
-  font-size: 20px;
+  color: var(--fb-ink-deep);
+  font-size: 21px;
   font-weight: 700;
 }
 
 .stats__desc {
-  margin: 6px 0 0;
+  margin: 4px 0 0;
   color: var(--fb-sub);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .stats__card {
-  margin: 10px 16px 0;
+  margin: 14px 0 0;
   padding: 14px;
+  border: 1px solid var(--fb-line);
   border-radius: var(--fb-radius-card);
   background: var(--fb-card);
   box-shadow: var(--fb-shadow-card);
 }
 
 .stats__card--tool {
-  padding: 10px 14px;
+  padding: 16px;
 }
 
 .stats__tool-row {
@@ -493,7 +530,7 @@ const currencyOptions = computed(() => {
 }
 
 .stats__tool-row + .stats__tool-row {
-  margin-top: 6px;
+  margin-top: 10px;
 }
 
 .stats__spacer {
@@ -503,49 +540,90 @@ const currencyOptions = computed(() => {
 .stats__month {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  margin-left: auto;
+  gap: 4px;
 }
 
-.stats__arrow,
-.stats__chip {
-  border: none;
-  background: transparent;
-  color: var(--fb-ink);
+/* S-01：方向按钮是设计 `.icon-btn` —— 36×36 描边方按钮 + 品牌绿
+   （原实现退化成两个无框纯文字箭头，看得见但看不出可点） */
+.stats__arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--fb-line);
+  border-radius: var(--fb-radius-input);
+  background: var(--fb-card);
+  color: var(--fb-blue);
   font-family: inherit;
-  font-size: 12px;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
   cursor: pointer;
 }
 
+/* S-01：年月 chip 是描边白底胶囊（带 ▾），不是 soft 底无框文字 */
 .stats__chip {
-  padding: 4px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid var(--fb-line);
   border-radius: var(--fb-radius-pill);
-  background: var(--fb-soft);
+  background: var(--fb-card);
+  color: var(--fb-ink);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
   font-variant-numeric: var(--fb-font-numeric);
+  cursor: pointer;
 }
 
+.stats__caret {
+  color: var(--fb-sub);
+  font-size: 10px;
+}
+
+.stats__arrow:focus-visible,
+.stats__chip:focus-visible {
+  outline: 2px solid var(--fb-blue);
+  outline-offset: 2px;
+}
+
+/* S-03：币种 seg —— 容器描边，选中态「实心墨绿 + 米白字」（原实现反色） */
 .stats__seg {
   display: inline-flex;
-  padding: 2px;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--fb-line);
   border-radius: var(--fb-radius-pill);
   background: var(--fb-soft);
 }
 
 .stats__seg-btn {
-  padding: 3px 10px;
+  min-height: 30px;
+  padding: 6px 14px;
   border: none;
   border-radius: var(--fb-radius-pill);
   background: transparent;
   color: var(--fb-sub);
   font-family: inherit;
-  font-size: 11px;
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
 }
 
 .stats__seg-btn--on {
-  background: var(--fb-card);
-  color: var(--fb-ink);
+  background: var(--fb-blue);
+  color: var(--fb-white);
   font-weight: 600;
+}
+
+.stats__seg-btn:focus-visible {
+  outline: 2px solid var(--fb-blue);
+  outline-offset: 2px;
 }
 
 .stats__note,
@@ -556,8 +634,16 @@ const currencyOptions = computed(() => {
   line-height: 1.5;
 }
 
+/* X-02：说明/提示条不再自带横向外边距 */
 .stats__hint {
-  margin: 10px 16px 0;
+  margin: 14px 0 0;
+}
+
+/* S-12：设计 `.tool-note` 在 ≤768 隐藏（省首屏高度） */
+@media (max-width: 768px) {
+  .stats__note {
+    display: none;
+  }
 }
 
 .stats__stale {
@@ -565,7 +651,7 @@ const currencyOptions = computed(() => {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin: 10px 16px 0;
+  margin: 14px 0 0;
   padding: 8px 12px;
   border-radius: var(--fb-radius-card);
   background: var(--fb-danger-soft);
@@ -586,13 +672,26 @@ const currencyOptions = computed(() => {
 }
 
 .stats__footer {
-  margin: 12px 16px 0;
+  margin: 14px 0 0;
   color: var(--fb-sub);
   font-size: 11px;
 }
 
-/* 指标带与其它卡之间的间距（StatsMetrics 自带卡片外观） */
+/* 指标带与其它卡之间的间距（StatsMetrics 自带卡片外观；X-02 归零横向边距） */
 .stats__panel > .stats-metrics {
-  margin: 10px 16px 0;
+  margin: 14px 0 0;
+}
+
+/*
+ * 成员贡献 / 试算平衡两卡（S-09）：补齐纵向节奏。
+ *
+ * 这两个组件的根节点**本身没有 margin**（它们是可复用卡片，不该带外部间距），
+ * 而 `.stats__panel` 只是普通 block、没有 gap —— 于是两卡与上方明细卡严丝合缝贴住。
+ * 加了描边后这个 0 间距会读成「一张卡里的两块」，所以在这里补 14px，
+ * 与其余卡片保持同一节奏。不改组件内部、也不改它们的折叠/无障碍行为。
+ */
+.stats__panel > .member-card,
+.stats__panel > .trial-card {
+  margin: 14px 0 0;
 }
 </style>

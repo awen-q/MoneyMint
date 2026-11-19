@@ -28,6 +28,7 @@ import { ApiError } from '@/api/errors'
 import type { AssetSeriesResponse } from '@/api/types'
 import { buildAssetSeries, emptyAssetSeries, type AssetSeries } from '@/core/assetSeries'
 import type { LineSeriesInput } from '@/core/charts/option'
+import { getChartPalette, readThemeTokens, themeEpoch } from '@/styles/themeTokens'
 import { usePeriodStore } from '@/stores/period'
 import { usePrivacyStore } from '@/stores/privacy'
 import MoneyText from '@/components/MoneyText.vue'
@@ -140,22 +141,41 @@ function goAssets(): void {
   void router.push({ name: 'assets' })
 }
 
-/** 三条线：净资产 / 总资产 / 总负债（金额与几何量同源，禁止反算）。 */
+/**
+ * 图表配色跟随主题（X-05）：色值一律经 `getChartPalette(readThemeTokens())` 取实色。
+ *
+ * **禁止**直接给 ECharts 传 `'var(--fb-*)'` 字符串 —— SVG renderer 会把颜色写进
+ * `stroke` / `fill` 表现属性，`var()` 在其上的解析在 Safari 14 / iOS 14 不可靠。
+ */
+const palette = computed(() => {
+  void themeEpoch.value
+  return getChartPalette(readThemeTokens())
+})
+
+/**
+ * 三条线：总资产 / 总负债 / 净资产（X-04）。
+ *
+ * 取色按设计稿 `assets/app.js:1212-1214`：总资产 = `--accent`（品牌墨绿）、
+ * 总负债 = `--expense`（危险红）、净资产 = `--accent2`（暖金 —— 设计刻意用金色
+ * 标注「答案线」）。原实现把净资产与总资产的色对调了。
+ *
+ * 顺序同时按设计稿图例：总资产 → 负债 → 净资产。金额与几何量同源，禁止反算。
+ */
 const chartSeries = computed<LineSeriesInput[]>(() => [
   {
-    name: '净资产',
-    color: 'var(--fb-blue)',
-    points: series.value.net.map((amount) => ({ value: Number(amount), amount })),
-  },
-  {
     name: '总资产',
-    color: 'var(--fb-green)',
+    color: palette.value.brand,
     points: series.value.assets.map((amount) => ({ value: Number(amount), amount })),
   },
   {
     name: '总负债',
-    color: 'var(--fb-danger)',
+    color: palette.value.danger,
     points: series.value.liabilities.map((amount) => ({ value: Number(amount), amount })),
+  },
+  {
+    name: '净资产',
+    color: palette.value.warn,
+    points: series.value.net.map((amount) => ({ value: Number(amount), amount })),
   },
 ])
 
@@ -179,7 +199,10 @@ const currencyOptions = computed(() => {
         <button type="button" class="astats__back" @click="goAssets">‹ 返回资产</button>
         <span class="astats__year">
           <button type="button" class="astats__arrow" aria-label="上一年" @click="shiftYear(-1)">‹</button>
-          <button type="button" class="astats__chip" @click="yearOpen = true">{{ year }} 年</button>
+          <button type="button" class="astats__chip" @click="yearOpen = true">
+            <span class="astats__chip-text">{{ year }} 年</span>
+            <span class="astats__caret" aria-hidden="true">▾</span>
+          </button>
           <button type="button" class="astats__arrow" aria-label="下一年" @click="shiftYear(1)">›</button>
         </span>
         <span v-if="currencyOptions.length > 1" class="astats__seg" role="group" aria-label="统计币种">
@@ -250,33 +273,35 @@ const currencyOptions = computed(() => {
   padding-bottom: 20px;
 }
 
+/* X-02：横向内边距归零（水平留白统一由 `.layout__content` 给） */
 .astats__hero {
-  padding: calc(16px + env(safe-area-inset-top, 0px)) 16px 10px;
+  padding: 0 0 10px;
 }
 
 .astats__title {
   margin: 0;
-  color: var(--fb-ink);
-  font-size: 20px;
+  color: var(--fb-ink-deep);
+  font-size: 21px;
   font-weight: 700;
 }
 
 .astats__desc {
-  margin: 6px 0 0;
+  margin: 4px 0 0;
   color: var(--fb-sub);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .astats__card {
-  margin: 10px 16px 0;
+  margin: 14px 0 0;
   padding: 14px;
+  border: 1px solid var(--fb-line);
   border-radius: var(--fb-radius-card);
   background: var(--fb-card);
   box-shadow: var(--fb-shadow-card);
 }
 
 .astats__card--tool {
-  padding: 10px 14px;
+  padding: 16px;
 }
 
 .astats__tool-row {
@@ -286,56 +311,106 @@ const currencyOptions = computed(() => {
   gap: 8px;
 }
 
-.astats__back,
-.astats__arrow,
-.astats__chip {
-  border: none;
-  background: transparent;
-  color: var(--fb-ink);
+/* 返回资产（AS-01 ①）：设计 `.back-chip` —— brand-soft 底 + brand-line 描边胶囊。
+   原实现是无框蓝字，看不出可点。 */
+.astats__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px;
+  border: 1px solid var(--fb-brand-line);
+  border-radius: var(--fb-radius-pill);
+  background: var(--fb-brand-soft);
+  color: var(--fb-blue);
   font-family: inherit;
   font-size: 12px;
+  font-weight: 600;
   cursor: pointer;
 }
 
-.astats__back {
+/* 年份方向按钮（AS-01 ②）：设计 `.icon-btn` 36×36 描边方按钮 */
+.astats__arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--fb-line);
+  border-radius: var(--fb-radius-input);
+  background: var(--fb-card);
   color: var(--fb-blue);
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
 }
 
 .astats__year {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
   margin-left: auto;
 }
 
+/* 年份 chip（AS-01 ③）：描边白底胶囊 + ▾ */
 .astats__chip {
-  padding: 4px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid var(--fb-line);
   border-radius: var(--fb-radius-pill);
-  background: var(--fb-soft);
+  background: var(--fb-card);
+  color: var(--fb-ink);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
   font-variant-numeric: var(--fb-font-numeric);
+  cursor: pointer;
 }
 
+.astats__caret {
+  color: var(--fb-sub);
+  font-size: 10px;
+}
+
+.astats__back:focus-visible,
+.astats__arrow:focus-visible,
+.astats__chip:focus-visible,
+.astats__seg-btn:focus-visible {
+  outline: 2px solid var(--fb-blue);
+  outline-offset: 2px;
+}
+
+/* 币种 seg（AS-01 ④）：容器描边 + 选中「实心墨绿 + 米白字」 */
 .astats__seg {
   display: inline-flex;
-  padding: 2px;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--fb-line);
   border-radius: var(--fb-radius-pill);
   background: var(--fb-soft);
 }
 
 .astats__seg-btn {
-  padding: 3px 10px;
+  min-height: 30px;
+  padding: 6px 14px;
   border: none;
   border-radius: var(--fb-radius-pill);
   background: transparent;
   color: var(--fb-sub);
   font-family: inherit;
-  font-size: 11px;
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
 }
 
 .astats__seg-btn--on {
-  background: var(--fb-card);
-  color: var(--fb-ink);
+  background: var(--fb-blue);
+  color: var(--fb-white);
   font-weight: 600;
 }
 
@@ -347,12 +422,13 @@ const currencyOptions = computed(() => {
   line-height: 1.6;
 }
 
+/* X-02：刷新失败条不再自带横向外边距 */
 .astats__stale {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin: 10px 16px 0;
+  margin: 14px 0 0;
   padding: 8px 12px;
   border-radius: var(--fb-radius-card);
   background: var(--fb-danger-soft);
@@ -377,18 +453,25 @@ const currencyOptions = computed(() => {
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 8px;
+  margin-bottom: 12px;
 }
 
+/* 卡头标题（AS-03）：统一 15/700 `--fb-ink` */
 .astats__card-title {
   color: var(--fb-ink);
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 700;
 }
 
 .astats__card-note {
   color: var(--fb-sub);
   font-size: 11px;
+}
+
+@media (max-width: 768px) {
+  .astats__card--tool {
+    padding: 14px;
+  }
 }
 
 /**

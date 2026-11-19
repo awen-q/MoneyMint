@@ -104,15 +104,18 @@
   --fb-chart-4: #8a6d4f;
   --fb-chart-6: #5c8a86;
 
-  /* 报表重设计 B1：分类色由 6 档扩到 10 档。
-     原因：真账本支出分类常见 11 个，原 6 色按 `idx % 6` 循环会让第 1 与第 7 个
-     分类同色，环图大面积撞色、下钻时无法确认点的是哪一块。
-     共同约束：在纸底 --fb-card 上图形对比度 ≥ 3.0:1（实测 4.82~5.91），
-     且与既有 6 色色相不重叠。 */
-  --fb-chart-7: #6f5a7d;
-  --fb-chart-8: #6f7038;
-  --fb-chart-9: #a5567a;
-  --fb-chart-10: #4a6790;
+  /* 分类色十档（B1 由 6 档扩到 10 档：真账本支出分类常见 11 个，
+     原 6 色按 `idx % 6` 循环会让第 1 与第 7 个分类同色，环图大面积撞色）。
+
+     第 7~10 色**对齐设计稿 v4.1 的色序**（`mockup` 的 `--chart-7..10`）：
+     橄榄 / 雾紫 / 灰蓝 / 陶土。此前本仓按「色相不重叠」自行重选过一版
+     （紫 / 橄榄 / 粉 / 蓝），与设计稿整组色相不同、且第 7、8 色位置对调，
+     导致跨版本对不上「同一个分类同一个色」——那一版已作废。
+     四色 on `--fb-card` 实测对比度 4.18 / 5.56 / 4.45 / 4.88，全部 ≥ 3.0 图形门禁。 */
+  --fb-chart-7: #6e7f5a;
+  --fb-chart-8: #7b5a86;
+  --fb-chart-9: #4a7b95;
+  --fb-chart-10: #a05d4a;
 
   /* 阶段 0 护栏收编 token：阶段 1 改为暖纸 / 暖褐，消除蓝色孤岛。 */
   --fb-primary: #2f5d4e;
@@ -304,12 +307,13 @@ body {
   --fb-chart-4: #b89268;
   --fb-chart-6: #74a9a4;
 
-  /* 图表第 7~10 色（B1 扩色）：夜纸卡面 --fb-card 上实测对比度 6.26~7.44，
-     与浅纸版同色相、提亮，切换主题时仍能一眼对应同一分类 */
-  --fb-chart-7: #b39ac6;
-  --fb-chart-8: #b8b57a;
-  --fb-chart-9: #d69ab6;
-  --fb-chart-10: #8fa9cc;
+  /* 图表第 7~10 色（B1 扩色 · 对齐设计稿 v4.1 色序）：夜纸卡面 --fb-card 上实测
+     对比度 6.63 / 6.26 / 7.17 / 5.53（门槛 3.0），与浅纸版**同色相、提亮**，
+     切换主题时仍能一眼对应同一分类（橄榄 / 雾紫 / 灰蓝 / 陶土）。 */
+  --fb-chart-7: #9fae82;
+  --fb-chart-8: #b39ac6;
+  --fb-chart-9: #8fb4cc;
+  --fb-chart-10: #c98a76;
 
   /* 别名族：显式跟随夜纸主色，避免 var 链仍指向浅纸值 */
   --fb-brand: var(--fb-blue);
@@ -322,10 +326,19 @@ body {
  * 夜纸 --fb-white = 卡面深色，适合"亮色主色按钮上的字"；
  * 而"深底上的白字"场景把 --fb-white 继承为 --fb-ink（夜纸即米字）。
  * 两级都只用现成 token，组件代码不改一字。
+ *
+ * 移动端顶栏 `.hd`（`ShellHead.vue` 根元素）也是一块深底：背景取
+ * `--fb-hero-gradient`，夜纸下是 #121512 → #26382e → #3a5a48，而夜纸根的
+ * `--fb-white` 是卡面深色 —— 品牌字与图标字实算对比度仅 ≈1.27:1，几乎不可见。
+ * 故并入本列表（`--fb-white` → `--fb-ink`，夜纸即米字）。
+ * `.hd` 全仓只有 `ShellHead.vue` 的根元素在用，全局选择器不会误伤；
+ * PC（≥900）不受影响 —— 那段已把 `.hd` 改成 `--fb-card` 底 + `--fb-ink` 字。
  */
 [data-theme='night'] .fb-hero,
 [data-theme='night'] .layout__brand,
 [data-theme='night'] .layout__notice,
+[data-theme='night'] .asset-hero,
+[data-theme='night'] .hd,
 [data-theme='night'] .rs-rcpt-btn--text,
 [data-theme='night'] .rs-rcpt-btn--ghost {
   --fb-white: var(--fb-ink);

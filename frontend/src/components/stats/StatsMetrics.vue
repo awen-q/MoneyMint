@@ -35,11 +35,11 @@ const averageSub = computed(() => {
 
 <template>
   <section class="stats-metrics" aria-label="统计信息">
-    <div class="stats-metrics__card">
+    <div class="stats-metrics__card stats-metrics__card--income">
       <span class="stats-metrics__label">收入</span>
       <MoneyText :amount="totals.income" :commodity="commodity" :privacy="masked === true" size="md" />
     </div>
-    <div class="stats-metrics__card">
+    <div class="stats-metrics__card stats-metrics__card--expense">
       <span class="stats-metrics__label">支出</span>
       <MoneyText :amount="totals.expense" :commodity="commodity" :privacy="masked === true" size="md" />
     </div>
@@ -53,7 +53,7 @@ const averageSub = computed(() => {
         signed
       />
     </div>
-    <div class="stats-metrics__card">
+    <div class="stats-metrics__card stats-metrics__card--expense">
       <span class="stats-metrics__label">日均消费</span>
       <span v-if="average.applicable" class="stats-metrics__avg">
         <MoneyText
@@ -79,14 +79,15 @@ const averageSub = computed(() => {
   display: grid;
   /* auto-fit：320px 一列、宽屏自动铺满；不用断点硬编码列数 */
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 10px;
+  gap: 12px;
 }
 
 .stats-metrics__card {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--fb-line);
   border-radius: var(--fb-radius-card);
   background: var(--fb-card);
   box-shadow: var(--fb-shadow-card);
@@ -94,7 +95,14 @@ const averageSub = computed(() => {
 
 .stats-metrics__label {
   color: var(--fb-sub);
-  font-size: 11px;
+  font-size: 12px;
+}
+
+/* 数值 20px（移动 18px）。`MoneyText` 的 md 档是 16px，需在组件内覆盖；
+   日均卡的「—」与笔数走各自的类，保持同一字号。 */
+.stats-metrics__card :deep(.money-text) {
+  font-size: 20px;
+  font-weight: 700;
 }
 
 .stats-metrics__avg {
@@ -104,20 +112,47 @@ const averageSub = computed(() => {
 
 .stats-metrics__dash {
   color: var(--fb-sub);
-  font-size: 16px;
+  font-size: 20px;
   font-weight: 700;
 }
 
 .stats-metrics__count {
   color: var(--fb-ink);
-  font-size: 16px;
+  font-size: 20px;
   font-weight: 700;
   font-variant-numeric: var(--fb-font-numeric);
 }
 
 .stats-metrics__sub {
   color: var(--fb-sub);
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.4;
+}
+
+/* 收入绿 / 支出红（S-04）：设计 `.m-income .val` / `.m-expense .val`，
+   日均消费同样用红（`c-stats-top.png`）。两色在卡面上实测 4.72 / 5.22，过 AA。 */
+.stats-metrics__card--income :deep(.money-text) {
+  color: var(--fb-green);
+}
+
+.stats-metrics__card--expense :deep(.money-text) {
+  color: var(--fb-danger);
+}
+
+/* 例外：日均不可用时是「—」不是数字，保持次要色（红「—」会被读成负值告警） */
+.stats-metrics__card--expense .stats-metrics__dash {
+  color: var(--fb-sub);
+}
+
+@media (max-width: 768px) {
+  .stats-metrics__card {
+    padding: 12px 14px;
+  }
+
+  .stats-metrics__card :deep(.money-text),
+  .stats-metrics__dash,
+  .stats-metrics__count {
+    font-size: 18px;
+  }
 }
 </style>

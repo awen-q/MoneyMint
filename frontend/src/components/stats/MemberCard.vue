@@ -48,23 +48,32 @@ const open = ref(false)
           </span>
         </li>
       </ul>
+      <!-- EXT-01 ⑤：卡底口径说明（设计 `.tbl-note` 原语），说明「按记账人聚合」 -->
+      <p class="member-card__note">按记账人聚合 · {{ commodity }} 口径</p>
     </div>
   </section>
 </template>
 
 <style scoped>
 .member-card {
-  padding: 12px 14px;
+  padding: 16px;
+  border: 1px solid var(--fb-line);
   border-radius: var(--fb-radius-card);
   background: var(--fb-card);
   box-shadow: var(--fb-shadow-card);
 }
 
+/* 折叠条按设计 `.card-head` 语法（EXT-01 ②）：基线对齐、两端拉开、下方 12px。
+   **不加 position: sticky / fixed** —— `statsCards.test.ts` 有护栏，且它只是普通卡片。
+   `margin-left:auto` 只留在 caret 上：若给 `__count` 也加 auto，两个 auto 会平分
+   空隙，计数会被推到标题与折叠符之间。 */
 .member-card__toggle {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
   width: 100%;
+  margin-bottom: 12px;
   padding: 0;
   border: none;
   background: transparent;
@@ -75,8 +84,16 @@ const open = ref(false)
   cursor: pointer;
 }
 
+/* 键盘焦点环（EXT-01 ③ / 设计 `:693` 的既定交互语）：折叠触发器必读 */
+.member-card__toggle:focus-visible {
+  outline: 2px solid var(--fb-blue);
+  outline-offset: 2px;
+}
+
 .member-card__title {
-  font-weight: 600;
+  color: var(--fb-ink);
+  font-size: 15px;
+  font-weight: 700;
 }
 
 .member-card__count {
@@ -90,7 +107,7 @@ const open = ref(false)
 }
 
 .member-card__body {
-  margin-top: 8px;
+  margin-top: 0;
 }
 
 .member-card__empty {
@@ -105,13 +122,15 @@ const open = ref(false)
   padding: 0;
 }
 
+/* 行密度与资产页 `.asset-li` 对齐（EXT-01 ④）：9px 4px / 13px */
 .member-card__row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 0;
+  padding: 9px 4px;
   border-bottom: 1px solid var(--fb-line);
-  font-size: 12px;
+  color: var(--fb-ink);
+  font-size: 13px;
 }
 
 .member-card__row:last-child {
@@ -122,6 +141,7 @@ const open = ref(false)
   min-width: 0;
   overflow: hidden;
   color: var(--fb-ink);
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -134,6 +154,23 @@ const open = ref(false)
 .member-card__amount {
   margin-left: auto;
   flex: none;
+  font-size: 13px;
+  font-weight: 600;
   font-variant-numeric: var(--fb-font-numeric);
+  text-align: right;
+}
+
+/* 卡底口径说明（设计 `.tbl-note` 原语） */
+.member-card__note {
+  margin: 8px 0 0;
+  color: var(--fb-sub);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+@media (max-width: 768px) {
+  .member-card {
+    padding: 14px;
+  }
 }
 </style>

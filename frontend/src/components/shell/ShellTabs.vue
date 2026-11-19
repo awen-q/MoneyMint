@@ -86,7 +86,7 @@ function onTabClick(item: NavItem): void {
   /* 5 格：4 个 Tab + 中央 FAB（LO-14） */
   grid-template-columns: repeat(5, 1fr);
   align-items: center;
-  height: calc(68px + env(safe-area-inset-bottom, 0px));
+  height: calc(58px + env(safe-area-inset-bottom, 0px));
   padding-bottom: env(safe-area-inset-bottom, 0px);
   background: var(--fb-card);
   border-top: 1px solid var(--fb-line);

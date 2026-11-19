@@ -83,6 +83,26 @@ const sumText = computed(() => {
             </td>
           </tr>
         </tbody>
+        <!--
+          合计行（EXT-02 ④）：试算平衡的业务结论就是「全部账户合计应为 0.00」，
+          原来这个结论只写在折叠条上，展开后表内看不到「配平在哪里」。
+          设计 `.dt-table tfoot`（2px `--line-strong` / 700 / `--ink-deep`）正好提供了原语。
+
+          - 合计值是**现成的 `sumText`**（`sumCents` 逐分累加的结果），这里再算一遍
+            就等于造出第二个真相源；
+          - 金额走 `MoneyText` + `:privacy="masked"`：隐私模式下合计与明细一起被遮挡，
+            绝不自己拼字符串（那会绕过全局遮挡）；
+          - 列数与 thead 严格 3 列，「类型」列留空单元格并 `aria-hidden`。
+        -->
+        <tfoot>
+          <tr>
+            <td>合计</td>
+            <td aria-hidden="true"></td>
+            <td class="trial-card__r" :class="{ 'trial-card__sum--diff': !balanced }">
+              <MoneyText :amount="sumText" :commodity="commodity" :privacy="masked" size="sm" />
+            </td>
+          </tr>
+        </tfoot>
       </table>
       <p class="trial-card__hint">余额为 {{ commodity }} 口径原值（符号如实）；全部账户合计应为 0.00</p>
     </div>
@@ -91,17 +111,22 @@ const sumText = computed(() => {
 
 <style scoped>
 .trial-card {
-  padding: 12px 14px;
+  padding: 16px;
+  border: 1px solid var(--fb-line);
   border-radius: var(--fb-radius-card);
   background: var(--fb-card);
   box-shadow: var(--fb-shadow-card);
 }
 
+/* 折叠条按设计 `.card-head` 语法（EXT-02 ②）：基线对齐、两端拉开、下方 12px。
+   **不加 position: sticky / fixed** —— `statsCards.test.ts:52-53` 有护栏。 */
 .trial-card__toggle {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
   width: 100%;
+  margin-bottom: 12px;
   padding: 0;
   border: none;
   background: transparent;
@@ -112,11 +137,20 @@ const sumText = computed(() => {
   cursor: pointer;
 }
 
+/* 键盘焦点环（EXT-02 ⑤ / 设计 `:693`） */
+.trial-card__toggle:focus-visible {
+  outline: 2px solid var(--fb-blue);
+  outline-offset: 2px;
+}
+
 .trial-card__title {
-  font-weight: 600;
+  color: var(--fb-ink);
+  font-size: 15px;
+  font-weight: 700;
 }
 
 .trial-card__state {
+  color: var(--fb-sub);
   font-size: 11px;
 }
 
@@ -134,7 +168,7 @@ const sumText = computed(() => {
 }
 
 .trial-card__body {
-  margin-top: 8px;
+  margin-top: 0;
 }
 
 .trial-card__empty {
@@ -143,25 +177,42 @@ const sumText = computed(() => {
   font-size: 12px;
 }
 
+/* 表格三处对齐设计 `.dt-table`（EXT-02 ③）：12.5px / th 7px 6px + 600 +
+   `--line-strong` 表头线 / td 6px 6px */
 .trial-card__table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: 12.5px;
   font-variant-numeric: var(--fb-font-numeric);
 }
 
 .trial-card__table th {
-  padding: 6px 4px;
-  border-bottom: 1px solid var(--fb-line);
+  padding: 7px 6px;
+  border-bottom: 1px solid var(--fb-line-strong);
   color: var(--fb-sub);
-  font-weight: 500;
+  font-weight: 600;
   text-align: left;
 }
 
 .trial-card__table td {
-  padding: 7px 4px;
+  padding: 6px 6px;
   border-bottom: 1px solid var(--fb-line);
   color: var(--fb-ink);
+}
+
+/* 合计行（EXT-02 ④）：设计 `.dt-table tfoot td`
+   —— 2px `--line-strong` 上边线、无下边线、700、`--ink-deep`、padding-top 8px */
+.trial-card__table tfoot td {
+  padding-top: 8px;
+  border-top: 2px solid var(--fb-line-strong);
+  border-bottom: none;
+  color: var(--fb-ink-deep);
+  font-weight: 700;
+}
+
+/* 合计非 0（未配平）时用危险正文墨：0.00 是「结论」，差额是「问题」 */
+.trial-card__table tfoot .trial-card__sum--diff {
+  color: var(--fb-danger-ink);
 }
 
 .trial-card__r {
@@ -177,5 +228,11 @@ const sumText = computed(() => {
   color: var(--fb-sub);
   font-size: 11px;
   line-height: 1.5;
+}
+
+@media (max-width: 768px) {
+  .trial-card {
+    padding: 14px;
+  }
 }
 </style>

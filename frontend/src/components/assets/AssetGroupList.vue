@@ -74,15 +74,15 @@ function accountCount(group: AssetGroup): number {
       </p>
 
       <ul class="asset-group__rows">
-        <!-- 主币种行 -->
+        <!-- 主币种行：币种 chip 紧跟名称之后（设计 `.a-name` 内含 `.cur-chip`，A-04） -->
         <li v-for="row in group.rows" :key="`${row.accountId}-${row.commodity}`" class="asset-row">
           <span class="asset-row__name">
             {{ row.label }}
             <span v-if="row.closed" class="asset-row__badge">已关户</span>
+            <span class="asset-row__code">{{ row.commodity }}</span>
           </span>
           <span class="asset-row__amount">
             <MoneyText :amount="row.amount" :commodity="row.commodity" :privacy="masked" size="sm" />
-            <span class="asset-row__code">{{ row.commodity }}</span>
           </span>
         </li>
         <!-- 外币行：自身币种展示，不计入上面那行小计 -->
@@ -94,10 +94,10 @@ function accountCount(group: AssetGroup): number {
           <span class="asset-row__name">
             {{ row.label }}
             <span v-if="row.closed" class="asset-row__badge">已关户</span>
+            <span class="asset-row__code asset-row__code--foreign">{{ row.commodity }}</span>
           </span>
           <span class="asset-row__amount">
             <MoneyText :amount="row.amount" :commodity="row.commodity" :privacy="masked" size="sm" />
-            <span class="asset-row__code asset-row__code--foreign">{{ row.commodity }}</span>
           </span>
         </li>
       </ul>
@@ -106,29 +106,33 @@ function accountCount(group: AssetGroup): number {
 </template>
 
 <style scoped>
+/* A-05：组间**不再画 border-top** —— 分组感由组头的 `--soft` 填充条 + margin 提供。
+   「线 + 色块」双重分隔会让最后一组在卡底多出一条孤线。 */
 .asset-group {
-  padding: 12px 0;
-  border-top: 1px solid var(--fb-line);
+  padding: 0;
 }
 
-.asset-group:first-child {
-  border-top: none;
-  padding-top: 0;
-}
-
+/* 组头（A-03）：设计 `.acct-head` —— 一条 `--soft` 填充的圆角横条，
+   视觉上把「资产」「负债」两块分开。原来是同一行无底色文字，两组黏在一起。 */
 .asset-group__head {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 4px 0 8px;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: var(--fb-radius-input);
+  background: var(--fb-soft);
+  margin: 10px 0 2px;
+}
+
+.asset-group:first-child .asset-group__head {
+  margin-top: 0;
 }
 
 .asset-group__label {
   flex: none;
   color: var(--fb-ink);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 /* 「N 个账户 · 另有 $X（USD）」：占满剩余宽度，小屏可换行，不挤压小计 */
@@ -144,14 +148,19 @@ function accountCount(group: AssetGroup): number {
   white-space: nowrap;
 }
 
+/* 组小计 13/700 右对齐 tabular（设计 `.g-sum`） */
 .asset-group__subtotal {
   flex: none;
+  margin-left: auto;
+  font-size: 13px;
+  font-weight: 700;
   font-variant-numeric: var(--fb-font-numeric);
+  white-space: nowrap;
 }
 
 .asset-group__empty {
   margin: 0;
-  padding: 8px 0;
+  padding: 8px 4px;
   color: var(--fb-sub);
   font-size: 12px;
 }
@@ -162,12 +171,13 @@ function accountCount(group: AssetGroup): number {
   padding: 0;
 }
 
+/* 资产行（A-04）：设计 `.asset-li` —— padding 9px 4px（左右各 4px，与组头对齐） */
 .asset-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 9px 0;
+  padding: 9px 4px;
   border-bottom: 1px solid var(--fb-line);
 }
 
@@ -175,11 +185,13 @@ function accountCount(group: AssetGroup): number {
   border-bottom: none;
 }
 
+/* 名称 13px / 500（设计 `.a-name`，原 400） */
 .asset-row__name {
   min-width: 0;
   overflow: hidden;
   color: var(--fb-ink);
   font-size: 13px;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -192,19 +204,22 @@ function accountCount(group: AssetGroup): number {
   font-variant-numeric: var(--fb-font-numeric);
 }
 
+/* 币种 chip（A-04）：设计 `.cur-chip` —— brand-soft 底 + brand-line 描边 + 3px 方角，
+   紧跟名称之后；不是原来「soft 底 pill 且落在金额右侧」。 */
 .asset-row__code {
-  padding: 1px 6px;
-  border-radius: var(--fb-radius-pill);
-  background: var(--fb-soft);
-  color: var(--fb-sub);
-  font-size: 10px;
+  padding: 0 4px;
+  border: 1px solid var(--fb-brand-line);
+  border-radius: 3px;
+  background: var(--fb-brand-soft);
+  color: var(--fb-blue);
+  font-size: 9.5px;
+  font-weight: 600;
+  vertical-align: 1px;
 }
 
-/* 外币 chip 用主色系，与主币种行区分（金额本身不带合计含义）。
-   注意：仓内只有 `--fb-blue` / `--fb-blue-soft`，没有 `--fb-blue-ink` ——
-   引用不存在的 token 会静默失效（计算值为空 → 继承父级），门禁①会拦。 */
+/* 外币 chip 保持品牌色（与设计一致：外币不另配色，靠金额本身区分口径） */
 .asset-row__code--foreign {
-  background: var(--fb-blue-soft);
+  background: var(--fb-brand-soft);
   color: var(--fb-blue);
 }
 
@@ -215,5 +230,6 @@ function accountCount(group: AssetGroup): number {
   background: var(--fb-soft);
   color: var(--fb-sub);
   font-size: 10px;
+  font-weight: 400;
 }
 </style>
