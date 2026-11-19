@@ -16,6 +16,7 @@ import { useSessionStore } from '@/stores/session'
 import AccountsView from '@/views/AccountsView.vue'
 import AccountDetailView from '@/views/AccountDetailView.vue'
 import AssetsView from '@/views/AssetsView.vue'
+import StatsView from '@/views/StatsView.vue'
 import AwaitInviteView from '@/views/AwaitInviteView.vue'
 import BillsView from '@/views/BillsView.vue'
 import CategoriesView from '@/views/CategoriesView.vue'
@@ -72,6 +73,14 @@ const routes: RouteRecordRaw[] = [
     path: '/search',
     name: 'search',
     component: SearchView,
+    meta: { requiresAuth: true },
+  },
+  {
+    // B4：统计账单（design.md 统计账单）。与 navItems 的 `ready: true` 必须同提交
+    // （规划 §2 例外③：`ready === true ⟺ router.resolve(to)` 能解析出命名路由）。
+    path: '/stats',
+    name: 'stats',
+    component: StatsView,
     meta: { requiresAuth: true },
   },
   {

@@ -148,12 +148,24 @@ describe('navItems：ready ⟺ 路由存在（不变式）', () => {
     }
   })
 
-  it('B3/B4/B6 的其余视图路由当前确实还不存在（落地时本条会红，届时同步翻 ready）', () => {
-    // B3/B5 已落地：`/search` 与 `/assets` 已从 pending 移出，改为正向断言。
-    const pending = ['/stats', '/assets/stats']
+  it('B6 的其余视图路由当前确实还不存在（落地时本条会红，届时同步翻 ready）', () => {
+    // B3/B5/B4 已落地：`/search`、`/assets`、`/stats` 均已从 pending 移出，
+    // 改为下方正向断言；只剩 B6 的 `/assets/stats`。
+    const pending = ['/assets/stats']
     for (const path of pending) {
       expect(resolvesToNamedRoute(path)).toBe(false)
     }
+  })
+
+  it('B4 已落地：/stats 解析到命名路由 stats，且两处导航项都已 ready', () => {
+    expect(resolvesToNamedRoute('/stats')).toBe(true)
+    expect(router.resolve('/stats').name).toBe('stats')
+    const main = NAV_MAIN.filter((item) => item.to === '/stats')
+    expect(main.length).toBe(1)
+    expect(main[0].ready).toBe(true)
+    const tabs = MOBILE_TABS.filter((item) => item.to === '/stats')
+    expect(tabs.length).toBe(1)
+    expect(tabs[0].ready).toBe(true)
   })
 
   it('B5 已落地：/assets 解析到命名路由 assets，且两处导航项都已 ready', () => {
