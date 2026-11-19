@@ -123,7 +123,8 @@ Get-NetIPAddress -AddressFamily IPv4 |
 >
 > | 章 | 依赖 | 判断方法 |
 > | --- | --- | --- |
-> | I3 / I5 | B3 / B4 的路由与视图 | `frontend/src/components/shell/navItems.ts` 里 `stats` 与 `asset-stats` 的 `ready` 是否为 `true`；`#/stats`、`#/assets/stats` 能否打开 |
+> | I3 | **已满足**（`7bcf460`） | `frontend/src/components/shell/navItems.ts` 里 `stats` 已为 `ready: true`，`#/stats` 可直接打开 |
+> | I5 | B4 的路由与视图 | `navItems.ts` 里 `asset-stats` 是否为 `ready: true`；`#/assets/stats` 能否打开 |
 > | I5 | 后端 `GET /api/assets/series` | `curl` 该端点返回 12 个点即就绪 |
 > | I2.8 | CSV 走 `limit: 0` 二次全量拉取 | 导出后比对行数即可判定，无需看代码 |
 >
@@ -173,9 +174,9 @@ Get-NetIPAddress -AddressFamily IPv4 |
 - [ ] I2.9 空结果：搜一个不存在的词，出现「没有符合条件的记录」类空态，**不是**空白页也不是错误态；此时清掉关键词能恢复
   - 失败时说明什么：空态与错误态分不清，用户会把「没搜到」当成「服务坏了」；若空态下无法清条件，页面成死路
 
-### I3 统计页 `/stats`（前置：B3 路由落地）
+### I3 统计页 `/stats`（前置已满足：B3 于 `7bcf460` 交付，路由与 `ready` 同笔翻转）
 
-> 若 `navItems.ts` 里 `stats` 仍为 `ready: false`：本轮只执行 I3.0，其余标 `BLOCKED`（缺失路由）。
+> `/stats` 已于 `7bcf460` 落地（`navItems.ts` 的 `stats` 翻为 `ready: true`，`router/index.ts` 同笔加入 `path: '/stats'`），**本章 9 条全部可执行**。若执行时该入口仍是禁用态，说明拿到的是更早的构建 —— 先记录构建 commit 再判 `BLOCKED`，不要直接跳过整章。
 
 - [ ] I3.0 入口状态正确：路由未落地时点「统计账单」（侧栏 / 底栏 / 账单页 ◔）**只出提示、不跳转、地址栏不变**；落地后应正常进入并在侧栏高亮
   - 失败时说明什么：若点进了 404 或被 catch-all 兜回首页，说明「`ready: false` 不可点」的拦截没生效，用户会以为点错了；若地址栏变成 `#/stats` 而页面空白，说明路由有了但视图没挂上
@@ -275,7 +276,7 @@ Get-NetIPAddress -AddressFamily IPv4 |
 
 - [ ] J4.1 侧栏 5 个主视图 + 10 个管理项齐全，顺序与 `navItems.ts` 一致（账单 / 搜索账单 / 统计账单 / 资产 / 资产统计 + 10 项管理）
   - 失败时说明什么：少了某一项说明那项被条件渲染隐藏了（应按 `ready` 决定能否点，而不是整个不显示）
-- [ ] J4.2 `ready: false` 的入口（当前是「统计账单」与「资产统计」）**不可点**：点了只出提示、不跳转、地址栏不变
+- [ ] J4.2 `ready: false` 的入口（截至 `7bcf460` 只剩「资产统计」一项；「统计账单」已随 B3 翻转）**不可点**：点了只出提示、不跳转、地址栏不变
   - 失败时说明什么：跳转后被 catch-all 兜回首页，用户会以为自己点错了；若根本不显示，就没人知道这个功能要来了
 - [ ] J4.3 当前页高亮：进 `/accounts/12` 时「账户管理」仍高亮；进 `/` 时只有「账单」高亮
   - 失败时说明什么：子路径不算高亮，说明只做了全等匹配；首页高亮串到所有页，说明把 `/` 当成了前缀
@@ -337,6 +338,12 @@ Get-NetIPAddress -AddressFamily IPv4 |
 
 - PWA 安装态（A3/B4）与 `/legacy/`（H3）无条件测时标 `BLOCKED` 并写原因，不算通过
 - 全部通过后填写下方记录表
+
+> **前置状态快照（写于 B4 收口时点 `7bcf460`）**：本清单里凡写「当前是 X」的地方都是那一刻的 X。
+> 后续落地时必须回来更新这三处，否则清单会给出「看起来严肃的假结论」：
+> 1. **I3 章头**（`/stats` 已就绪，B3 交付）；
+> 2. **I5 章头**（`/assets/stats` 依赖 B4 路由 —— B6 落地后此处与「前置依赖」表都要改）；
+> 3. **J4.2 的 `ready:false` 列举**（目前只剩「资产统计」）。
 
 ## 执行记录
 
