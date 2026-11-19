@@ -22,6 +22,15 @@ const h = vi.hoisted(() => ({
   accountList: vi.fn(),
 }))
 
+// DataSafetyView 内部用 useRouter()（导出成功后跳转/提示）。本文件只验「导出前不平阻断」
+// 的纯逻辑，不需要真路由：给一个 stub 即可。
+// **刻意不用真 router 实例**——那会把这条用例从「验导出逻辑」悄悄扩成「验路由装配」，
+// 测试的命题就比它要验的东西大了。装 stub 同时也消掉了 `injection "Symbol(router)"` 警告。
+vi.mock('vue-router', () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRoute: () => ({ query: {}, params: {} }),
+}))
+
 vi.mock('@/api/client', () => ({
   accountApi: { list: h.accountList },
   transactionApi: { list: h.txnList },

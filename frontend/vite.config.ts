@@ -70,6 +70,8 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts'],
+    // 把 `[Vue warn]` 从噪音提升为失败（见 setupVueWarn.ts 的三条约束说明）。
+    setupFiles: ['./src/test/setupVueWarn.ts'],
     // 部分平台下多 worker 并发写 vite-node 的 SSR 临时缓存会触发 EPERM，
     // 导致部分测试文件加载失败；顺序执行测试文件即可稳定全绿。
     fileParallelism: false,
