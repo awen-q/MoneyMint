@@ -81,6 +81,12 @@ const (
 	CodeImportUnbalanced      = "import_unbalanced"
 	CodeImportAccountConflict = "import_account_conflict"
 	CodeImportBatchNotFound   = "import_batch_not_found"
+	// 回收站永久删除（B7；仅 owner，不可恢复）
+	CodeTxnPurgeForbidden       = "txn_purge_forbidden"
+	CodeTxnPurgeConfirmRequired = "txn_purge_confirm_required"
+	CodeTxnPurgeNotDeleted      = "txn_purge_not_deleted"
+	CodeTxnPurgeNotAllowed      = "txn_purge_not_allowed"
+	CodeTxnNotFound             = "txn_not_found"
 )
 
 // CodedError 是携带稳定错误码与结构化明细的业务错误。

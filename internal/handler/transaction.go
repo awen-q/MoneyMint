@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -209,6 +210,13 @@ func (h *Handler) HandleUpdateTransaction(w http.ResponseWriter, r *http.Request
 }
 
 // HandleListTrash 列出回收站内的交易（已软删，按删除时间倒序）。
+//
+// B7 additive：响应除 `transactions` 外追加两个键——
+//   - `purge_summary`：{deletable, system_kept, paired}，页脚「N 笔可删」与确认弹层的数字来源；
+//   - `purge_log`：最近 50 条本机永久删除审计（全体成员可见）。
+//
+// 两条都挂在既有 GET 上（不新开端点）：端点总数被规格钉在 43，且回收站页本来
+// 就要拉列表，一次往返取回三样且三者同源（同一份闭包 / 同一次裁决）。
 func (h *Handler) HandleListTrash(w http.ResponseWriter, r *http.Request) {
 	ledgerID, ok := auth.LedgerID(r.Context())
 	if !ok {
@@ -216,12 +224,86 @@ func (h *Handler) HandleListTrash(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	uid, _ := auth.UserID(r.Context())
-	items, err := h.svc.ListDeletedTransactions(ledgerID, uid)
+	overview, err := h.svc.TrashOverview(ledgerID, uid)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"transactions": items})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"transactions":  overview.Items,
+		"purge_summary": overview.Summary,
+		"purge_log":     overview.Log,
+	})
+}
+
+// HandlePurgeTransaction 永久删除单笔：DELETE /api/transactions/{uuid}/purge
+//
+// Body `{confirm:"删除"}`；响应 `{ok,count,deleted:[{uuid,description,was_in_trash}],
+// purged_postings, already_purged?}`。仅 owner；物理删除不可恢复。
+func (h *Handler) HandlePurgeTransaction(w http.ResponseWriter, r *http.Request) {
+	ledgerID, userID, ok := purgedContext(h, w, r)
+	if !ok {
+		return
+	}
+	res, err := h.svc.PurgeTransaction(ledgerID, userID, r.PathValue("uuid"), readPurgeConfirm(r))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// HandlePurgeTrash 清空回收站：POST /api/transactions/trash/purge
+//
+// Body `{confirm:"删除"}`（前端让用户手输「清空」后映射成本词）；响应结构同上，
+// 但**不带** already_purged（空回收站是正常结果，不是幂等命中）。
+func (h *Handler) HandlePurgeTrash(w http.ResponseWriter, r *http.Request) {
+	ledgerID, userID, ok := purgedContext(h, w, r)
+	if !ok {
+		return
+	}
+	res, err := h.svc.PurgeTrash(ledgerID, userID, readPurgeConfirm(r))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// readPurgeConfirm 解码永久删除的确认体。
+//
+// 刻意**不复用 readJSON**：它对空 body 返回 io.EOF、对未知字段返回 json 错误，
+// 两者都会被 writeError 映射成 400 + 文案 "EOF" / "json: unknown field ..."，
+// 前端拿不到稳定码，无法提示「请重新确认」。
+//
+// 这里把「空 body / 字段缺失 / 未知字段 / 非法 JSON」一律折叠成空串，
+// 由 service 统一返回 400 txn_purge_confirm_required。
+// 取舍：确实会吞掉「JSON 写坏了」这类诊断信息，但可行动的错误码比 EOF 有用。
+func readPurgeConfirm(r *http.Request) string {
+	var req struct {
+		Confirm string `json:"confirm"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return ""
+	}
+	return req.Confirm
+}
+
+// purgedContext 取账本 + 用户上下文（两条永久删除端点共用）。
+// 缺失账本上下文 → 403；缺失用户 → 401（与既有 handler 同款口径）。
+func purgedContext(h *Handler, w http.ResponseWriter, r *http.Request) (ledgerID, userID int64, ok bool) {
+	_ = h // 保留签名对称性：后续若要在 handler 层加审计/限流，需要 handler 本身
+	ledgerID, hasLedger := auth.LedgerID(r.Context())
+	if !hasLedger {
+		writeError(w, domain.ErrForbidden)
+		return 0, 0, false
+	}
+	userID, hasUser := auth.UserID(r.Context())
+	if !hasUser {
+		writeError(w, domain.ErrUnauthorized)
+		return 0, 0, false
+	}
+	return ledgerID, userID, true
 }
 
 // HandleRestoreTransaction 从回收站恢复一笔交易。

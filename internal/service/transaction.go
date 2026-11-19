@@ -640,6 +640,10 @@ type TrashPostingView struct {
 // TrashItemView 是回收站条目视图（在普通交易视图上加删除时间）。
 // 0.6.0 S6 additive：can_restore 由服务端按请求用户角色计算（viewer 恒 false，
 // 仍可查看回收站），前端据此显隐恢复按钮。
+//
+// B7 additive（永久删除）：can_purge / is_system / pair_uuid 三者都是
+// 「假值即省略」，旧响应形状不变。can_purge 不能复用 can_restore——
+// can_restore 是 owner+editor，永久删除只有 owner。
 type TrashItemView struct {
 	UUID          string             `json:"uuid"`
 	Date          string             `json:"date"`
@@ -650,10 +654,56 @@ type TrashItemView struct {
 	CreatedByName string             `json:"created_by_name"`
 	Postings      []TrashPostingView `json:"postings"`
 	CanRestore    bool               `json:"can_restore,omitempty"`
+
+	// CanPurge 表示当前用户能否永久删除这一笔（owner 且闭包判定可删；
+	// 系统交易、或配对含系统交易 → false）。
+	CanPurge bool `json:"can_purge,omitempty"`
+	// IsSystem 表示三重系统判定命中（期初 / 校准 / 导入批次），前端用于
+	// 「系统交易保留」标记——不显示删除入口，但要说明为什么没有。
+	IsSystem bool `json:"is_system,omitempty"`
+	// PairUUID 是冲正配对另一条的 uuid（无配对为空）。
+	// 非空且该配对不在回收站时，删除会连带删掉它，确认弹层必须写清楚。
+	PairUUID string `json:"pair_uuid,omitempty"`
+}
+
+// trashItemView 把一笔已软删的领域交易转换为回收站视图。
+//
+// ListDeletedTransactions 与 TrashOverview 共用（避免两处 Scan / 字段映射各自漂移）；
+// can_purge / is_system / pair_uuid 需要闭包信息，由 TrashOverview 事后回填，
+// 单条映射保持纯函数、无 I/O。
+func trashItemView(t domain.Transaction, canRestore, canPurge bool) TrashItemView {
+	v := TrashItemView{
+		UUID:          t.UUID,
+		Date:          t.Date,
+		Flag:          t.Flag,
+		Description:   t.Description,
+		Tags:          t.Tags,
+		DeletedAt:     t.DeletedAt,
+		CreatedByName: t.CreatedByName,
+		Postings:      make([]TrashPostingView, 0, len(t.Postings)),
+		CanRestore:    canRestore,
+		CanPurge:      canPurge,
+	}
+	for _, p := range t.Postings {
+		display := p.AccountDisplay
+		if display == "" {
+			display = p.AccountName
+		}
+		v.Postings = append(v.Postings, TrashPostingView{
+			Account:        p.AccountName,
+			AccountDisplay: display,
+			Commodity:      p.Commodity,
+			Amount:         p.Amount,
+		})
+	}
+	return v
 }
 
 // ListDeletedTransactions 列出回收站（已软删交易），按删除时间倒序。
 // viewer 仍可查看回收站（GET 放行），can_restore=false 仅隐藏恢复按钮。
+//
+// 对外行为保持不变（B7 起 HTTP 层改走 TrashOverview 以获得 summary / audit）：
+// can_purge 恒 false 且 omitempty，is_system / pair_uuid 不填，响应字节不变。
 func (s *Service) ListDeletedTransactions(ledgerID, userID int64) ([]TrashItemView, error) {
 	role, _ := s.repo.RoleOf(ledgerID, userID)
 	canRestore := role == domain.RoleOwner || role == domain.RoleEditor
@@ -663,30 +713,7 @@ func (s *Service) ListDeletedTransactions(ledgerID, userID int64) ([]TrashItemVi
 	}
 	out := make([]TrashItemView, 0, len(txns))
 	for _, t := range txns {
-		v := TrashItemView{
-			UUID:          t.UUID,
-			Date:          t.Date,
-			Flag:          t.Flag,
-			Description:   t.Description,
-			Tags:          t.Tags,
-			DeletedAt:     t.DeletedAt,
-			CreatedByName: t.CreatedByName,
-			Postings:      make([]TrashPostingView, 0, len(t.Postings)),
-			CanRestore:    canRestore,
-		}
-		for _, p := range t.Postings {
-			display := p.AccountDisplay
-			if display == "" {
-				display = p.AccountName
-			}
-			v.Postings = append(v.Postings, TrashPostingView{
-				Account:        p.AccountName,
-				AccountDisplay: display,
-				Commodity:      p.Commodity,
-				Amount:         p.Amount,
-			})
-		}
-		out = append(out, v)
+		out = append(out, trashItemView(t, canRestore, false))
 	}
 	return out, nil
 }

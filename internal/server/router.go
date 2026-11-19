@@ -99,8 +99,20 @@ func newRouter(h *handler.Handler, svc *service.Service, webRoot string, corsCfg
 		http.MethodPost: h.HandleCreateTransaction,
 	}))
 	// 交易回收站（M3）：列表 + 恢复。字面量路径比 {uuid} 更具体，ServeMux 优先匹配。
+	// B7 起该 GET 的响应追加 purge_summary / purge_log（不新开端点）。
 	mux.HandleFunc("/api/transactions/trash", methodSwitch(map[string]http.HandlerFunc{
 		http.MethodGet: h.HandleListTrash,
+	}))
+	// B7 永久删除（路径 41→43 条）。
+	// 模式优先级：`/api/transactions/trash/purge` 是字面量，比 `/api/transactions/{uuid}/purge`
+	// 更具体，Go 1.22+ ServeMux 选更具体者（注册顺序无关，也不会 panic）；
+	// 因此 `DELETE /api/transactions/trash/purge` 会命中字面量模式 → 405，
+	// 不会掉进 {uuid}/purge 把 "trash" 当 uuid 去删。
+	mux.HandleFunc("/api/transactions/trash/purge", methodSwitch(map[string]http.HandlerFunc{
+		http.MethodPost: h.HandlePurgeTrash,
+	}))
+	mux.HandleFunc("/api/transactions/{uuid}/purge", methodSwitch(map[string]http.HandlerFunc{
+		http.MethodDelete: h.HandlePurgeTransaction,
 	}))
 	mux.HandleFunc("/api/transactions/{uuid}/restore", methodSwitch(map[string]http.HandlerFunc{
 		http.MethodPost: h.HandleRestoreTransaction,
