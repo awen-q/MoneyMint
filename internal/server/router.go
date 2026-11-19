@@ -22,7 +22,12 @@ func newRouter(h *handler.Handler, svc *service.Service, webRoot string, corsCfg
 	}
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/api/health", h.HandleHealth)
+	// 健康检查：**只允许 GET**。不套 methodSwitch 时任意方法（含 DELETE）都会
+	// 执行并返回 200——「文档说 GET、实现收任意」与「参数存在即生效」同属一类
+	// 不报错的谎言（T62 审计 D1）。
+	mux.HandleFunc("/api/health", methodSwitch(map[string]http.HandlerFunc{
+		http.MethodGet: h.HandleHealth,
+	}))
 
 	// 认证端点（公开：register/login；其余自校验）
 	mux.HandleFunc("/api/auth/register", methodSwitch(map[string]http.HandlerFunc{
@@ -133,11 +138,21 @@ func newRouter(h *handler.Handler, svc *service.Service, webRoot string, corsCfg
 		http.MethodGet: h.HandleDBInstance,
 	}))
 
-	// 导出与同步
-	mux.HandleFunc("/api/export", h.HandleExport)
-	mux.HandleFunc("/api/export/archive", h.HandleExportArchive)
-	mux.HandleFunc("/api/sync/pull", h.HandleSyncPull)
-	mux.HandleFunc("/api/sync/push", h.HandleSyncPush)
+	// 导出与同步：**方法限定**（T62 审计 D1）。原先这四条直接注册，handler 又不查
+	// `r.Method`，于是 `DELETE /api/export` 会真的执行导出、`GET /api/sync/push`
+	// 会进到 handler 里去解 body（返回 400 EOF 而不是 405）。
+	mux.HandleFunc("/api/export", methodSwitch(map[string]http.HandlerFunc{
+		http.MethodGet: h.HandleExport,
+	}))
+	mux.HandleFunc("/api/export/archive", methodSwitch(map[string]http.HandlerFunc{
+		http.MethodGet: h.HandleExportArchive,
+	}))
+	mux.HandleFunc("/api/sync/pull", methodSwitch(map[string]http.HandlerFunc{
+		http.MethodGet: h.HandleSyncPull,
+	}))
+	mux.HandleFunc("/api/sync/push", methodSwitch(map[string]http.HandlerFunc{
+		http.MethodPost: h.HandleSyncPush,
+	}))
 
 	// 备份（全库级操作，仅系统管理员；权限校验在 handler 内完成）
 	mux.HandleFunc("/api/backup/list", methodSwitch(map[string]http.HandlerFunc{
