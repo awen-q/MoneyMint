@@ -182,7 +182,7 @@ python -m pip install beancount    # 激活 .venv 后执行
 | `/api/auth/sessions/{sid}` | DELETE | 登录 | 吊销指定会话 |
 | `/api/ledgers` | GET/POST | 登录 | 列出所属账本（含角色）/ 建新账本 |
 | `/api/ledgers/{id}` | PATCH | 登录+**owner** | 账本改名 / 默认币种 |
-| `/api/accounts` | GET/POST | 登录+成员 | 账户列表（含余额）/ 新建 |
+| `/api/accounts` | GET/POST | 登录+成员 | 账户列表（含余额；`?include_closed` 按**取值**解析：缺省 / `0` / `false` / `no` / 无法识别 = 不含已关户账户，`1` / `true` / `yes` / 裸写 = 含，见 `handler.includeClosedFromQuery`）/ 新建 |
 | `/api/accounts/{uuid}/opening` | GET/POST | 登录+成员 | 读取 / 设置期初余额（含冲正，走 `opening_key`） |
 | `/api/accounts/{uuid}` | DELETE | 登录+成员 | 软删账户（连带引用交易，写 sync_log delete）；幂等 404 |
 | `/api/identity/check` | GET | 登录+成员 | 恒等式检查 |

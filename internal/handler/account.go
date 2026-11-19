@@ -2,25 +2,59 @@ package handler
 
 import (
 	"net/http"
+	"net/url"
+	"strings"
 
 	"familyledger/internal/auth"
 	"familyledger/internal/domain"
 )
 
-// HandleListAccounts 列出账户及其余额。?include_closed=1 含已关闭账户。
+// HandleListAccounts 列出账户及其余额。`?include_closed` 的**取值**语义见
+// includeClosedFromQuery（缺省不含已关户账户）。
 func (h *Handler) HandleListAccounts(w http.ResponseWriter, r *http.Request) {
 	ledgerID, ok := auth.LedgerID(r.Context())
 	if !ok {
 		writeError(w, domain.ErrForbidden)
 		return
 	}
-	includeClosed := r.URL.Query().Has("include_closed")
+	includeClosed := includeClosedFromQuery(r.URL.Query())
 	accounts, err := h.svc.ListAccounts(ledgerID, includeClosed)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"accounts": accounts})
+}
+
+// includeClosedFromQuery 按**取值**解析 `?include_closed`（不是「参数存在即生效」）。
+//
+// 语义（`AGENTS.md` §7 端点表同源）：
+//
+//	缺省                        → false（不含已关户账户）
+//	1 / true / yes（大小写不敏感）→ true
+//	0 / false / no（同上）       → false
+//	裸写（值为空串）              → true（向后兼容：0.6.0 起一直是「带了就含」，
+//	                              别让今天唯一在用的调用方行为突变）
+//	其它无法识别                  → false（**宁可少给，不要多给**）
+//
+// 为什么不用 `Query().Has()`：那会让 `?include_closed=false` 也**包含**关户账户，
+// 「我明确说了不要」被静默变成「你要了」——调用方不会报错，只会拿到多余的行。
+//
+// 为什么「无法识别」选不含：多给一次（关户账户出现在记账选账户里）用户无从察觉，
+// 而且真有可能记上去（保存时才 409）；少给一次最多是用户再问一句。
+func includeClosedFromQuery(query url.Values) bool {
+	values, present := query["include_closed"]
+	if !present || len(values) == 0 {
+		// 缺省不含；`?include_closed` 裸写时 Go 解析出的是 [""]（len 1），不走这里。
+		return present
+	}
+	switch strings.ToLower(strings.TrimSpace(values[0])) {
+	case "1", "true", "yes", "":
+		return true
+	default:
+		// "0" / "false" / "no" / 其它无法识别的值
+		return false
+	}
 }
 
 // HandleCreateAccount 创建账户。
