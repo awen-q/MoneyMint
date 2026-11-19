@@ -34,7 +34,7 @@ function makeRouter(): Router {
     history: createMemoryHistory(),
     routes: [
       { path: '/', component: { template: '<div />' } },
-      { path: '/search', component: { template: '<div />' } },
+      { path: '/search', name: 'search', component: { template: '<div />' } },
       // 兜底：下钻 push 的目标若尚未定义，也不该让用例因「无匹配路由」而炸
       { path: '/:pathMatch(.*)*', component: { template: '<div />' } },
     ],
@@ -310,9 +310,72 @@ describe('T48 StatsView：图表实例峰值不超过 liveCount 上限', () => {
 
     // 逐次断言而不是只看末值：只看末值的话，4→6→8→4 这种「中途泄漏又回落」
     // 会被漏掉，而中途峰值正是会把内存顶上去的时刻。
+    //
+    // 这条断言的真正价值在于它同时钉住了**泄漏斜率**：
+    // 把 liveCount 的 release 改成 no-op 后，这里实测得到
+    //   [4, 6, 10, 12, 16, 18, 22]   ← 每切到标签子页 +2、每切回统计 +4
+    // 也就是「每次切换固定多留 2 个实例」的线性增长，而不是偶发抖动。
+    // 一个能显示斜率的观测值，比「≤ 4」这种单点上界有用得多：
+    // 上界只回答「这次超没超」，斜率回答「下一次会不会超、多久超」。
     expect(seen).toEqual([4, 2, 4, 2, 4, 2, 4])
 
     wrapper.unmount()
     expect(liveChartCount()).toBe(0)
+  })
+})
+
+/**
+ * 审计 P4：标签子页的「点击行下钻」以前是 `@drill="() => undefined"` ——
+ * 整块可点、cursor 是 pointer、`:hover` 有反馈，但点了什么都不发生。
+ * 一个可点的东西不响应，用户会以为页面卡住了 —— 所以这里钉住「点了会跳」。
+ */
+describe('P4 标签下钻 → 搜索账单页', () => {
+  it('点标签行 → push 到 search，带该标签 + 当月窗口', async () => {
+    const router = makeRouter()
+    const wrapper = mount(StatsView, {
+      global: {
+        plugins: [router],
+        stubs: { TrendChart: true, DonutChart: true, BarChart: true, MonthPicker: true },
+      },
+    })
+    await flushPromises()
+    usePeriodStore().setStatsTab('tag')
+    await flushPromises()
+
+    const rows = wrapper.findAll('.tag-panel__row-btn')
+    expect(rows.length).toBeGreaterThan(0)
+    const family = rows.find((row) => row.text().includes('家庭'))
+    expect(family).toBeDefined()
+    await family?.trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.path).toBe('/search')
+    // 窗口必须是**当前月**的两个端点（年周期才展开成 01-01 / 12-31）
+    expect(router.currentRoute.value.query.from).toBe('2026-11-01')
+    expect(router.currentRoute.value.query.to).toBe('2026-11-30')
+    expect(router.currentRoute.value.query.tag).toBe('家庭')
+  })
+
+  it('「年」周期下钻：窗口展开成整年（`YYYY-MM` 直接当 from 会被 DATE_RE 丢掉）', async () => {
+    const router = makeRouter()
+    const wrapper = mount(StatsView, {
+      global: {
+        plugins: [router],
+        stubs: { TrendChart: true, DonutChart: true, BarChart: true, MonthPicker: true },
+      },
+    })
+    await flushPromises()
+    // 先切「年」，再切「标签」子页
+    await wrapper.findAll('.period-seg__btn')[2].trigger('click')
+    usePeriodStore().setStatsTab('tag')
+    await flushPromises()
+
+    const rows = wrapper.findAll('.tag-panel__row-btn')
+    const family = rows.find((row) => row.text().includes('家庭'))
+    await family?.trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.query.from).toBe('2026-01-01')
+    expect(router.currentRoute.value.query.to).toBe('2026-12-31')
   })
 })
