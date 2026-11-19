@@ -2,37 +2,47 @@
 /**
  * L-01 单布局（3 个 Dart shell → 1 个组件）
  *
- * 一套模板 + CSS 断点（1024）：≥1024 显示 PC 侧边栏，<1024 显示移动底栏
- * （4 Tab + 中央 ＋）。沿用 pc-redesign.html / mobile-redesign-v2.html 的
- * 布局 token 与 IA，不重画信息架构。批 3 起 P-11~P-18 全部接入，导航项
- * 无占位死链；`ready` 保留用于将来临时下线某入口。
+ * 本批（B1 / T24）把壳层拆成四个专责组件，`AppLayout` 只留「装配 + 全局判定」：
+ * - `ShellHead`   顶栏（品牌 + 账本行 + 待同步 / 隐私 / 更多）
+ * - `ShellSidebar` PC 侧栏（5 项直达 + `管理 · 10` 折叠组 + 记一笔 CTA）
+ * - `ShellTabs`   移动底栏（4 Tab + 中央 FAB）
+ * - `MoreSheet`   移动「更多」弹层（10 管理项 + 改密 + 退出）
+ *
+ * 三条不变式：
+ * 1. **导航可用性只在这里判定**：子组件只 `emit('select', item)`，`ready === false`
+ *    的入口统一出提示、不跳转（`navItems.ts` 有「ready ⟺ 路由存在」的测试守门），
+ *    因此任何批次都不会点出死链。
+ * 2. **`RecordSheet` 仍是全局单实例**：PC CTA 与移动 FAB 都走同一个 `openRecord()`，
+ *    一路进同一个 `sheet.open()`，不允许出现第二条记账入口。
+ * 3. **路由零改动**：`router/index.ts` 一个字符都没动，本批只改呈现。
+ *
+ * 断点：900px（LO-04，由 1024 下调）——≥900 出侧栏、隐底栏；<900 反之。
+ * 底部留白 104px = 底栏 68 + FAB 上溢 24 + 12 间隙。`content` 与 `notice`
+ * 两处必须同步，否则末卡会被 FAB 压住（LO-03 的复发点）。
  */
-import { computed, onMounted, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { registerServiceWorker } from '@/core/pwa'
 import { useSessionStore } from '@/stores/session'
 import { useSyncStore } from '@/stores/sync'
-import { usePrivacyStore } from '@/stores/privacy'
 import { useRecordSheetStore } from '@/stores/recordSheet'
 import RecordSheet from './RecordSheet.vue'
-import SyncBadge from './SyncBadge.vue'
-
-interface NavItem {
-  key: string
-  label: string
-  icon: string
-  to?: string
-  ready: boolean
-}
+import MoreSheet from './shell/MoreSheet.vue'
+import ShellHead from './shell/ShellHead.vue'
+import ShellSidebar from './shell/ShellSidebar.vue'
+import ShellTabs from './shell/ShellTabs.vue'
+import type { NavItem } from './shell/navItems'
 
 const route = useRoute()
 const router = useRouter()
 const session = useSessionStore()
-const privacy = usePrivacyStore()
 const sheet = useRecordSheetStore()
 const sync = useSyncStore()
 const notice = ref('')
+
+/** 移动「更多」弹层（底栏「更多」与顶栏「⋯」共用同一个）*/
+const moreOpen = ref(false)
 
 // 批 5：同步内核随登录布局启动（自动同步 + 状态订阅）；
 // PWA 更新提示：新版本就绪时出横幅，用户确认才刷新（不得打断录入，AC-35）。
@@ -52,56 +62,28 @@ function applyUpdate(): void {
   }
 }
 
-// 批 3：P-11~P-18 全部接入，不再有「后续批次开放」的占位项。
-// 顺序即 PC 侧栏分组顺序；移动底栏只取 4 项（含中央 ＋）。
-const navItems: NavItem[] = [
-  { key: 'home', label: '总览', icon: '▦', to: '/', ready: true },
-  { key: 'transactions', label: '交易流水', icon: '≣', to: '/transactions', ready: true },
-  { key: 'trash', label: '回收站', icon: '🗑', to: '/trash', ready: true },
-  { key: 'accounts', label: '账户管理', icon: '▤', to: '/accounts', ready: true },
-  { key: 'categories', label: '分类管理', icon: '▥', to: '/categories', ready: true },
-  { key: 'commodities', label: '币种管理', icon: '💱', to: '/commodities', ready: true },
-  { key: 'reports', label: '报表分析', icon: '📈', to: '/reports', ready: true },
-  { key: 'members', label: '成员管理', icon: '◯', to: '/members', ready: true },
-  { key: 'ledgers', label: '账本管理', icon: '▣', to: '/ledgers', ready: true },
-  { key: 'sessions', label: '登录设备', icon: '▢', to: '/sessions', ready: true },
-  { key: 'data-safety', label: '数据安全', icon: '⛁', to: '/data-safety', ready: true },
-  { key: 'sync', label: '同步状态', icon: '↻', to: '/sync', ready: true },
-  { key: 'settings', label: '设置', icon: '⚙', to: '/settings', ready: true },
-]
-
-const desktopGroups: Array<{ title: string; items: NavItem[] }> = [
-  { title: '概览', items: [navItems[0], navItems[1]] },
-  { title: '管理', items: [navItems[3], navItems[4], navItems[5], navItems[7], navItems[8]] },
-  { title: '工具', items: [navItems[2], navItems[6], navItems[10]] },
-  { title: '系统', items: [navItems[9], navItems[11], navItems[12]] },
-]
-
-const mobileNav = computed<NavItem[]>(() => [
-  navItems[0],
-  navItems[1],
-  navItems[3],
-  // 原型第 4 个 Tab 是「更多」；PC 侧栏对应项叫「设置」，IA 保持一致。
-  { ...navItems[12], label: '更多' },
-])
-
-function isActive(item: NavItem): boolean {
-  if (item.to === undefined) {
-    return false
-  }
-  if (item.to === '/') {
-    return route.path === '/'
-  }
-  return route.path === item.to || route.path.startsWith(`${item.to}/`)
-}
-
-function navigate(item: NavItem): void {
-  if (!item.ready || item.to === undefined) {
+/** 导航入口点击：未上线的入口只提示，不跳转（永不死链）。 */
+function onSelect(item: NavItem): void {
+  if (item.to === undefined || !item.ready) {
     notice.value = `${item.label}将在后续批次开放`
     return
   }
   notice.value = ''
   void router.push(item.to)
+}
+
+/** 弹层内选中：先关弹层再导航，避免弹层压在目标页上。 */
+function onSelectFromSheet(item: NavItem): void {
+  moreOpen.value = false
+  onSelect(item)
+}
+
+function openMore(): void {
+  moreOpen.value = true
+}
+
+function closeMore(): void {
+  moreOpen.value = false
 }
 
 function openRecord(): void {
@@ -117,47 +99,22 @@ function openRecord(): void {
   sheet.open()
 }
 
-function togglePrivacy(): void {
-  privacy.toggle()
-}
-
 async function logout(): Promise<void> {
+  moreOpen.value = false
   await session.logout()
   await router.replace({ name: 'login' })
 }
 
 function goChangePassword(): void {
+  moreOpen.value = false
   void router.push({ name: 'change-password' })
 }
 </script>
 
 <template>
   <div class="layout">
-    <!-- PC 侧边栏（≥1024） -->
-    <aside class="layout__side">
-      <div class="layout__brand">
-        <span class="layout__logo">¥</span>
-        <span>家庭记账</span>
-      </div>
-      <nav class="layout__nav" aria-label="主导航">
-        <template v-for="group in desktopGroups" :key="group.title">
-          <div class="layout__group">{{ group.title }}</div>
-          <button
-            v-for="item in group.items"
-            :key="item.key"
-            type="button"
-            class="layout__nav-item"
-            :class="{ on: isActive(item) }"
-            @click="navigate(item)"
-          >
-            <span class="layout__nav-icon">{{ item.icon }}</span>{{ item.label }}
-          </button>
-        </template>
-      </nav>
-      <button class="fb-btn-primary layout__cta" type="button" @click="openRecord">
-        ＋ 记一笔
-      </button>
-    </aside>
+    <!-- PC 侧栏（≥900）：5 项直达 + 管理 · 10 折叠组 + 记一笔 CTA -->
+    <ShellSidebar :active-path="route.path" @select="onSelect" @record="openRecord" />
 
     <!-- 主区 -->
     <div class="layout__main">
@@ -165,30 +122,9 @@ function goChangePassword(): void {
         <span>有新版本可用</span>
         <button class="fb-btn-primary layout__update-btn" type="button" @click="applyUpdate">立即更新</button>
       </div>
-      <header class="layout__top">
-        <div class="layout__title">
-          <strong>{{ session.ledgerName }}</strong>
-          <span class="fb-muted" v-if="session.user">
-            · {{ session.user.display_name || session.user.username }}
-          </span>
-        </div>
-        <div class="layout__tools">
-          <SyncBadge />
-          <button
-            type="button"
-            class="layout__tool"
-            :aria-pressed="privacy.enabled"
-            @click="togglePrivacy"
-          >{{ privacy.enabled ? '🙈 已遮挡' : '👁 显示金额' }}</button>
-          <button
-            v-if="session.mustChangePassword"
-            type="button"
-            class="layout__tool"
-            @click="goChangePassword"
-          >修改密码</button>
-          <button type="button" class="layout__tool" @click="logout">退出</button>
-        </div>
-      </header>
+
+      <!-- 顶栏：品牌 + 账本行 + 待同步 / 隐私 / 更多（页名不放这里，见 LO-16） -->
+      <ShellHead @more="openMore" />
 
       <main class="layout__content">
         <slot />
@@ -197,32 +133,22 @@ function goChangePassword(): void {
       <p v-if="notice" class="layout__notice" role="status">{{ notice }}</p>
     </div>
 
-    <!-- 移动底栏（<1024）：4 Tab + 中央 ＋ -->
-    <nav class="layout__bottom" aria-label="底部导航">
-      <button
-        v-for="item in mobileNav.slice(0, 2)"
-        :key="item.key"
-        type="button"
-        class="layout__tab"
-        :class="{ on: isActive(item) }"
-        @click="navigate(item)"
-      >
-        <span class="layout__tab-icon">{{ item.icon }}</span>
-        <span>{{ item.label }}</span>
-      </button>
-      <button type="button" class="layout__fab" aria-label="记一笔" @click="openRecord">＋</button>
-      <button
-        v-for="item in mobileNav.slice(2)"
-        :key="item.key"
-        type="button"
-        class="layout__tab"
-        :class="{ on: isActive(item) }"
-        @click="navigate(item)"
-      >
-        <span class="layout__tab-icon">{{ item.icon }}</span>
-        <span>{{ item.label }}</span>
-      </button>
-    </nav>
+    <!-- 移动底栏（<900）：4 Tab + 中央 FAB -->
+    <ShellTabs
+      :active-path="route.path"
+      @select="onSelect"
+      @record="openRecord"
+      @more="openMore"
+    />
+
+    <!-- 移动「更多」弹层：10 管理项 + 改密 + 退出（不含记一笔） -->
+    <MoreSheet
+      :open="moreOpen"
+      @close="closeMore"
+      @select="onSelectFromSheet"
+      @change-password="goChangePassword"
+      @logout="logout"
+    />
 
     <!-- C-01 单实例：PC 弹窗 / 移动 Sheet / 全屏由同一组件按断点收敛 -->
     <RecordSheet v-if="sheet.isOpen" @close="sheet.close()" />
@@ -240,82 +166,6 @@ function goChangePassword(): void {
   overscroll-behavior: none;
 }
 
-/* ---------- PC 侧栏 ---------- */
-.layout__side {
-  display: none;
-  width: 240px;
-  flex: 0 0 240px;
-  flex-direction: column;
-  background: var(--fb-sidebar);
-  color: var(--fb-side-fg);
-}
-
-.layout__brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 20px;
-  color: var(--fb-white);
-  font-size: 16px;
-  font-weight: 800;
-}
-
-.layout__logo {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  background: var(--fb-blue);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.layout__nav {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px 12px;
-}
-
-.layout__group {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  color: var(--fb-side-head);
-  padding: 14px 12px 6px;
-}
-
-.layout__nav-item {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--fb-side-fg);
-  font-size: 13px;
-  font-family: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.layout__nav-item.on {
-  background: var(--fb-blue);
-  color: var(--fb-white);
-  font-weight: 700;
-}
-
-.layout__nav-icon {
-  width: 19px;
-  text-align: center;
-}
-
-.layout__cta {
-  margin: 12px 16px 18px;
-  width: calc(100% - 32px);
-}
-
 /* ---------- 主区 ---------- */
 .layout__main {
   flex: 1;
@@ -324,30 +174,6 @@ function goChangePassword(): void {
   flex-direction: column;
 }
 
-.layout__top {
-  min-height: 60px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--fb-line);
-  background: var(--fb-card);
-}
-
-.layout__title {
-  font-size: 15px;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.layout__tools {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
 .layout__update {
   display: flex;
   align-items: center;
@@ -360,107 +186,36 @@ function goChangePassword(): void {
   color: var(--fb-warn-ink);
   font-size: 12px;
 }
+
 .layout__update-btn {
+  flex-shrink: 0;
   padding: 4px 12px;
   font-size: 12px;
-  flex-shrink: 0;
 }
 
-.layout__tool {
-  border: 1px solid var(--fb-line);
-  background: var(--fb-card);
-  color: var(--fb-sub);
-  border-radius: var(--fb-radius-pill);
-  padding: 6px 10px;
-  font-size: 12px;
-  font-family: inherit;
-  cursor: pointer;
-}
-
+/* 底部留白 = 底栏 68 + FAB 上溢 24 + 间隙 12（LO-03 复发点，别只改一处） */
 .layout__content {
   flex: 1;
   padding: 16px;
-  padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(104px + env(safe-area-inset-bottom, 0px));
 }
 
 .layout__notice {
   position: fixed;
   left: 50%;
-  transform: translateX(-50%);
-  bottom: calc(84px + env(safe-area-inset-bottom, 0px));
+  bottom: calc(104px + env(safe-area-inset-bottom, 0px));
+  z-index: 40;
   margin: 0;
   padding: 8px 14px;
   border-radius: var(--fb-radius-pill);
   background: var(--fb-sidebar);
   color: var(--fb-white);
   font-size: 12px;
-  z-index: 40;
+  transform: translateX(-50%);
 }
 
-/* ---------- 移动底栏 ---------- */
-.layout__bottom {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: calc(68px + env(safe-area-inset-bottom, 0px));
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  align-items: center;
-  background: var(--fb-card);
-  border-top: 1px solid var(--fb-line);
-  padding-bottom: env(safe-area-inset-bottom, 0px);
-  z-index: 30;
-}
-
-.layout__tab {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  border: none;
-  background: transparent;
-  color: var(--fb-sub);
-  font-size: 11px;
-  font-family: inherit;
-  cursor: pointer;
-}
-
-.layout__tab.on {
-  color: var(--fb-blue);
-  font-weight: 700;
-}
-
-.layout__tab-icon {
-  font-size: 18px;
-  line-height: 1;
-}
-
-.layout__fab {
-  justify-self: center;
-  width: 54px;
-  height: 54px;
-  margin-top: -24px;
-  border: 4px solid var(--fb-card);
-  border-radius: 50%;
-  background: var(--fb-blue);
-  color: var(--fb-white);
-  font-size: 28px;
-  line-height: 1;
-  cursor: pointer;
-  box-shadow: 0 8px 20px var(--fb-shadow-accent);
-}
-
-/* ---------- 断点：与 Flutter 版 isWide(1024) 对齐 ---------- */
-@media (min-width: 1024px) {
-  .layout__side {
-    display: flex;
-  }
-
-  .layout__bottom {
-    display: none;
-  }
-
+/* ---------- 断点 900（LO-04：由 1024 下调，消除 769–1023 的空白带） ---------- */
+@media (min-width: 900px) {
   .layout__content {
     padding: 24px;
     padding-bottom: 24px;
@@ -472,6 +227,7 @@ function goChangePassword(): void {
     margin-right: auto;
   }
 
+  /* PC 无底栏，提示条贴底即可 */
   .layout__notice {
     bottom: 24px;
   }
