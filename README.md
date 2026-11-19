@@ -221,7 +221,7 @@ python -m beancount.scripts.check data/family.beancount   # 激活项目 .venv �
 │   ├── index.html / package.json / vite.config.ts / tsconfig*.json
 │   ├── public/           # sw.js + manifest.json + icons/（PWA 静态资源）
 │   ├── src/              # 源码（api/ core/ router/ stores/ views/ components/）
-│   └── dist/             # 构建产物（gitignore）；dist/legacy/ 为冻结的旧版回滚基准（不入库）
+│   └── dist/             # 构建产物（gitignore）；`/legacy/` 回滚通道已废弃，不再有 dist/legacy/
 ├── scripts/              # local.sh / check-bean / verify-version / smoke / check-test-floor
 ├── Dockerfile            # 三阶段（Node 构建 Vue → Go → alpine 运行时）
 ├── docker-compose.yml    # 家用部署示例

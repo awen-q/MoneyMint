@@ -18,7 +18,7 @@ npm run dev       # 开发服务器（/api 代理到 127.0.0.1:8080）
 npm run build     # vue-tsc + vite build → dist/
 npm run test      # Vitest 全量
 npm run typecheck # vue-tsc --noEmit
-npm run compat    # es2020 语法门禁 + §14.7 API/CSS 特性扫描（扫描 dist/）
+npm run compat    # es2020 语法门禁 + §14.7 API/CSS 特性扫描（构建到 .compat-tmp 后扫描，不碰 dist/）
 ```
 
 或经仓库根 `bash scripts/local.sh web-dev|web-build|web-test|web-typecheck|web-compat`。
@@ -33,10 +33,10 @@ frontend/
 │   ├── api/              # client.ts（X-Ledger-Id 注入/断言、401/428、FormData）、routes、types
 │   ├── core/             # Money / batch3 / m2 纯逻辑 + sync/（离线内核：models/localStore/idbStore/engine）
 │   ├── stores/           # Pinia：session / privacy / recordSheet / sync
-│   ├── views/            # 20 页（登录、流水、账户、报表、恢复/导入向导、同步队列管理等）
+│   ├── views/            # 22 页（账单/搜索/统计/资产/资产统计 + 登录、账户、恢复/导入向导、同步队列等）
 │   ├── components/       # AppLayout / RecordSheet / SyncBadge 等
 │   └── router/           # 懒加载路由 + adminOnly 守卫
-└── dist/                 # 构建产物（不入库）；dist/legacy/ 为冻结的旧版回滚基准（不再重建）
+└── dist/                 # 构建产物（不入库）；`/legacy/` 回滚通道已废弃，不再有 dist/legacy/
 ```
 
 ## 兼容基线（硬约束，CI 门禁）
@@ -44,7 +44,7 @@ frontend/
 - 语法门禁 es2020（放行路由懒加载动态 `import()`）；API/CSS 特性扫描见 `scripts/compat.mjs`
 - 禁用 `.at()` / `structuredClone` / `crypto.randomUUID` / `BroadcastChannel` / `navigator.locks` 等
   Safari 14.1 缺失 API；禁装 ECharts / Vuetify / moment 等（§14.7 清单）
-- Service Worker 只缓存应用壳与静态资源，`/api/*` 与 `/legacy/*` 绝不拦截
+- Service Worker 只缓存应用壳与静态资源，`/api/*` 绝不拦截
 
 ## 版本号
 
