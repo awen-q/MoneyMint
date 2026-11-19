@@ -31,10 +31,6 @@ const TARGETS: readonly NumericTarget[] = [
     file: '../views/AccountDetailView.vue',
     selectors: ['.acctd__hint', '.acctd__preview', '.acctd__warn', '.acctd__row-meta'],
   },
-  {
-    file: '../views/ReportsView.vue',
-    selectors: ['.rpt__count', '.rpt__pct', '.rpt__rank-no', '.rpt__member-name small'],
-  },
   { file: '../views/LedgersView.vue', selectors: ['.ldg__name small', '.ldg__panel p'] },
   // 原「日历格 + 日分组头」落点随旧流水页下线（T38），由账单页日历卡等价承接
   // （同一类：格内金额、日号、日小计都要等宽，否则列会随数字宽度抖动）。
@@ -120,10 +116,4 @@ describe('阶段 3 等宽数字：token 定义与落点', () => {
       }
     })
   }
-
-  it('报告百分比有独立数字落点，金额列仍统一复用 MoneyText', () => {
-    const reports = scopedCssOf('../views/ReportsView.vue')
-    expect(ruleBodyFor(reports, '.rpt__pct')).toContain(NUMERIC_DECLARATION)
-    expect(sourceOf('../views/ReportsView.vue')).toContain('class="fb-muted rpt__pct"')
-  })
 })

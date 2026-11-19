@@ -5,7 +5,7 @@
  * - module 级单例，设置页切换后全站（含所有 View / Canvas）共享同一份状态；
  * - 初值读 localStorage（key = THEME_STORAGE_KEY），无值默认 paper；
  * - setTheme 同步 dataset / localStorage / <meta name="theme-color">，
- *   并调用 refreshThemeTokens() 递增 themeEpoch，触发 ReportCharts 重绘；
+ *   并调用 refreshThemeTokens() 递增 themeEpoch，触发图表组件重绘；
  * - initTheme 在应用启动时把已持久化主题补写回 DOM（此时组件未挂载，不触发重绘）。
  *
  * 兼容约束：不用 .at() / structuredClone 等 Safari 14.1 缺失的 API。

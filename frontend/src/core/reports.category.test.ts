@@ -106,7 +106,7 @@ describe('categoryShares：按 account id 聚合（T39）', () => {
     expect(total).toBe(150)
   })
 
-  it('既有三个字段仍齐备（ReportsView 到期前不能破）', () => {
+  it('既有三个字段仍齐备（旧报表页已下线，但字段契约仍被统计页消费）', () => {
     const rows = categoryShares(TXNS, ACCOUNTS, 'CNY')
     for (const row of rows) {
       expect(typeof row.label).toBe('string')

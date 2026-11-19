@@ -24,12 +24,11 @@ const themeTokensSource = readFileSync(
   fileURLToPath(new URL('./themeTokens.ts', import.meta.url)),
   'utf8',
 )
-const reportChartsSource = readFileSync(
-  fileURLToPath(new URL('../components/ReportCharts.vue', import.meta.url)),
-  'utf8',
-)
-const reportsViewSource = readFileSync(
-  fileURLToPath(new URL('../views/ReportsView.vue', import.meta.url)),
+// 被扫描的「色源消费者」清单（T49 起旧报表页与其图表组件已下线，改扫统计页的
+// 双环卡片：它同样经 `getChartPalette(readThemeTokens())` 取色）。
+// 清单过时会让本测试**静默少扫一个文件**（不报错），改清单时请同步本注释。
+const donutRankSource = readFileSync(
+  fileURLToPath(new URL('../components/stats/DonutRankCard.vue', import.meta.url)),
   'utf8',
 )
 
@@ -123,9 +122,9 @@ describe('阶段 3 图表暖色：单一色源与纸底对比度', () => {
     for (const token of ['chart4', 'chart6', 'chart7', 'chart8', 'chart9', 'chart10']) {
       expect(themeTokensSource).toContain(`tokens.${token}`)
     }
-    expect(reportChartsSource).toContain('getChartPalette(readThemeTokens())')
-    expect(reportsViewSource).toContain('background: var(--fb-chart-4)')
-    expect(reportsViewSource).toContain('background: var(--fb-chart-6)')
-    expect(reportChartsSource).not.toMatch(/#[0-9a-fA-F]{3,8}\b/)
+    // 守卫迁移（T49）：旧报表页下线后，「CSS 变量 → Canvas 调色板」这个唯一入口
+    // 由统计页的双环卡片承接，断言随之改指向它 —— 是迁移而非取消。
+    expect(donutRankSource).toContain('getChartPalette(readThemeTokens())')
+    expect(donutRankSource).not.toMatch(/#[0-9a-fA-F]{3,8}\b/)
   })
 })

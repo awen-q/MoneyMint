@@ -327,7 +327,7 @@ export function trendSeries(
  *   供下钻时构造搜索页筛选条件。
  *
  * 既有三个字段（`label` / `amount` / `ratio`）的名称与含义**一字未改**，
- * `ReportsView.vue`（T49 才下线）仍按旧形状消费。
+ * 消费方：统计页（`views/StatsView.vue`）与其图表卡片；旧报表页已于 T49 下线。
  */
 export interface CategoryShare {
   label: string

@@ -281,8 +281,9 @@ function goSearch(): void {
 }
 
 function goStats(): void {
-  // B4/B5 上线前先落到现网报表页，避免死链。
-  void router.push({ name: 'reports' })
+  // 统计账单页（B4）已上线，直连；不要经由 /reports 中转 —— 那会多一跳，
+  // 且会让读者以为这里还存在一层间接。
+  void router.push({ name: 'stats' })
 }
 </script>
 

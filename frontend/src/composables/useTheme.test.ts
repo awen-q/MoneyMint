@@ -78,7 +78,7 @@ describe('useTheme：切换链路', () => {
     expect(document.documentElement.dataset.theme).toBe('night')
     expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe('night')
     expect(metaColor()).toBe(THEME_COLOR_NIGHT)
-    // refreshThemeTokens 的可观测效果：themeEpoch 递增（ReportCharts watch 由此重绘）。
+    // refreshThemeTokens 的可观测效果：themeEpoch 递增（图表组件 watch 由此重绘）。
     expect(tokens.themeEpoch.value).toBe(before + 1)
 
     composable.setTheme('paper')

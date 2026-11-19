@@ -133,10 +133,15 @@ const routes: RouteRecordRaw[] = [
   },
   // 批 3：管理与设置页（P-11~P-15 / P-17 / P-18；P-16 改密已存在）。
   {
+    // 旧报表页已下线（T49），此处保留**同名路由 + 函数式重定向**：
+    // 1. `name: 'reports'` 必须保留 —— 删了 `push({ name: 'reports' })` 会直接抛错，
+    //    不是 404；
+    // 2. **必须用函数式 redirect 透传 query** —— 对象形式（`{ name: 'stats' }`）会静默
+    //    丢 query，用户看到的是一个「没有筛选条件」的统计页：页面正常打开、不报错，
+    //    只是数据变多（与 /transactions 那次同一个坑）。
     path: '/reports',
     name: 'reports',
-    component: () => import('@/views/ReportsView.vue'),
-    meta: { requiresAuth: true },
+    redirect: (to) => ({ name: 'stats', query: to.query }),
   },
   {
     path: '/members',
