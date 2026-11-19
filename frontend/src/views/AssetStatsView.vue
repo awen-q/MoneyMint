@@ -390,4 +390,17 @@ const currencyOptions = computed(() => {
   color: var(--fb-sub);
   font-size: 11px;
 }
+
+/**
+ * 稿 `page-assetstats` 的返回是 `.back-chip only-mobile`：≥900px 隐藏。
+ *
+ * 理由不是「PC 不需要返回」，而是 PC 有侧栏「资产」入口 —— 两个入口同时出现时，
+ * 「返回资产」会被读成「退出当前账本/页面层级」的语义（与壳层返回键混淆）。
+ * 断点与壳层一致（`AppLayout.vue` / `ShellTabs.vue` 都是 900px）。
+ */
+@media (min-width: 900px) {
+  .astats__back {
+    display: none;
+  }
+}
 </style>
