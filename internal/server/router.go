@@ -84,6 +84,11 @@ func newRouter(h *handler.Handler, svc *service.Service, webRoot string, corsCfg
 	mux.HandleFunc("/api/identity/check", methodSwitch(map[string]http.HandlerFunc{
 		http.MethodGet: h.HandleIdentityCheck,
 	}))
+	// 资产统计（B6）：年度资产 / 负债 / 净资产月度序列（只读，viewer 可读）。
+	// 金额由服务端聚合（big.Rat 定点），前端不再重放全部交易。
+	mux.HandleFunc("/api/assets/series", methodSwitch(map[string]http.HandlerFunc{
+		http.MethodGet: h.HandleAssetSeries,
+	}))
 	mux.HandleFunc("/api/transactions", methodSwitch(map[string]http.HandlerFunc{
 		http.MethodGet:  h.HandleListTransactions,
 		http.MethodPost: h.HandleCreateTransaction,

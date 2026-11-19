@@ -166,7 +166,7 @@ python -m pip install beancount    # 激活 .venv 后执行
 
 ## 7. API 端点清单
 
-> 基线共 **36 条 `/api/` 端点**（下表 36 行 + 末尾 1 行静态回退），0.6.0 新增 **8 条**（文末小节），全仓合计 **44 条**；与 `internal/server/router.go` 的 `mux.HandleFunc` 及 `frontend/src/api/routes.ts` 的常量一一对应；新增端点须三处同步。（按 Q-10：既有 36 行不重排，0.6.0 端点文末顺延编号。）
+> 基线共 **36 条 `/api/` 端点**（下表 36 行 + 末尾 1 行静态回退），0.6.0 新增 **8 条**（文末小节），B6 新增 **1 条**（`/api/assets/series`），全仓合计 **45 条**；与 `internal/server/router.go` 的 `mux.HandleFunc` 及 `frontend/src/api/routes.ts` 的常量一一对应；新增端点须三处同步。（按 Q-10：既有 36 行不重排，0.6.0 / B6 端点文末顺延编号。B6 的 `routes.ts` 常量由前端 T55 补齐。）
 
 | 端点 | 方法 | 鉴权 | 说明 |
 |---|---|---|---|
@@ -235,10 +235,17 @@ python -m pip install beancount    # 激活 .venv 后执行
 >
 > **契约变化（0.6.0 S6）**：交易三签名（流水 list / 详情 / 回收站 trash）服务端按请求用户 + 角色附加 `can_edit` / `can_restore`（additive、omitempty，仅在线 `TransactionView` / `TrashItemView`，**禁止进 sync loadEntity**）；回收站恢复对 viewer / 非成员 403，前端按钮随 `can_restore` 显隐。在线编辑复用记一笔弹窗（RecordSheet 编辑态预填 PATCH），离线时固定提示「修改需联网」、已冲正固定提示「该交易已被冲正，请修改最新版本」。
 
+### B6 新增端点（资产统计，按 Q-10 顺延）
+
+| 端点 | 方法 | 鉴权 | 说明 |
+|---|---|---|---|
+| `/api/assets/series` | GET | 登录+成员（viewer 可读） | B6：`?year=YYYY&commodity=CNY`（`year` 必填四位、`commodity` 缺省取 `ledgers.default_commodity`）→ `200 {commodity, points:[{month:"YYYY-MM", assets, liabilities, net}]}`，**恒 12 个点**（无交易月份也出现，值 `"0.00"`）；金额一律定点两位字符串。口径：**月末末值 = 「次月 1 日日初」**（`t.date < 次月1日`，含月末当天交易；写成月末当天会整体错一个月）；`liabilities` 保持负号**不取 abs**，`net = assets + liabilities` 严格相加（AC-12）；只统计 `commodity` 匹配的分录，不提供跨币种合计。实现在 `repository.BalancesByMonth`（与 `computeBalancesOn` 共用 `postingsBalanceWhere`，一次查询 + 逐月快照，不做 12 次全表扫）。`400` = year 非四位 / 超出 1000~9998 / 账本未设默认币种且未指定 commodity |
+
+> 本端点由 `internal/server/router.go` 与 `AGENTS.md` 两处已同步；`frontend/src/api/routes.ts` 的常量按排期在前端 T55 补齐（同一批前端改动由 fe 负责，避免抢同一个文件）。
+
 ---
 
 ## 8. 约定与惯例（给 AI 的硬约束）
-
 - **金额**：永远用定点十进制字符串或整数最小单位；**禁止浮点参与金额运算/存储**。后端按 commodity precision 格式化；旧版用 `package:decimal`，新版一律走 `frontend/src/core/Money.ts`（`decimal.js`），**禁止 JS 裸 `+/-`**。导出文件必须过 `bean-check`。
 - **Beancount 兼容**：改 `internal/export/beancount.go` / `files.go` 后必须重新跑 bean-check。**测试中 `BEAN_CHECK_STRICT=1` 时找不到校验器即失败**，不要改回静默跳过（会形成「测试全绿但账芯从未被验证」的假绿灯）。
 - **备份必须用 `VACUUM INTO`，禁止复制 db 文件**：WAL 模式下未 checkpoint 的数据在 `-wal` 里。实测主库 188 KB / WAL 4.1 MB 时直接复制只得到 236/300 条记录，且**不报错**。快照后必须过 `PRAGMA integrity_check` 与行数比对。

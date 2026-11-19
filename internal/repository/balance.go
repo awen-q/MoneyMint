@@ -4,12 +4,26 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strconv"
 	"strings"
 
 	"familyledger/internal/domain"
 
 	"github.com/google/uuid"
 )
+
+// postingsBalanceWhere 是「余额口径」的统一 WHERE 片段（不含日期上界）。
+//
+// computeBalancesOn（时点余额：账户卡 / 校准预检）与 BalancesByMonth（资产月度
+// 序列）必须逐字同源，任何一处复制粘贴出第二份 WHERE 都会分叉——典型后果是
+// 「账户卡余额」与「资产曲线」对同一账本给出两个数字，而且两边都不报错。
+//
+// 语义要点（两条都别改）：
+//   - `a.deleted_at IS NULL`：软删账户的历史不参与（账户已不存在）；
+//   - **没有 `a.close_date IS NULL`**：关户 ≠ 钱消失，已关账户的历史余额仍计入
+//     （与资产页「关户仍列出」同一条理由）。
+//   - `t.deleted_at IS NULL`：软删交易不计入。
+const postingsBalanceWhere = ` WHERE a.ledger_id=? AND a.deleted_at IS NULL AND t.deleted_at IS NULL`
 
 // computeBalancesOn 是 ComputeBalances / ComputeBalancesBefore 的共同私有实现
 // （Q-08「单一口径源」）：beforeDate 为空表示无日期上界；非空时只累计
@@ -20,8 +34,7 @@ func computeBalancesOn(e execer, ledgerID int64, beforeDate string) (map[int64]m
 	query := `SELECT p.account_id, p.commodity, CAST(p.amount AS TEXT)
 		 FROM postings p
 		 JOIN accounts a ON a.id=p.account_id
-		 JOIN transactions t ON t.id=p.transaction_id
-		 WHERE a.ledger_id=? AND a.deleted_at IS NULL AND t.deleted_at IS NULL`
+		 JOIN transactions t ON t.id=p.transaction_id` + postingsBalanceWhere
 	args := []any{ledgerID}
 	if beforeDate != "" {
 		query += ` AND t.date < ?`
@@ -80,6 +93,116 @@ func (s *Store) ComputeBalances(ledgerID int64) (map[int64]map[string]string, er
 // 值为 big.Rat 精确有理数（S4 校准预检 / S5 导入预检共用，Q-08）。
 func (s *Store) ComputeBalancesBefore(ledgerID int64, beforeDate string) (map[int64]map[string]*big.Rat, error) {
 	return computeBalancesOn(s.db, ledgerID, beforeDate)
+}
+
+// MonthlyBalance 是某月的资产 / 负债累计末值（big.Rat 精确值，禁止浮点）。
+//
+// liab 保持分录原样符号（Liabilities 分录为负）—— 绝不取 abs：资产统计页的
+// `net = assets + liabilities` 要的是「ΣAssets + ΣLiabilities」这个严格相加
+// 口径（AC-12），把负债取成绝对值会让净资产凭空变大。
+type MonthlyBalance struct {
+	Month       string   // "YYYY-MM"
+	Assets      *big.Rat // Σ Assets 分录
+	Liabilities *big.Rat // Σ Liabilities 分录（负数）
+}
+
+// BalancesByMonth 返回指定年份 1..12 月的资产 / 负债月末末值（恒 12 个点）。
+//
+// **月末末值 = 「次月 1 日日初」**（本接口最容易错的一处：错了不报错，只会让
+// 整条曲线整体错一个月）。computeBalancesOn 的 beforeDate 语义是
+// `t.date < beforeDate`，即「截至该日日初、不含当日」，所以：
+//   - 「2026-01 的值」= 截至 2026-02-01 日初（**含** 2026-01-31 全天交易），
+//   - 「2026-12 的值」= 截至 2027-01-01 日初（**含** 2026-12-31 全天交易）。
+//
+// 传 "2026-01-31" 会漏掉 1 月 31 日当天的全部交易 —— 曲线整体左移一个月。
+//
+// 实现只发一次查询（`t.date < 次年 1 月 1 日`，含该年之前的全部历史，与
+// computeBalancesOn 同一个 WHERE 前缀 postingsBalanceWhere），然后在 Go 里按
+// 日期推进累加，每跨过一个月边界就把当前累计**快照**一次；不做 12 次全表扫。
+//
+// 只统计 commodity 匹配的分录：其它币种的账户余额不进本序列（前端另有单列
+// 口径），本方法也**不提供跨币种合计**。
+func (s *Store) BalancesByMonth(ledgerID int64, year int, commodity string) ([]MonthlyBalance, error) {
+	nextYearStart := fmt.Sprintf("%04d-01-01", year+1)
+	rows, err := s.db.Query(
+		`SELECT t.date, a.type, CAST(p.amount AS TEXT)
+		 FROM postings p
+		 JOIN accounts a ON a.id=p.account_id
+		 JOIN transactions t ON t.id=p.transaction_id`+postingsBalanceWhere+`
+		   AND t.date < ?
+		   AND p.commodity = ?
+		   AND a.type IN (?, ?)
+		 ORDER BY t.date`,
+		ledgerID, nextYearStart, commodity, domain.TypeAssets, domain.TypeLiabilities,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	baseOrdinal := year*12 + 1 // 该年 1 月的月份序数
+	assets := new(big.Rat)
+	liabilities := new(big.Rat)
+	points := make([]MonthlyBalance, 0, 12)
+	next := 0 // 下一个待封存的月份下标（0 = 1 月）
+
+	seal := func() {
+		points = append(points, MonthlyBalance{
+			Month:       fmt.Sprintf("%04d-%02d", year, next+1),
+			Assets:      new(big.Rat).Set(assets),
+			Liabilities: new(big.Rat).Set(liabilities),
+		})
+		next++
+	}
+
+	for rows.Next() {
+		var date, accountType, amount string
+		if err := rows.Scan(&date, &accountType, &amount); err != nil {
+			return nil, err
+		}
+		ordinal, err := monthOrdinal(date)
+		if err != nil {
+			return nil, err
+		}
+		// 当前行已进入更晚的月份 → 先把尚未封存的月份按「截至上月月末」封存。
+		// 封存发生在累加之前，因此边界日的交易一定落在它自己那个月里。
+		for next < 12 && ordinal >= baseOrdinal+next+1 {
+			seal()
+		}
+		r := new(big.Rat)
+		if _, ok := r.SetString(amount); !ok {
+			return nil, fmt.Errorf("数据库金额非法: %q", amount)
+		}
+		if accountType == domain.TypeAssets {
+			assets.Add(assets, r)
+		} else {
+			liabilities.Add(liabilities, r)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// 年内没有后续交易的月份：余额结转到年底（曲线平坦段，前端不能缺点）。
+	for next < 12 {
+		seal()
+	}
+	return points, nil
+}
+
+// monthOrdinal 把 'YYYY-MM-DD' 转成「年×12+月」的单调序数，用于月份边界比较。
+func monthOrdinal(date string) (int, error) {
+	if len(date) < 7 || date[4] != '-' {
+		return 0, fmt.Errorf("数据库交易日期非法: %q", date)
+	}
+	year, err := strconv.Atoi(date[:4])
+	if err != nil {
+		return 0, fmt.Errorf("数据库交易日期非法: %q", date)
+	}
+	month, err := strconv.Atoi(date[5:7])
+	if err != nil || month < 1 || month > 12 {
+		return 0, fmt.Errorf("数据库交易日期非法: %q", date)
+	}
+	return year*12 + month, nil
 }
 
 // AccountBalanceRats 返回某账户按币种精确汇总的余额（big.Rat，禁止浮点）。
