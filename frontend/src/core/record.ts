@@ -350,7 +350,7 @@ export interface BalanceSummaryOptions {
    * 主币种无数据时是否回退到「第一个有数据的币种」。
    *
    * - `true`（**默认**，与历史行为一致）：用于传**账本默认币种**的页面
-   *   （`CommoditiesView` / `ReportsView`）—— 那里 `defaultCommodity` 不是用户
+   *   （如 `CommoditiesView`）—— 那里 `defaultCommodity` 不是用户
    *   显式选的，回退到有数据的币种可避免「首页误显示 0.00」；
    * - `false`：用于传**用户显式选择币种**的页面（资产页）—— 用户选了 USD 却把
    *   CNY 的数字顶上来、标题还写 USD，是静默改口，比显示 0.00 糟得多。

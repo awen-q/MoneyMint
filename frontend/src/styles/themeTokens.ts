@@ -1,7 +1,7 @@
 /**
  * CSS token → JS 的唯一读桥（全站纸质暖色迁移 · 阶段 0）。
  *
- * Canvas 2D 绘制读不到 CSS 变量，因此 ReportCharts 等组件统一从这里取色。
+ * Canvas 2D 绘制读不到 CSS 变量，因此图表组件统一从这里取色（经 getChartPalette）。
  * 唯一色值字面量集中在 DEFAULT_TOKENS，仅当 getPropertyValue 返回空串时兜底
  * （jsdom / SSR / 样式尚未注入），保证阶段 0 视觉零变化。
  *
