@@ -9,8 +9,11 @@
  * 3. **关户仍列出**：只打「已关户」标记，不隐藏 —— 隐藏会让用户以为钱丢了。
  * 4. 金额一律 `MoneyText`（`masked` 透传为 `privacy`），**不写 toFixed / 不拼串**；
  *    资产页的隐私遮罩失效比任何页面都严重。
+ * 5. **组头有「N 个账户 · 另有 $X（USD）」**（稿 1164-1168）：账户数是**去重后的
+ *    账户个数**（一个账户可能有主币种 + 外币两行，数行数会多数），外币金额来自
+ *    `core/assets.ts` 的 `foreignSubtotals`，本组件只是搬上屏。
  */
-import type { AssetGroup } from '@/core/assets'
+import type { AssetGroup, AssetRow } from '@/core/assets'
 import MoneyText from '@/components/MoneyText.vue'
 
 withDefaults(
@@ -24,6 +27,29 @@ withDefaults(
   }>(),
   { masked: false },
 )
+
+/**
+ * 组内**账户**个数（不是行数）。
+ *
+ * 行粒度是「账户 × 币种」，同一账户的 CNY + USD 会出两行；直接用
+ * `rows.length + foreignRows.length` 会把一个账户数成两个，用户看到
+ * 「3 个账户」但列表里只有 2 个名字会以为漏了谁。
+ */
+function accountCount(group: AssetGroup): number {
+  const seen: number[] = []
+  const push = (row: AssetRow): void => {
+    if (seen.indexOf(row.accountId) < 0) {
+      seen.push(row.accountId)
+    }
+  }
+  for (const row of group.rows) {
+    push(row)
+  }
+  for (const row of group.foreignRows) {
+    push(row)
+  }
+  return seen.length
+}
 </script>
 
 <template>
@@ -31,6 +57,13 @@ withDefaults(
     <section v-for="group in groups" :key="group.type" class="asset-group">
       <header class="asset-group__head">
         <span class="asset-group__label">{{ group.label }}</span>
+        <span class="asset-group__count">
+          {{ accountCount(group) }} 个账户<template v-if="group.foreignSubtotals.length > 0"><span
+            v-for="fx in group.foreignSubtotals"
+            :key="fx.commodity"
+            class="asset-group__fx"
+          > · 另有 <MoneyText :amount="fx.amount" :commodity="fx.commodity" :privacy="masked" size="sm" />（{{ fx.commodity }}）</span></template>
+        </span>
         <span class="asset-group__subtotal">
           <MoneyText :amount="group.subtotal" :commodity="commodity" :privacy="masked" size="sm" />
         </span>
@@ -92,12 +125,27 @@ withDefaults(
 }
 
 .asset-group__label {
+  flex: none;
   color: var(--fb-ink);
   font-size: 13px;
   font-weight: 600;
 }
 
+/* 「N 个账户 · 另有 $X（USD）」：占满剩余宽度，小屏可换行，不挤压小计 */
+.asset-group__count {
+  flex: 1;
+  min-width: 0;
+  color: var(--fb-sub);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.asset-group__fx {
+  white-space: nowrap;
+}
+
 .asset-group__subtotal {
+  flex: none;
   font-variant-numeric: var(--fb-font-numeric);
 }
 

@@ -136,3 +136,39 @@ describe('buildAssetBreakdown：顺序稳定', () => {
     expect(breakdown.groups[0].subtotal).toBe('0.00')
   })
 })
+
+/**
+ * 审计 A-7：组头「N 个账户 · 另有 $X（USD）」的**数据来源**。
+ *
+ * 这两条钉住的是「按币种各算各的」——一旦有人把外币累进一个小计（跨币种求和），
+ * 第二个用例里的 `||` 断言就会红。
+ */
+describe('buildAssetBreakdown：外币分币种小计（组头「另有」）', () => {
+  const MULTI: SummaryAccount[] = [
+    account({ id: 1, name: 'Assets:Bank:CNY', display_name: '招商储蓄', type: 'Assets', sort_order: 1, balances: { CNY: '12000.00' } }),
+    account({ id: 2, name: 'Assets:Bank:USD', display_name: '美元户', type: 'Assets', sort_order: 2, balances: { USD: '150.00' } }),
+    account({ id: 3, name: 'Assets:Bank:EUR', display_name: '欧元户', type: 'Assets', sort_order: 3, balances: { EUR: '40.00' } }),
+    account({ id: 4, name: 'Assets:Bank:USD2', display_name: '美元户 2', type: 'Assets', sort_order: 4, balances: { USD: '10.00' } }),
+  ]
+
+  it('同一外币的多行合并成一个币种小计，且按币种代码字典序', () => {
+    const assets = buildAssetBreakdown(MULTI, 'CNY').groups[0]
+    expect(assets.foreignSubtotals).toEqual([
+      { commodity: 'EUR', amount: '40.00' },
+      { commodity: 'USD', amount: '160.00' },
+    ])
+  })
+
+  it('外币小计**不**并进主币种小计（跨币种求和永远是错的）', () => {
+    const assets = buildAssetBreakdown(MULTI, 'CNY').groups[0]
+    expect(assets.subtotal).toBe('12000.00')
+    // 反向断言：150 + 40 + 10 一旦被加进来，这里就不是 12000.00
+    expect(assets.subtotal).not.toContain('12200')
+    expect(assets.subtotal).not.toContain('12160')
+  })
+
+  it('没有外币时是空数组（不是 undefined，组件不用判空）', () => {
+    const assets = buildAssetBreakdown(ACCOUNTS, 'CNY').groups[1]
+    expect(assets.foreignSubtotals).toEqual([])
+  })
+})

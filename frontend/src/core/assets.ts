@@ -41,6 +41,13 @@ export interface AssetRow {
   closed: boolean
 }
 
+/** 外币小计：**按币种各算各的**，供组头「另有 $X（USD）」一句展示。 */
+export interface AssetForeignSubtotal {
+  commodity: string
+  /** 该币种在本组内的合计（定点串，符号如实）。 */
+  amount: string
+}
+
 /** 一个账户组（资产 / 负债）。 */
 export interface AssetGroup {
   type: AssetGroupType
@@ -52,6 +59,14 @@ export interface AssetGroup {
   rows: AssetRow[]
   /** 外币行（自身币种展示；**不进** `subtotal`）。 */
   foreignRows: AssetRow[]
+  /**
+   * 外币分币种小计（按币种代码字典序，空数组表示本组没有外币）。
+   *
+   * 这是「另有 $X（USD）」那句的唯一数据来源：**组件不做金额加法**，
+   * 与 `subtotal` 同一次遍历产出，避免两处口径漂移。
+   * 仍然**不提供**跨币种合计 —— 那是错的。
+   */
+  foreignSubtotals: AssetForeignSubtotal[]
 }
 
 /** 整页所需的分组结构。 */
@@ -135,6 +150,8 @@ export function buildAssetBreakdown(
     const list = buckets[type].slice().sort(compareAccount)
     const rows: AssetRow[] = []
     const foreignRows: AssetRow[] = []
+    /** 外币分币种累加器：币种 → 定点金额（**每个币种各算各的**）。 */
+    const foreignTotals: Record<string, Money> = {}
     let subtotal = Money.zero()
 
     for (const account of list) {
@@ -182,6 +199,8 @@ export function buildAssetBreakdown(
         }
         if (isForeign) {
           foreignRows.push(row)
+          const previous = foreignTotals[code]
+          foreignTotals[code] = previous === undefined ? amount : previous.plus(amount)
           if (foreignSeen.indexOf(code) < 0) {
             foreignSeen.push(code)
           }
@@ -194,12 +213,17 @@ export function buildAssetBreakdown(
       }
     }
 
+    const foreignSubtotals: AssetForeignSubtotal[] = Object.keys(foreignTotals)
+      .sort()
+      .map((code) => ({ commodity: code, amount: foreignTotals[code].toString() }))
+
     groups.push({
       type,
       label: GROUP_LABELS[type],
       subtotal: subtotal.toString(),
       rows,
       foreignRows,
+      foreignSubtotals,
     })
   }
 

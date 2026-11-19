@@ -103,6 +103,20 @@ const netNegative = computed(() => {
   color: var(--fb-ink);
 }
 
+/*
+ * 净资产字号 34px（稿 532 `.hh-net`）。
+ *
+ * `MoneyText size="lg"` 是 30px，而**小票** `ReceiptSlip` 也吃 lg 档 —— 为资产页
+ * 一处去改共享档位会连带改小票，所以在这里局部覆盖（与 `ReceiptSlip` /
+ * `AccountDetailView` 已有的 `:deep(.money-text)` 用法一致）。
+ *
+ * 负号配色不用管：`MoneyText` 的 `.money-text--negative` 已把负金额染成
+ * `--fb-danger`，净资产为负时数字本身就是刺眼的（审计 A-4 实测已满足）。
+ */
+.asset-hero__net :deep(.money-text) {
+  font-size: 34px;
+}
+
 /* 负净资产用危险色的 ink 档（soft 底上达 AA），但**只改颜色不改数字** */
 .asset-hero__neg-note {
   margin: 6px 0 0;
