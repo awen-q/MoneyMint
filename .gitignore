@@ -58,3 +58,8 @@ Thumbs.db
 # Agent working memory (local only)
 .workbuddy/
 .trae/
+
+# HTML-share 工具产物：内含 docs/reports-redesign-* 的打包副本（zip）。
+# 那批设计文档永久不入库，这些副本同样不得提交——留着不忽略的话，
+# 一次 `git add -A` 就会把不该进仓库的设计稿带进去。
+.trae-html-share-packages/
