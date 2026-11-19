@@ -10,7 +10,7 @@
 
 > **当前状态（2026-11-12，批 6 cutover 完成）**：M7 前端全量重构批 0~6 全部落地，
 > **Vue 3 + Vite 纯 SPA 已是唯一前端**；Flutter 版源码与构建链已清退（git 历史可查），
-> `frontend/dist/legacy/` 为冻结的旧版回滚基准（不入库、不再重建）。
+> `/legacy/` 回滚通道已于批 6 后废弃（无产物、无脚本；需要旧版只能从 git 历史重建）。
 > 想直接跑起来用，按下面「快速开始」即可；架构与约定看 [`AGENTS.md`](AGENTS.md)。
 
 ## 特性
@@ -105,7 +105,7 @@ LEDGER_DB=data/ledger.db LEDGER_WEB_ROOT=frontend/dist go run ./cmd/server
 | `LEDGER_AUTH_COOKIE` | `true` | 会话用 httpOnly Cookie 承载；`false` 完全退回 Bearer（不校验 CSRF） |
 | `LEDGER_COOKIE_SECURE` | `false` | `Set-Cookie` 的 `Secure`；HTTPS 部署置 `true` |
 | `LEDGER_CORS_ORIGINS` | 空 | 跨域来源白名单（逗号分隔）；空=仅同源，`*`=通配但不带凭证 |
-| `LEDGER_AUTH_EXPOSE_TOKEN` | `false` | 登录/刷新响应体是否返回 `token`；cutover 后默认关闭（Vue 版只靠 Cookie）。需临时回滚 `/legacy/` 旧版时设 `true` |
+| `LEDGER_AUTH_EXPOSE_TOKEN` | `false` | 登录/刷新响应体是否返回 `token`；cutover 后默认关闭（Vue 版只靠 Cookie）。仅供脚本化 Bearer 客户端显式开启 |
 | `TZ` | `Asia/Shanghai` | 时区（交易日与备份时间依赖它） |
 
 > 全部配置在启动时由 `config.Validate()` 集中校验，非法值立即失败而非静默回退。
@@ -126,7 +126,7 @@ LEDGER_DB=data/ledger.db LEDGER_WEB_ROOT=frontend/dist go run ./cmd/server
 登录 / 刷新 / 改密会下发 `fambean_session` httpOnly Cookie（`SameSite=Lax`、`Path=/`、30 天）。
 **Cookie 会话的非 GET 请求必须带 `X-CSRF` 自定义头**，缺失返回 403 `csrf_required`；
 显式 `Authorization: Bearer` 的请求豁免。cutover 后 `LEDGER_AUTH_EXPOSE_TOKEN`
-默认 `false`，响应体不再向 JS 暴露 token（防 XSS 偷凭据）；仅回滚 `/legacy/` 旧版时设回 `true`。
+默认 `false`，响应体不再向 JS 暴露 token（防 XSS 偷凭据）；仅当脚本 / 第三方客户端需要直接拿 Bearer token 时才设回 `true`（`/legacy/` 回滚通道已废弃，与此开关无关）。
 
 ### 注册开关
 
@@ -222,7 +222,7 @@ python -m beancount.scripts.check data/family.beancount   # 激活项目 .venv �
 │   ├── public/           # sw.js + manifest.json + icons/（PWA 静态资源）
 │   ├── src/              # 源码（api/ core/ router/ stores/ views/ components/）
 │   └── dist/             # 构建产物（gitignore）；dist/legacy/ 为冻结的旧版回滚基准（不入库）
-├── scripts/              # local.sh / check-bean / verify-version / smoke / check-legacy / check-test-floor
+├── scripts/              # local.sh / check-bean / verify-version / smoke / check-test-floor
 ├── Dockerfile            # 三阶段（Node 构建 Vue → Go → alpine 运行时）
 ├── docker-compose.yml    # 家用部署示例
 └── data/                 # 运行时 SQLite 与 backups/（git 忽略）

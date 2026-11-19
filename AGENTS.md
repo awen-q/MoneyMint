@@ -21,11 +21,11 @@
 |---|---|---|
 | 技术 | **Vue 3 + Vite 纯 SPA**（不引入 Nuxt / SSR / Nitro）+ Pinia + Vue Router + 离线同步内核 | Flutter Web（PWA），MVVM |
 | 源码 | `frontend/index.html`、`frontend/src/`、`frontend/public/` | ~~`frontend/lib/`、`frontend/test/`、`pubspec.*`~~ 已 `git rm`（批 6），需要时从 git 历史找回 |
-| 产物 | `frontend/dist/`（gitignore），由 `LEDGER_WEB_ROOT` 托管；Docker 镜像内 `/app/web` | `frontend/dist/legacy/` 为**冻结的回滚基准**（不入库、不再重建；`check-legacy.sh` 仍可校验） |
+| 产物 | `frontend/dist/`（gitignore），由 `LEDGER_WEB_ROOT` 托管；Docker 镜像内 `/app/web` | `/legacy/` **回滚通道已废弃**（批 6 后：无静态托管、无产物目录、无校验脚本；需要旧版只能从 git 历史重建） |
 
 - **批 0~6 全部落地**（2026-11-12 交付）：36 端点、迁移 014 库世代、恢复/导入向导（P-19/P-20）、离线同步内核（`src/core/sync/`，9 份真实契约样本 + 14 引擎用例）、PWA（`public/sw.js`）、CI `web-verify` job、Dockerfile Node 构建、工具链钉版（`.nvmrc` 22.23.4 / `engines >=22.22 <23` / `engine-strict`）。
 - Vitest **301/301 通过**（37 文件）；`go build` / `go vet` / `go test ./...` 全绿。
-- `LEDGER_AUTH_EXPOSE_TOKEN` 默认已改 `false`（Vue 版只靠 httpOnly Cookie，D-7）；回滚 `/legacy/` 时显式设 `true`。
+- `LEDGER_AUTH_EXPOSE_TOKEN` 默认 `false`（Vue 版只靠 httpOnly Cookie，D-7）；仅当脚本 / 第三方客户端需要从响应体取 Bearer token 时才显式设 `true`（与已废弃的 `/legacy/` 无关）。
 - 后端与账芯**不变**：复式借贷平衡、append-only 不可变交易、`bean-check` 导出校验、离线同步协议全部保留。
 
 **核心不变约束**：导出的 `.beancount` 必须能被 `bean-check` 直接校验通过（退出码 0、无报错）。
@@ -80,8 +80,8 @@ python -m pip install beancount    # 激活 .venv 后执行
 │   ├── package.json / vite.config.ts / tsconfig*.json / .nvmrc / .npmrc
 │   ├── public/           # sw.js + manifest.json + icons/ + favicon.png（PWA 静态资源）
 │   ├── src/              # 源码：api/ core/（含 sync/ 离线内核） router/ stores/ styles/ views/ components/ + main.ts / App.vue
-│   └── dist/             # 构建产物（gitignore）；dist/legacy/ 为冻结的旧版回滚基准（不入库）
-├── scripts/              # check-bean / verify-version / smoke / rehearsal / local.sh / check-legacy / check-test-floor.mjs / compat.mjs
+│   └── dist/             # 构建产物（gitignore）；`/legacy/` 回滚通道已废弃，不再有 dist/legacy/
+├── scripts/              # check-bean / verify-version / smoke / rehearsal / local.sh / check-test-floor.mjs / compat.mjs
 └── data/                 # 运行时 SQLite（git 忽略）；backups/ 也在其下
 ```
 
@@ -91,7 +91,7 @@ python -m pip install beancount    # 激活 .venv 后执行
 - `api/{types,routes,errors,client}.ts`：40 条路由常量（= 后端 41 路径 − 1 条待 T55 补）手写 TS 类型 / 路由常量 / `ApiError` / 类型化 fetch 客户端（401 single-flight / 428 / `X-Ledger-Id` 断言 / FormData 上传；**不生成** OpenAPI）。
 - `stores/`：`session / privacy / recordSheet / sync`；views 20 页 + components（AppLayout / RecordSheet / SyncBadge 等）。
 - `vite.config.ts`：`base: './'`、`build.target: 'es2015'`、`@vitejs/plugin-legacy`（`targets: Safari >= 14`）、`outDir: 'dist'`、`server.proxy['/api'] → 127.0.0.1:8080`、alias `@`、`define.__APP_VERSION__` 读 package.json。
-- PWA：`public/sw.js` 只缓存应用壳与静态资源（`/api/*`、`/legacy/*` 绝不拦截），activate 清理非 fambean 前缀旧缓存（含 Flutter 时代 SW 缓存）；`core/pwa.ts` 更新提示不自动打断录入（AC-35）。
+- PWA：`public/sw.js` 只缓存应用壳与静态资源（`/api/*` 绝不拦截），activate 清理非 fambean 前缀旧缓存（含 Flutter 时代 SW 缓存）；`core/pwa.ts` 更新提示不自动打断录入（AC-35）。
 - **兼容基线**：语法门禁 es2020 + `compat.mjs` API/CSS 特性扫描；禁用 Safari 14.1 缺失 API（`.at()` / `structuredClone` 等）。
 
 ---
@@ -133,9 +133,9 @@ python -m pip install beancount    # 激活 .venv 后执行
 - 注册语义：首个注册用户创建默认账本并成为 owner；后续注册仅建账号，等待 owner 按用户名添加为成员（业务端点对未加入者返回 403）。
 - 成员管理仅 owner 可操作（列表/添加/改角色/移除/重置密码——重置使该用户全部会话失效）。角色：`owner | editor | viewer`。
 - `authMiddleware` 包裹所有业务路由；放行 `/api/health` 与 register/login；自服务端点仅需登录态，业务端点额外校验为账本成员。
-- **会话凭据（D-7 = A，已实现）**：默认优先读 `fambean_session` httpOnly Cookie（`Path=/`、`SameSite=Lax`、30 天；内网 HTTP 不设 `Secure`），`Authorization: Bearer` 兜底；空串视为未登录，旧版 `/legacy/` 继续用 Bearer 不受影响。**Bearer 分支在观察期结束前不得删除。**
+- **会话凭据（D-7 = A，已实现）**：默认优先读 `fambean_session` httpOnly Cookie（`Path=/`、`SameSite=Lax`、30 天；内网 HTTP 不设 `Secure`），`Authorization: Bearer` 兜底；空串视为未登录；Bearer 兜底继续有效（脚本 / 第三方客户端走这条）。**Bearer 分支在观察期结束前不得删除。**
 - **CSRF 只约束 Cookie 路径**：非 GET/HEAD/OPTIONS 的 Cookie 会话必须带 `X-CSRF`，缺失 403 `csrf_required`；显式 Bearer 请求豁免。`LEDGER_AUTH_COOKIE=false` 时完全退回 Bearer 旧行为（不下发、不读取 Cookie，也不要求 CSRF）。
-- **兼容期**：`LEDGER_AUTH_EXPOSE_TOKEN` 默认 `false`（Vue 版只靠 httpOnly Cookie）；仅回滚 `/legacy/` 旧版时显式置 `true`，届时登录 / 刷新 / 改密响应体返回 `token` 供旧版使用。
+- **兼容期**：`LEDGER_AUTH_EXPOSE_TOKEN` 默认 `false`（Vue 版只靠 httpOnly Cookie）；仅当脚本 / 第三方客户端需要从响应体取 Bearer token 时显式置 `true`（届时登录 / 刷新 / 改密响应体返回 `token`）。`/legacy/` 回滚通道已废弃，不存在「回滚时开开关」这回事。
 - 登录失败限流：`LEDGER_LOGIN_MAX_ATTEMPTS` / `WINDOW_MINUTES` / `LOCKOUT_MINUTES`；强制改密态对业务端点返回 **428**，新前端需跳改密页而非显示通用错误。
 
 ---
@@ -171,7 +171,7 @@ python -m pip install beancount    # 激活 .venv 后执行
 | 端点 | 方法 | 鉴权 | 说明 |
 |---|---|---|---|
 | `/api/health` | GET | 公开 | `{"status":"ok","instance_id":"..."}`（库世代；读取失败时降级为不带该字段，公开端点永不失败） |
-| `/api/auth/register` | POST | 公开 | 首个用户建默认账本成 owner，后续仅建账号待邀请；下发 httpOnly Cookie（**默认响应体不含 token**，回滚 `/legacy/` 需 `LEDGER_AUTH_EXPOSE_TOKEN=true`） |
+| `/api/auth/register` | POST | 公开 | 首个用户建默认账本成 owner，后续仅建账号待邀请；下发 httpOnly Cookie（**默认响应体不含 token**；脚本化 Bearer 客户端需 `LEDGER_AUTH_EXPOSE_TOKEN=true`） |
 | `/api/auth/login` | POST | 公开 | 登录，下发 Cookie |
 | `/api/auth/logout` | POST | 登录 | 注销当前会话并清 Cookie |
 | `/api/auth/me` | GET | 登录 | 当前用户（role 恒空串） |
@@ -256,7 +256,7 @@ python -m pip install beancount    # 激活 .venv 后执行
 - **不可变**：交易一旦创建不原地改；改账 = 新增冲正交易。
 - **会话安全**：token 不落 `localStorage` / URL；Cookie 路径非 GET 必须带 `X-CSRF`；`SameSite=None` 禁用；Bearer 兜底观察期结束前不删。
 - **兼容基线（iOS 14.8 / Safari 14.1.2）**：`build.target: 'es2015'` + plugin-legacy；**禁 WASM / WebGL / CanvasKit / OffscreenCanvas**；禁用 `structuredClone` / `crypto.randomUUID` / `.at()` / `findLast` / `Object.hasOwn` / `showModal` / `BroadcastChannel` / `navigator.locks`；CSS 不用 `aspect-ratio` / `:has()` / `dvh` / `inset`。`es-check` 只查语法，须另补 API / CSS 扫描；**升级任何前端依赖都要过 AC-19 与真机冒烟**，不允许「本地能跑就升」。
-- **`/legacy/` 回滚（冻结基准）**：`frontend/dist/legacy/` 是 cutover 前用 `--base-href /legacy/` 重建复制的产物，现已冻结（不再重建）。`npm run build` 的 `emptyOutDir` 会清空 `dist/`，**需要保留回滚能力时先备份该目录**，或从 git 历史（批 ≤5）找回；回滚旧版必须同时设 `LEDGER_AUTH_EXPOSE_TOKEN=true`。旧 SW 清理已由 Vue 版 `public/sw.js` activate 步骤覆盖（删除非 fambean 前缀缓存；旧 `flutter_service_worker.js` 404 后浏览器自动注销）。
+- **`/legacy/` 回滚通道已废弃（批 6 之后）**：后端 `static.go` 从来没有 `/legacy/` 托管，该通道一直是「一个产物目录 + 一个校验脚本 + 一堆文档承诺」；目录被 `npm run build` 的 `emptyOutDir` 清掉、`scripts/check-legacy.sh` 也已删除。需要旧版只能从 git 历史（批 ≤5）重建源码，**不存在「打开开关就能回滚」这回事**。旧 SW 清理已由 Vue 版 `public/sw.js` activate 步骤覆盖（删除非 fambean 前缀缓存；旧 `flutter_service_worker.js` 404 后浏览器自动注销）。
 - **注释语言**：代码注释用中文；保留 `schema.sql` 中 Beancount 映射注释。
 
 ---
@@ -270,7 +270,7 @@ python -m pip install beancount    # 激活 .venv 后执行
 **遗留 / 注意**：
 1. `package-lock.json` 在 Linux（CI ubuntu）上的 `npm ci` 与 Dockerfile Node 构建，以 GitHub Actions `web-verify` / 镜像构建的运行记录为准，别把「配置写了」当成「已经跑过」；若失败按 lock 缺平台二进制处理（重新在 Linux 生成）。
 2. `docs/` 现存 `0.6.0-prd.md`（产品口径）与 `0.6.0-design.md`（架构设计）两份权威文档（原名 `0.5.2-*`，2026-11-15 老板指令更名对齐版本号，已标记「已交付」）；19 份旧阶段文档仅存 git 历史。
-3. `frontend/dist/legacy/` 为**冻结回滚基准**（不入库，需从 git 历史重建）；`web-build` 的 `emptyOutDir` 会清掉它——需要回滚能力时从 `d297318` 之前的 git 历史重建。回滚旧版须同时设 `LEDGER_AUTH_EXPOSE_TOKEN=true`。
+3. `/legacy/` **回滚通道已废弃**（批 6 后：无静态托管、无产物目录、无校验脚本）。`web-build` 的 `emptyOutDir` 会清空 `frontend/dist`，旧版产物不可能常驻；需要旧版只能从 `d297318` 之前的 git 历史（Flutter 源码）重建。
 4. `CHANGELOG.md` 顶部为 `[0.6.0] - 2026-11-15`，`frontend/package.json` / `docker-compose.yml` / `README.md` 镜像示例已同步 0.6.0；git tag `v0.6.0` 已于 QA 二轮通过后补打（QA 回归全过：三缺陷修复确认无回归），`scripts/verify-version.sh` 无参模式恢复 EXIT=0。
 5. 真机双端联调（浏览器 A/B 同时在线、离线多设备端到端）与批 5 离线链路真机冒烟尚未完整确认。
 6. 下期（M4+）：OFX/CSV 自动导入、Beancount 子集外通用语法（cost 注解 / 价格指令等）、价格 CRUD、规则引擎、Postgres 横向扩展。0.6.0 的遗留实现细节与开放项以 `docs/0.6.0-prd.md` §9 留档为准（N-12）。
@@ -331,10 +331,9 @@ bash scripts/local.sh web-dev       # Vite dev server（/api → 127.0.0.1:8080�
 bash scripts/local.sh web-test      # Vitest
 bash scripts/local.sh web-typecheck # vue-tsc --noEmit
 bash scripts/local.sh web-compat    # es-check es2020 语法门禁 + §14.7 API/CSS 扫描（scripts/compat.mjs，构建到 .compat-tmp 不碰 dist）
-bash scripts/local.sh check-legacy  # 校验冻结的 dist/legacy 回滚基准基路径
 ```
 
-> `web-build` 会清空 `frontend/dist`（含其中的 `dist/legacy/`），需要回滚基准时先备份该目录。
+> `web-build` 会清空 `frontend/dist`；`/legacy/` 回滚通道已废弃，无需再备份旧产物目录。
 > 版本号以 `frontend/package.json` 为准，与 CHANGELOG / git tag 三处一致（`verify-version.sh` 校验）。
 > 前端门禁已进 CI：`web-verify` job（npm ci → vitest + 用例数下限 → typecheck → build → compat）。
 
@@ -359,7 +358,7 @@ bash scripts/local.sh check-legacy  # 校验冻结的 dist/legacy 回滚基准�
 | `LEDGER_AUTH_COOKIE` | `true` | 会话是否用 httpOnly Cookie；`false` 完全退回 Bearer（不下发/不读 Cookie、不校验 CSRF） |
 | `LEDGER_COOKIE_SECURE` | `false` | `Set-Cookie` 的 `Secure`；HTTPS 部署置 `true`（内网 HTTP 保持默认） |
 | `LEDGER_CORS_ORIGINS` | 空 | 跨域来源白名单（逗号分隔）；空=仅同源不输出 CORS 头，`*`=通配但不带凭证 |
-| `LEDGER_AUTH_EXPOSE_TOKEN` | `false` | 登录/刷新/改密响应体是否返回 `token`；cutover 后默认关闭（Vue 版只靠 Cookie）。仅回滚 `/legacy/` 旧版时设 `true` |
+| `LEDGER_AUTH_EXPOSE_TOKEN` | `false` | 登录/刷新/改密响应体是否返回 `token`；cutover 后默认关闭（Vue 版只靠 Cookie）。仅供脚本化 Bearer 客户端显式开启（与已废弃的 `/legacy/` 无关） |
 | `BEAN_CHECK_STRICT` | 空 | 测试用；`1` 时找不到 bean-check 直接失败（CI 必设） |
 
 > `config.Validate()` 启动时校验备份小时、保留份数、登录限流与 CORS 来源格式，非法即刻失败（快速失败，不静默回退）。

@@ -105,11 +105,11 @@ Get-NetIPAddress -AddressFamily IPv4 |
 - [ ] G2 A/B 同时建同名账户：服务端自然键合并，两端 uuid 已重映射
 - [ ] G3 A 删除交易，B 刷新：B 侧消失，B 离线队列无残留
 
-## H. PWA 与回滚
+## H. PWA
 
 - [ ] H1 发新构建后重开：出现「有新版本可用」，点更新才刷新
 - [ ] H2 断网重开：应用壳可开不白屏，API 明确报离线
-- [ ] H3 访问 `/legacy/`：旧版可打开、可登录（需 `LEDGER_AUTH_EXPOSE_TOKEN=true`）
+- [ ] H3 ~~访问 `/legacy/`~~ **已废弃（N/A）**：`/legacy/` 回滚通道已下线 —— 无静态托管、无产物目录、无校验脚本（见 `AGENTS.md` §1）。本条**保留编号不删除**，只为让 H1/H2/H4 的引用不位移；执行的记 `N/A`，不要记 `✗`
 - [ ] H4 观察 `/api/*`：不被 Service Worker 缓存
 
 ## I. 五视图（v4 主链）
@@ -336,7 +336,7 @@ Get-NetIPAddress -AddressFamily IPv4 |
 
 `A1` `B2` `B3` `B4` `C1` `C6` `D5` `E5` `F1` `F7`
 
-- PWA 安装态（A3/B4）与 `/legacy/`（H3）无条件测时标 `BLOCKED` 并写原因，不算通过
+- PWA 安装态（A3/B4）无条件测时标 `BLOCKED` 并写原因，不算通过（`/legacy/`（H3）已废弃，不再是阻塞项）
 - 全部通过后填写下方记录表
 
 > **前置状态快照（写于 B4 收口时点 `7bcf460`）**：本清单里凡写「当前是 X」的地方都是那一刻的 X。

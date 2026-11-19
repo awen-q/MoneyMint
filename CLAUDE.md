@@ -4,7 +4,7 @@
 
 ## 先读这三件事
 
-1. **M7 全量重构已 cutover 收官（批 0~6，2026-11-12）**：**Vue 3 + Vite SPA 是唯一前端**（`frontend/src/` → `frontend/dist`，由 `LEDGER_WEB_ROOT` 托管）。Flutter Web 源码与构建链已 `git rm`（commit `d297318`，需时从 git 历史找回），`frontend/dist/legacy/` 是**冻结的回滚基准**（不入库、不再重建）。
+1. **M7 全量重构已 cutover 收官（批 0~6，2026-11-12）**：**Vue 3 + Vite SPA 是唯一前端**（`frontend/src/` → `frontend/dist`，由 `LEDGER_WEB_ROOT` 托管）。Flutter Web 源码与构建链已 `git rm`（commit `d297318`，需时从 git 历史找回），`/legacy/` 回滚通道已废弃（无静态托管、无产物目录、无校验脚本）。
 2. **别把方案当现状，也别把旧文档当现状**：批 0~6 均已实现——20 页全量覆盖、36 端点、`core/Money`、离线同步内核 `core/sync/`、迁移 013/014、M2 恢复/导入四端点、PWA `public/sw.js`、CI `web-verify` job、Dockerfile Node 构建、工具链钉版。判断「有没有」**以代码为准**。
 3. **账芯不可动**：复式借贷平衡、append-only 不可变交易、导出必须过 `bean-check`、定点十进制金额。改的是前端，不是全栈。
 
@@ -20,10 +20,9 @@
 | 起后端（托管 `frontend/dist`） | `bash scripts/local.sh dev` |
 | Vue 构建 / 开发服务器 | `bash scripts/local.sh web-build` / `web-dev` |
 | Vue 单测 / 类型 / 兼容扫描 | `bash scripts/local.sh web-test` / `web-typecheck` / `web-compat` |
-| 校验冻结的 `/legacy/` 回滚基准 | `bash scripts/local.sh check-legacy` |
 
 - `web-dev` 的 `/api` 已由 `vite.config.ts` 代理到 `127.0.0.1:8080`，**前端代码一律用相对 `/api`**。
-- **`web-build` 会清空 `frontend/dist`（含 `dist/legacy/`）**。需要保留回滚基准时**先备份该目录**，或从 git 历史（批 ≤5）重建。
+- **`web-build` 会清空 `frontend/dist`**（`emptyOutDir`）。`/legacy/` 回滚通道已废弃，不需要再备份旧产物；要旧版只能从 git 历史（批 ≤5）重建。
 - Node 需 22.x（`engines >=22.22 <23`，`engine-strict=true`），仅构建阶段需要。
 - Python 只用于 `bean-check`，**一律用项目内 `.venv` 的 Python 以模块方式调用**（`-m beancount.scripts.check <file>`）。不在项目外创建 venv / 装包 / 跑脚本。
 
@@ -46,14 +45,14 @@
 | 离线同步内核 | `frontend/src/core/sync/{models,localStore,idbStore,engine}.ts` + `fixtures/`（9 份真实契约样本，其中 6 份被引擎用例引用） |
 | 构建与兼容基线 | `frontend/vite.config.ts`、`frontend/package.json`、`frontend/.nvmrc` |
 | CI 前端门禁 | `.github/workflows/docker-image.yml` 的 `web-verify` job、`scripts/check-test-floor.mjs` |
-| 旧版回滚（冻结基准） | `scripts/check-legacy.sh`、`frontend/dist/legacy/` |
+| 旧版回滚 | **已废弃**（批 6 后无产物、无脚本；只能从 git 历史重建） |
 
 ## 硬约束（违反即返工）
 
 - **金额**：禁止浮点参与运算/存储。只走 `core/Money.ts`（`decimal.js`，只收 string、`ROUND_HALF_UP`）；后端写定点十进制字符串。
 - **Beancount**：改导出器后必须重跑 `bean-check`；`BEAN_CHECK_STRICT=1` 找不到校验器就必须失败，不许改回静默跳过。
 - **迁移**：schema 改动一律追加 `migrate.go` 迁移并记 `schema_migrations`，不手改线上库。幂等索引用 `ON CONFLICT(ledger_id, client_request_id) WHERE client_request_id IS NOT NULL`。
-- **认证**：token 不落 `localStorage` / URL；Cookie 路径非 GET 必须带 `X-CSRF`；`SameSite=None` 禁用；**服务端 Bearer 双读兜底保留**（`LEDGER_AUTH_EXPOSE_TOKEN` 默认 `false`，响应体不再向 JS 暴露 token；仅回滚 `/legacy/` 时显式设 `true`）。
+- **认证**：token 不落 `localStorage` / URL；Cookie 路径非 GET 必须带 `X-CSRF`；`SameSite=None` 禁用；**服务端 Bearer 双读兜底保留**（`LEDGER_AUTH_EXPOSE_TOKEN` 默认 `false`，响应体不再向 JS 暴露 token；仅供脚本化 Bearer 客户端显式设 `true`）。
 - **多账本**：业务请求必须带 `X-Ledger-Id`；新 API 客户端缺失即抛错，**绝不静默回退默认账本 id=1**。`/api/import/*` 与 `/api/db/*` 属账本上下文豁免路径。
 - **posting 字段**：在线 `POST /api/transactions` 用 `account_id`（整数）；离线 `sync/push` 用 `account_uuid`（字符串）。混用必错。
 - **不可变**：改账 = 新增冲正交易，删除 = 软删；交易不原地改。
@@ -64,10 +63,10 @@
 
 ## 不要做（未经明确指示）
 
-- 不要试图恢复 Flutter 构建链 / 重建 `pubspec.*` / 再引入 `web-legacy` 目标——批 6 已清退，回滚基准是冻结产物。
+- 不要试图恢复 Flutter 构建链 / 重建 `pubspec.*` / 再引入 `web-legacy` 目标——批 6 已清退；`/legacy/` 回滚通道也已废弃（要旧版从 git 历史重建）。
 - 不要把 Vue 产物输出到 `frontend/web/`，正确落点是 `frontend/dist/`（`emptyOutDir` 会清空目标目录）。
 - 不要提前引入 SSR / Nuxt / Node 运行时；不要为「顺手」加预算、AI 识别、深色模式、附件、2FA（方案已明确不做）。
-- 不要把 `LEDGER_AUTH_EXPOSE_TOKEN` 默认值改回 `true`（除非明确要回滚 `/legacy/`）。
+- 不要把 `LEDGER_AUTH_EXPOSE_TOKEN` 默认值改回 `true`（除非明确要给脚本化 Bearer 客户端用）。
 - 不要跳过旧功能：CSV 导出、分类拖拽排序、导出不平告警、注册开关、默认账户管理在新版一律 **Must**（方案 §14.5）。
 
 ## 改完怎么验
