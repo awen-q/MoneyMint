@@ -30,7 +30,7 @@
 
 **核心不变约束**：导出的 `.beancount` 必须能被 `bean-check` 直接校验通过（退出码 0、无报错）。
 
-**当前阶段**：M7 六批 + **0.6.0（S0~S6 七批，2026-11-15）全部交付**，仓库只剩一套前端；§7 端点表 **44 条**（基线 36 + 0.6.0 新增 8）已与 `internal/server/router.go`、`frontend/src/api/routes.ts` 逐条核对一致；迁移至 **016**，Vitest **356/356 通过**（47 文件）。剩余边界见 §9。
+**当前阶段**：M7 六批 + **0.6.0（S0~S6 七批，2026-11-15）全部交付**，仓库只剩一套前端；§7 端点表 **41 条路径 / 52 个 `path×method`**（表 45 行；基线 36 + 0.6.0 新增 8 + B6 新增 1）已与 `internal/server/router.go` 逐条核对一致（T62 审计：零孤儿、零缺失；`routes.ts` 现有 40 常量 = 41 − 1 条待 T55 补）；迁移至 **016**，Vitest **356/356 通过**（47 文件）。剩余边界见 §9。
 
 **0.6.0 已交付**（2026-11-15）：迁移 015_ledger_ops、账本删除、币种 CRUD、账户下级（`parent_uuid` 必传）、余额校准（`balance_key` 独立列，D-1 日初口径）、Beancount 导入（默认 `target=current` + 批次撤销；导入端点移出账本上下文豁免）、修改交易（`PATCH /api/transactions/{uuid}` = 冲正 + 新建，无版本链；权限收紧：editor 仅可改本人交易）。**两条破坏性变更**（导入语义反转 / 交易权限收紧）详见 `CHANGELOG.md` [0.6.0]。0.6.0 产品口径唯一源：[`docs/0.6.0-prd.md`](docs/0.6.0-prd.md)（N-12：§9 只链接不复制 AC）。
 
@@ -88,7 +88,7 @@ python -m pip install beancount    # 激活 .venv 后执行
 **前端架构（Vue 3 SPA，唯一前端）**：
 - `core/Money.ts`：`decimal.js` 定点金额唯一入口（只收 string 构造、`ROUND_HALF_UP`、`toString()` 固定 `toFixed()`）；另有 `core/{accounts,calendar,csv,filters,opening,ordering,record,storage,m2}.ts` 核心领域逻辑（全部带 `.test.ts`）。
 - `core/sync/`：离线同步内核——`models.ts`（本地实体/死信分类，`DEAD_CODES` 与后端稳定码同源）、`localStore.ts`（Memory 实现）、`idbStore.ts`（离线提交队列的本地持久化，单事务原子写）、`engine.ts`（SyncEngine：pull→push 重映射→pull、库世代隔离、指数退避、CAS 多标签页租约）+ 9 份真实契约样本（`fixtures/`，其中 6 份被 `engine.test.ts` 引用）。
-- `api/{types,routes,errors,client}.ts`：44 端点手写 TS 类型 / 路由常量 / `ApiError` / 类型化 fetch 客户端（401 single-flight / 428 / `X-Ledger-Id` 断言 / FormData 上传；**不生成** OpenAPI）。
+- `api/{types,routes,errors,client}.ts`：40 条路由常量（= 后端 41 路径 − 1 条待 T55 补）手写 TS 类型 / 路由常量 / `ApiError` / 类型化 fetch 客户端（401 single-flight / 428 / `X-Ledger-Id` 断言 / FormData 上传；**不生成** OpenAPI）。
 - `stores/`：`session / privacy / recordSheet / sync`；views 20 页 + components（AppLayout / RecordSheet / SyncBadge 等）。
 - `vite.config.ts`：`base: './'`、`build.target: 'es2015'`、`@vitejs/plugin-legacy`（`targets: Safari >= 14`）、`outDir: 'dist'`、`server.proxy['/api'] → 127.0.0.1:8080`、alias `@`、`define.__APP_VERSION__` 读 package.json。
 - PWA：`public/sw.js` 只缓存应用壳与静态资源（`/api/*`、`/legacy/*` 绝不拦截），activate 清理非 fambean 前缀旧缓存（含 Flutter 时代 SW 缓存）；`core/pwa.ts` 更新提示不自动打断录入（AC-35）。
@@ -166,7 +166,7 @@ python -m pip install beancount    # 激活 .venv 后执行
 
 ## 7. API 端点清单
 
-> 基线共 **36 条 `/api/` 端点**（下表 36 行 + 末尾 1 行静态回退），0.6.0 新增 **8 条**（文末小节），B6 新增 **1 条**（`/api/assets/series`），全仓合计 **45 条**；与 `internal/server/router.go` 的 `mux.HandleFunc` 及 `frontend/src/api/routes.ts` 的常量一一对应；新增端点须三处同步。（按 Q-10：既有 36 行不重排，0.6.0 / B6 端点文末顺延编号。B6 的 `routes.ts` 常量由前端 T55 补齐。）
+> **口径（T62 三处一致性审计后校准）**：`internal/server/router.go` 实际注册 **41 条 `/api/` 路径 / 52 个 `path×method`**；下表按「方法组」展开共 **45 行** —— 其中 4 条路径的方法被拆成两行（`/api/accounts/{uuid}/balance`、`/api/commodities`、`/api/transactions/{uuid}`、`/api/ledgers/{id}`），其余多方法路径（如 `/api/accounts` 的 GET+POST）在 1 行内并列。前端 `frontend/src/api/routes.ts` 现有 **40 个常量**（= 41 路径 − `/api/assets/series`，该常量由 T55 补齐）。**三个数字不可互推**：校验路径一致性请数「路径数」，校验 `routes.ts` 请数常量数，校验本表请数行数。新增端点须三处同步（按 Q-10：既有行不重排，新增端点文末顺延编号）。
 
 | 端点 | 方法 | 鉴权 | 说明 |
 |---|---|---|---|
@@ -199,7 +199,7 @@ python -m pip install beancount    # 激活 .venv 后执行
 | `/api/sync/push` | POST | 登录+成员 | 逐条幂等提交离线变更，响应含 `instance_id`；稳定错误码 `account_not_found`（重映射重试）/ `account_closed`（死信）等 |
 | `/api/db/instance` | GET | 登录 | 读取库世代 `instance_id`（迁移 014）；恢复成功后轮换，客户端据此清本地 + 全量重拉 |
 | `/api/backup/list` | GET | 登录+**系统管理员** | 备份清单 |
-| `/api/backup/download?name=` | GET | 登录+**系统管理员** | 下载备份；文件名白名单 + 四层穿越防护 |
+| `/api/backup/download` | GET | 登录+**系统管理员** | 下载备份：`?name=<文件名>` 指定要下载的备份；文件名白名单 + 四层穿越防护 |
 | `/api/backup/run` | POST | 登录+**系统管理员** | 手动触发一次备份（进行中 409） |
 | `/api/backup/restore/preview` | POST | 登录+**系统管理员** | **只读预检**：multipart `file`；备份 vs 当前四行覆盖量对比 + schema 版本 + 拒绝原因（如 `future_version` / `not_sqlite`），绝不改数据 |
 | `/api/backup/restore` | POST | 登录+**系统管理员** | 执行还原：multipart `file` + `confirm=RESTORE` 确认词；pre-restore 快照、事务内逐表替换、迁移重跑、成功后轮换 `instance_id` |
