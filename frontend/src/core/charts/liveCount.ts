@@ -16,6 +16,11 @@ let live = 0
 /** 记录一个实例上线，返回释放函数（便于 try/finally 与测试）。 */
 export function acquireChart(label: string): () => void {
   live += 1
+  // **刻意只告警、不 throw**：超限是开发期信号，不是用户可见故障。
+  // 若改成 throw，「切到标签子页」这种完全无辜的操作会白屏 —— 用户没做错任何事。
+  // 也因此这道闸在生产构建里是不存在的（DEV 守卫把整段摇掉）：
+  // 它的作用是**记录**，不是**拦截**；真正的防护是组件层的 dispose+release
+  // （`StatsView.test.ts` 的峰值用例钉住了「反复切子页不累积」）。
   if (import.meta.env.DEV && live > MAX_LIVE_CHARTS) {
     console.warn(
       `[charts] 在册实例 ${live} 个，超过上限 ${MAX_LIVE_CHARTS}（新增：${label}）。` +

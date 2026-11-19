@@ -14,10 +14,32 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 
 import StatsView from '@/views/StatsView.vue'
+import { MAX_LIVE_CHARTS, liveChartCount, resetLiveChartCount } from '@/core/charts/liveCount'
 import { usePeriodStore } from '@/stores/period'
 import { useSessionStore } from '@/stores/session'
+
+/**
+ * StatsView 在 setup 里就调了 `useRouter()`（下钻要 push 到搜索账单），
+ * 所以挂载必须提供 router，否则会报 `injection "Symbol(router)" not found`。
+ *
+ * 这条以前只是控制台噪音；`setupVueWarn.ts`（`vite.config.ts:74` 接线）把
+ * `[Vue warn]` 提升为失败后，本文件 7 条用例曾整体变红 ——
+ * **缺陷是老的，只是以前没人把它当错误**。
+ */
+function makeRouter(): Router {
+  return createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/', component: { template: '<div />' } },
+      { path: '/search', component: { template: '<div />' } },
+      // 兜底：下钻 push 的目标若尚未定义，也不该让用例因「无匹配路由」而炸
+      { path: '/:pathMatch(.*)*', component: { template: '<div />' } },
+    ],
+  })
+}
 
 const h = vi.hoisted(() => ({
   accountList: vi.fn(),
@@ -28,6 +50,8 @@ const h = vi.hoisted(() => ({
   logout: vi.fn(),
   changePassword: vi.fn(),
   setLedgerIdProvider: vi.fn(),
+  /** 只替换 echarts 的 initChart，其它导出（含 liveCount）保持真实实现。 */
+  initChart: vi.fn(),
 }))
 
 vi.mock('@/api/client', () => ({
@@ -42,6 +66,19 @@ vi.mock('@/api/client', () => ({
   ledgerApi: { list: h.ledgerList },
   setLedgerIdProvider: h.setLedgerIdProvider,
 }))
+
+/**
+ * 图表层只换 `initChart`，**保留真实的 `acquireChart` / `liveChartCount`**。
+ *
+ * 这一点是本文件下面那两条峰值用例的命门：在册计数是纯 JS（`core/charts/liveCount.ts`），
+ * 不需要 echarts 运行时、也不需要 canvas 桩。若把整个模块 mock 成 `initChart → null`，
+ * 组件的 `ensureInstance` 会在 `acquireChart` 之前就返回，计数恒为 0 ——
+ * 于是「峰值 ≤ 4」的断言永远绿，**测的是 0 ≤ 4 这种空话**。
+ */
+vi.mock('@/core/charts/echarts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/core/charts/echarts')>()
+  return { ...actual, initChart: h.initChart }
+})
 
 const ACCOUNTS = [
   { id: 1, name: 'Assets:Cash', display_name: '现金', uuid: 'u1', type: 'Assets', open_date: '2026-01-01', sort_order: 1, balances: { CNY: '1000.00' } },
@@ -91,6 +128,7 @@ const TXNS = [
 async function mountView(): Promise<ReturnType<typeof mount>> {
   const wrapper = mount(StatsView, {
     global: {
+      plugins: [makeRouter()],
       stubs: {
         TrendChart: true,
         DonutChart: true,
@@ -184,5 +222,97 @@ describe('T48 StatsView：子页切换走 period store', () => {
     await periodButtons[2].trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('每日明细按自然日列出，切到「月」周期查看。')
+  })
+})
+
+/* ==========================================================================
+ * 图表实例峰值（liveChartCount）
+ *
+ * 为什么单独一组、而且必须**不 stub** 图表组件：上面那些用例把
+ * `TrendChart/DonutChart/BarChart` 全 stub 成占位符，实例数恒为 0，
+ * 对「峰值 ≤ 4」这条约束零证明力。这里让真实组件挂上去，只替换 initChart。
+ *
+ * 约束来自 `core/charts/liveCount.ts`：`MAX_LIVE_CHARTS = 4`，当初按
+ * 「statTrend + donutE + donutI + catBar」算出。本组用例把这个约定钉在
+ * **页面级**：单组件测试测不到「一页同时挂几张」。
+ * ========================================================================== */
+
+/** 假实例：组件只用到这五个方法（setOption / on / off / resize / dispose）。 */
+function fakeChart() {
+  return {
+    setOption: vi.fn(),
+    on: vi.fn(),
+    off: vi.fn(),
+    resize: vi.fn(),
+    dispose: vi.fn(),
+  }
+}
+
+/**
+ * 挂载真实图表组件的 StatsView。
+ *
+ * `attachTo: document.body` 是必需的：图表组件在 `await initChart()` 之后会复检
+ * `target.isConnected`，脱离文档的容器会被判定为「已卸载」→ dispose 且不计数，
+ * 计数又会变成恒 0（同样的空话陷阱）。
+ */
+async function mountWithRealCharts(): Promise<ReturnType<typeof mount>> {
+  const wrapper = mount(StatsView, {
+    attachTo: document.body,
+    global: { plugins: [makeRouter()], stubs: { MonthPicker: true } },
+  })
+  await flushPromises()
+  return wrapper
+}
+
+describe('T48 StatsView：图表实例峰值不超过 liveCount 上限', () => {
+  beforeEach(() => {
+    resetLiveChartCount()
+    h.initChart.mockReset()
+    h.initChart.mockImplementation(async () => fakeChart())
+  })
+
+  it('「统计」子页峰值恰好 4（趋势 1 + 双环 2 + 柱 1），未超上限', async () => {
+    const wrapper = await mountWithRealCharts()
+
+    // 断言**精确值**而不是只断言 ≤4：后者在「一张图都没挂」时也成立，
+    // 会变成永远绿的空话（本文件原先 stub 掉图表就正是这种状态）。
+    expect(liveChartCount()).toBe(4)
+    expect(liveChartCount()).toBeLessThanOrEqual(MAX_LIVE_CHARTS)
+
+    wrapper.unmount()
+    expect(liveChartCount()).toBe(0)
+  })
+
+  it('「标签」子页峰值恰好 2，且离开后归零', async () => {
+    const wrapper = await mountWithRealCharts()
+    usePeriodStore().setStatsTab('tag')
+    await flushPromises()
+
+    expect(liveChartCount()).toBe(2)
+
+    wrapper.unmount()
+    expect(liveChartCount()).toBe(0)
+  })
+
+  it('反复切子页不累积：4 → 2 → 4 → 2 …（泄漏才会把实例数拖上去）', async () => {
+    const wrapper = await mountWithRealCharts()
+    const period = usePeriodStore()
+    const seen: number[] = [liveChartCount()]
+
+    for (let i = 0; i < 3; i += 1) {
+      period.setStatsTab('tag')
+      await flushPromises()
+      seen.push(liveChartCount())
+      period.setStatsTab('stat')
+      await flushPromises()
+      seen.push(liveChartCount())
+    }
+
+    // 逐次断言而不是只看末值：只看末值的话，4→6→8→4 这种「中途泄漏又回落」
+    // 会被漏掉，而中途峰值正是会把内存顶上去的时刻。
+    expect(seen).toEqual([4, 2, 4, 2, 4, 2, 4])
+
+    wrapper.unmount()
+    expect(liveChartCount()).toBe(0)
   })
 })

@@ -31,8 +31,10 @@
  * 把分类 / 标签 / 日期窗口拼成 `SearchView` 的 query，等 T49 收口时一起接。
  */
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 
 import { elapsedDays } from '@/core/calendar'
+import { emptyFilters, filtersToQuery } from '@/core/filters'
 import { categoryShares, inBuckets, memberContributions, periodBuckets, trendSeries, trialBalanceRows, type ReportPeriod, type ReportTxn } from '@/core/reports'
 import { averagePerDay, dailyRows, statsTotals, tagShares, type StatsTotals } from '@/core/stats'
 import { useLedgerDataStore } from '@/stores/ledgerData'
@@ -60,6 +62,7 @@ const data = useLedgerDataStore()
 const period = usePeriodStore()
 const privacy = usePrivacyStore()
 const session = useSessionStore()
+const router = useRouter()
 
 const monthOpen = ref(false)
 /** 周期粒度（周 / 月 / 年）：页面级浏览态，不进 store（只有统计页用）。 */
@@ -242,7 +245,45 @@ function onDrillCategory(categoryId: number | null): void {
   drilledCategory.value = { id: categoryId, label: found === undefined ? '分类' : found.label }
 }
 
-/** 折线序列：金额与几何量同源（vale 由定点串派生，禁止另算一遍）。 */
+/**
+ * 当前窗口的日期范围（用于把「下钻」翻译成搜索页的 `from` / `to`）。
+ *
+ * 桶的 key 形状由 `periodBuckets` 决定：周/月是 `YYYY-MM-DD`，年是 `YYYY-MM`。
+ * 年周期不能直接把 `YYYY-MM` 塞进 `from`（`filtersFromQuery` 用 `DATE_RE` 校验，
+ * 非法值会被静默丢弃 —— 那就变成「跳过去但没筛」，比不跳更糟），所以年单独展开成
+ * 年初/年末两个完整日期。
+ */
+const drillRange = computed<{ from: string; to: string }>(() => {
+  if (granularity.value === 'year') {
+    return { from: `${year.value}-01-01`, to: `${year.value}-12-31` }
+  }
+  const first = buckets.value[0]
+  const last = buckets.value[buckets.value.length - 1]
+  if (first === undefined || last === undefined) {
+    return { from: '', to: '' }
+  }
+  return { from: first.key, to: last.key }
+})
+
+/**
+ * 标签行 / 标签环图下钻 → 搜索账单页（审计 P4：原来 `@drill="() => undefined"`，
+ * 整块可点、cursor 是 pointer，但点了什么都不发生，用户会以为页面卡了）。
+ *
+ * 口径与稿 1081「点行可下钻该标签当月流水」一致：**当前窗口 + 该标签**。
+ * 已知边界：「未打标签」桶（`UNTAGGED_LABEL`）在服务端没有对应筛选语义
+ * （`tag` 空串表示「不限」，不是「必须无标签」），跳过去会得到 0 条并显示
+ * 「没有符合条件的结果」——**这是可见的反馈，不是死点击**，所以照样跳；
+ * 真要支持它需要服务端新增 `tag=none` 语义，不在本轮。
+ */
+function onTagDrill(tag: string): void {
+  const range = drillRange.value
+  void router.push({
+    name: 'search',
+    query: filtersToQuery({ ...emptyFilters(), tag, from: range.from, to: range.to }),
+  })
+}
+
+/** 折线序列：金额与几何量同源（value 由定点串派生，禁止另算一遍）。 */
 const trendSeriesInput = computed(() => [
   { name: '收入', color: 'var(--fb-green)', points: trend.value.income.map((amount) => ({ value: Number(amount), amount })) },
   { name: '支出', color: 'var(--fb-danger)', points: trend.value.expense.map((amount) => ({ value: Number(amount), amount })) },
@@ -324,6 +365,9 @@ const currencyOptions = computed(() => {
     </p>
 
     <StateCard :state="pageState" :desc="cardDesc" @action="reload">
+      <!-- 子页互斥依赖「无 Transition」：加 in-out 过渡会让两面板共存，
+           图表实例峰值 4→6（超过 liveCount 的 MAX_LIVE_CHARTS=4），见 liveCount.ts。
+           要加动画就先给 DonutRankCard / TagPanel 里其中一张环图加条件挂载。 -->
       <!-- 子页【统计】 -->
       <div v-if="tab === 'stat'" class="stats__panel">
         <StatsMetrics
@@ -334,13 +378,13 @@ const currencyOptions = computed(() => {
           :masked="privacy.enabled"
         />
 
+        <!-- 卡头**不在这里画**：`ChartFrame` 的 `<h3>` 是全站图表的统一标题位置。
+             之前这里再包一层 `.stats__card-title` 会让「收支趋势」渲染两遍（审计 P3）。
+             说明文字走 `ChartFrame` 的 `note`。 -->
         <section class="stats__card">
-          <div class="stats__card-head">
-            <span class="stats__card-title">收支趋势</span>
-            <span class="stats__card-note">按{{ granularity === 'year' ? '月' : '日' }}收入 / 支出</span>
-          </div>
           <TrendChart
             title="收支趋势"
+            :note="`按${granularity === 'year' ? '月' : '日'}收入 / 支出`"
             :chart-label="`${rangeLabel} 收入与支出趋势，${commodity} 口径`"
             :labels="trend.labels"
             :series="trendSeriesInput"
@@ -389,7 +433,7 @@ const currencyOptions = computed(() => {
 
       <!-- 子页【标签】 -->
       <div v-else class="stats__panel">
-        <TagPanel :shares="tags" :commodity="commodity" :masked="privacy.enabled" @drill="() => undefined" />
+        <TagPanel :shares="tags" :commodity="commodity" :masked="privacy.enabled" @drill="onTagDrill" />
       </div>
     </StateCard>
 
@@ -539,25 +583,6 @@ const currencyOptions = computed(() => {
   font-weight: 600;
   cursor: pointer;
   text-decoration: underline;
-}
-
-.stats__card-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 8px;
-}
-
-.stats__card-title {
-  color: var(--fb-ink);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.stats__card-note {
-  color: var(--fb-sub);
-  font-size: 11px;
 }
 
 .stats__footer {
