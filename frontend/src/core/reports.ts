@@ -316,11 +316,29 @@ export function trendSeries(
   return { labels, income, expense }
 }
 
-/** 分类占比 / 排行条目；ratio 仅用于绘图宽度（0~1），不是金额。 */
+/**
+ * 分类占比 / 排行条目；`ratio` 仅用于绘图宽度（0~1），不是金额。
+ *
+ * `id` / `count` / `kind` 为 B4（T39）**additive** 新增：
+ * - `id`：账户 id（**按 id 聚合**，同名子账户不再被合并成一行 —— 那样环图 /
+ *   排行 / 柱状图三处数字会同时偏大或偏小）；账户查不到时为 `null`（「未分类」桶）；
+ * - `count`：该分类下的**交易笔数**（去重 txn，不是分录数）；
+ * - `kind`：该行属于支出侧还是收入侧（`categoryShares` 的 `kind` 参数原样回填），
+ *   供下钻时构造搜索页筛选条件。
+ *
+ * 既有三个字段（`label` / `amount` / `ratio`）的名称与含义**一字未改**，
+ * `ReportsView.vue`（T49 才下线）仍按旧形状消费。
+ */
 export interface CategoryShare {
   label: string
   amount: string
   ratio: number
+  /** 账户 id；「未分类」桶（查不到账户）为 `null`。 */
+  id: number | null
+  /** 该分类下的交易笔数（去重 txn）。 */
+  count: number
+  /** 该行所属方向。 */
+  kind: 'Expenses' | 'Income'
 }
 
 /**
@@ -333,22 +351,41 @@ export function categoryShares(
   accounts: SummaryAccount[],
   commodity: string,
   limit = 8,
+  kind: 'Expenses' | 'Income' = 'Expenses',
 ): CategoryShare[] {
-  const totals: { [label: string]: Money } = {}
+  // 按 account id 聚合（T39）：同名子账户是不同的分类，按显示名合并会让
+  // 环图 / 排行 / 柱状图三处同时偏大。查不到账户的归入「未分类」桶（id=null）。
+  const buckets: { [key: string]: { id: number | null; label: string; amount: Money; txns: number[] } } = {}
   for (const txn of txns) {
     for (const posting of txn.postings) {
-      if (!matches(posting, accounts, 'Expenses', commodity)) {
+      if (!matches(posting, accounts, kind, commodity)) {
         continue
       }
       const account = accountById(accounts, posting.account_id)
-      const label = account === undefined ? '未分类' : accountLabel(account)
+      const key = account === undefined ? 'untagged' : `id:${posting.account_id}`
+      let bucket = buckets[key]
+      if (bucket === undefined) {
+        bucket = {
+          id: account === undefined ? null : posting.account_id,
+          label: account === undefined ? '未分类' : accountLabel(account),
+          amount: Money.zero(),
+          txns: [],
+        }
+        buckets[key] = bucket
+      }
+      // 收入侧取反后为正（Income 分录原值为负）：否则柱高 / 占比恒为负、ratio 恒 0。
+      // 支出侧保留原值（借方为正；退款负分录会自然冲减，ratio 有 grand>0 守卫）。
       const value = safeMoney(posting.amount)
-      totals[label] = totals[label] === undefined ? value : totals[label].plus(value)
+      bucket.amount = bucket.amount.plus(kind === 'Income' ? value.negated() : value)
+      if (bucket.txns.indexOf(txn.id) < 0) {
+        bucket.txns.push(txn.id)
+      }
     }
   }
-  const rows: Array<{ label: string; amount: Money }> = []
-  for (const label of Object.keys(totals)) {
-    rows.push({ label, amount: totals[label] })
+  const rows: Array<{ id: number | null; label: string; amount: Money; count: number }> = []
+  for (const key of Object.keys(buckets)) {
+    const bucket = buckets[key]
+    rows.push({ id: bucket.id, label: bucket.label, amount: bucket.amount, count: bucket.txns.length })
   }
   rows.sort((a, b) => (a.amount.toString() === b.amount.toString()
     ? (a.label < b.label ? -1 : 1)
@@ -366,6 +403,9 @@ export function categoryShares(
       label: row.label,
       amount: row.amount.toString(),
       ratio: grandNumber > 0 ? Number(row.amount.toString()) / grandNumber : 0,
+      id: row.id,
+      count: row.count,
+      kind,
     })
   }
   return out

@@ -84,6 +84,36 @@ export function dailyTotals(
   return result
 }
 
+/**
+ * 某月的「已过天数」—— `averagePerDay` 的分母。
+ *
+ * 三种情况必须分开（用整月天数当分母会把月初的日均严重低估：
+ * 1 号记了 100 块，日均会变成 3.3 而不是 100）：
+ * - **往月** → 该月总天数（整月已过完）；
+ * - **当月** → 今天是几号（**含今天**，今天已经发生）；
+ * - **未来月** → `0`（一天都没过）。
+ *
+ * 未来月返回 0 会让除法除零，因此调用方**必须显式判断 0**：
+ * `core/stats.ts` 的 `averagePerDay` 在 `elapsedDays === 0` 时返回 `0.00`
+ * 并把 `applicable` 置 false，绝不输出 `Infinity` / `NaN`。
+ *
+ * @param year 年
+ * @param month 月（**1-12**，不是 Date 的 0-11）
+ * @param today 参照日期（由调用方传入，便于测试与「跨日刷新」）
+ */
+export function elapsedDays(year: number, month: number, today: Date): number {
+  const todayYear = today.getFullYear()
+  const todayMonth = today.getMonth() + 1
+  const total = new Date(year, month, 0).getDate()
+  if (year < todayYear || (year === todayYear && month < todayMonth)) {
+    return total
+  }
+  if (year === todayYear && month === todayMonth) {
+    return today.getDate()
+  }
+  return 0
+}
+
 export interface CalendarDay {
   /** `YYYY-MM-DD`（含前后月补位日）。 */
   key: string

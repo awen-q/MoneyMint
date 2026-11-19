@@ -10,7 +10,7 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { buildMonthGrid, dailyTotals, monthLabel } from './calendar'
+import { buildMonthGrid, dailyTotals, elapsedDays, monthLabel } from './calendar'
 import type { SummaryAccount } from './record'
 
 const accounts: SummaryAccount[] = [
@@ -163,5 +163,32 @@ describe('月网格（buildMonthGrid）', () => {
   it('月标题补零', () => {
     expect(monthLabel(2026, 11)).toBe('2026年11月')
     expect(monthLabel(2026, 1)).toBe('2026年01月')
+  })
+})
+
+describe('elapsedDays：日均分分母（T41）', () => {
+  const today = new Date(2026, 10, 10) // 2026-11-10（本地时区）
+
+  it('往月 → 该月整月天数', () => {
+    expect(elapsedDays(2026, 10, today)).toBe(31)
+    expect(elapsedDays(2026, 9, today)).toBe(30)
+    // 闰年 2 月（2024-02 相对 today=2026-11 是往月）
+    expect(elapsedDays(2024, 2, today)).toBe(29)
+    expect(elapsedDays(2026, 2, today)).toBe(28)
+    expect(elapsedDays(2025, 12, today)).toBe(31)
+  })
+
+  it('当月 → 今天是几号（含今天）', () => {
+    expect(elapsedDays(2026, 11, today)).toBe(10)
+    // 跨月边界：1 号当天只过 1 天（用整月天数会让日均被低估到 1/30）
+    expect(elapsedDays(2026, 11, new Date(2026, 10, 1))).toBe(1)
+    expect(elapsedDays(2026, 11, new Date(2026, 10, 30))).toBe(30)
+  })
+
+  it('未来月 → 0（调用方必须显式判零，不能靠 Infinity/NaN）', () => {
+    expect(elapsedDays(2026, 12, today)).toBe(0)
+    expect(elapsedDays(2027, 1, today)).toBe(0)
+    // 同月但年份在后
+    expect(elapsedDays(2027, 11, today)).toBe(0)
   })
 })
