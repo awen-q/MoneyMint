@@ -183,6 +183,163 @@ export function findChartConsumers(root) {
   return consumers
 }
 
+/**
+ * echarts 包说明符：`echarts` / `echarts/core` / `echarts/charts` / `echarts/components` /
+ * `echarts/renderers`。要求引号紧贴 `echarts`，因此 `'@/core/charts/echarts'` 与
+ * `'./echarts'` 这类**本地模块**不会被误命中。
+ */
+const ECHARTS_SPEC_RE = /(['"])(echarts(?:\/[A-Za-z0-9_./-]+)?)\1/g
+
+/** 唯一允许值导入 echarts 的文件：单点注册表本身。 */
+const ECHARTS_ENTRY_FILE = 'src/core/charts/register.ts'
+
+/**
+ * 去掉 CSS/JS 注释，避免注释里的示例代码被当成真导入。
+ *
+ * 本脚本自己就依赖这一点：`echarts.ts` 与 `register.ts` 的头注释里写着
+ * `import('echarts/charts')`、`import * as echarts from 'echarts/core'` 这类**反例**，
+ * 不去注释就会把自己文档里的反面教材当成违规。替换为等长空白、保留换行，行号仍对齐。
+ *
+ * @param {string} text 源码文本
+ * @returns {string} 去注释后的文本
+ */
+function stripComments(text) {
+  return text.replace(/\/\*[\s\S]*?\*\//g, (block) => block.replace(/[^\n]/g, ' '))
+}
+
+/**
+ * 读取 `src/**` 下全部 .ts 与 .vue 源码（相对路径 + 文本）。
+ *
+ * @param {string} root frontend 根目录
+ * @returns {Array<{file: string, text: string}>} 源码列表
+ */
+function readModuleSources(root) {
+  const result = []
+  const walk = (dir) => {
+    if (!existsSync(dir)) return
+    for (const name of readdirSync(dir)) {
+      const full = path.join(dir, name)
+      if (statSync(full).isDirectory()) {
+        walk(full)
+      } else if (name.endsWith('.ts') || name.endsWith('.vue')) {
+        result.push({
+          file: path.relative(root, full).split(path.sep).join('/'),
+          text: readFileSync(full, 'utf8'),
+        })
+      }
+    }
+  }
+  walk(path.join(root, 'src'))
+  return result
+}
+
+/**
+ * 从说明符往前找最近的 import / export / require 关键字。
+ *
+ * @param {string} text 去注释后的文本
+ * @param {number} specIndex 说明符起始下标
+ * @returns {{kind: string, clause: string} | null} 关键字与其后的子句；跨语句时返回 null
+ */
+function importClauseBefore(text, specIndex) {
+  const windowStart = Math.max(0, specIndex - 600)
+  const window = text.slice(windowStart, specIndex)
+  const kwRe =
+    /(?:\bimport\s*\(|\brequire\s*\(|\bimport\s+type\b|\bexport\s+type\b|\bimport\b|\bexport\b)/g
+  let last = null
+  for (const match of window.matchAll(kwRe)) last = match
+  if (last === null) return null
+  const clause = window.slice(last.index)
+  // 子句里出现引号/分号，说明中间已结束别的语句（例如 `vi.mock('echarts')` 前面的
+  // `from 'vitest'`）——说明符不属于该关键字，不能当成导入，否则会误报测试里的 mock。
+  if (/['";]/.test(clause)) return null
+  return { kind: last[0], clause }
+}
+
+/**
+ * 判断 `import { … } from` 的花括号里是否**全部**是 `type` 修饰符。
+ *
+ * @param {string} clause 关键字之后的子句（不含说明符）
+ * @returns {boolean} true 表示纯类型导入，编译期擦除、不产生运行期依赖
+ */
+function isTypeOnlySpecifierList(clause) {
+  const open = clause.indexOf('{')
+  const close = clause.indexOf('}', open + 1)
+  if (open < 0 || close < 0) return false
+  const items = clause
+    .slice(open + 1, close)
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item !== '')
+  if (items.length === 0) return false
+  return items.every((item) => /^type\s+[A-Za-z_$]/.test(item))
+}
+
+/**
+ * 纯函数：找出「绕过 echarts 单点入口」的值导入（**原因级**断言）。
+ *
+ * 为什么要有这条：现有四条断言里，「单块 ≤190KB」与「静态可达性 DFS 不含 echarts」
+ * 都是**症状级** —— 它们能告诉你「现在坏了」，但坏了之后还得反推是哪次改动造成的。
+ * 本规则直接指向**原因**：谁破坏了单点入口，失败信息点名文件 + 行号 + 写法。
+ *
+ * 判据：除 `src/core/charts/register.ts` 外，任何文件都不得对 `echarts*` 做值导入。
+ * - 违规：`import { init } from 'echarts/core'`、`import * as ec from 'echarts'`、
+ *   `import 'echarts'`、`import('echarts/charts')`（动态也会造出第二个 chunk）、
+ *   `require('echarts/renderers')`、`export … from 'echarts'`（值再导出）
+ * - 放行：`import type … from 'echarts/core'`、`export type … from`、
+ *   `import { type X } from 'echarts/core'`（全部为 type 修饰符时整体被擦除）
+ * - 放行：`register.ts` 自身的静态具名导入（那正是单点注册表）
+ *
+ * @param {Array<{file: string, text: string}>} sources 源码文件列表
+ * @param {string} allowFile 允许值导入的文件（相对路径，POSIX 分隔）
+ * @returns {Array<{file: string, line: number, spec: string, form: string}>} 命中列表
+ */
+export function findEChartsValueImports(sources, allowFile = ECHARTS_ENTRY_FILE) {
+  const hits = []
+  for (const { file, text } of sources) {
+    if (file === allowFile) continue
+    // 去注释但保留字符位置与换行，行号可直接对齐原文。
+    const clean = stripComments(text)
+    for (const match of clean.matchAll(ECHARTS_SPEC_RE)) {
+      const found = importClauseBefore(clean, match.index)
+      if (found === null) continue
+      const { kind, clause } = found
+      const spec = match[2]
+      let form = null
+
+      if (kind.startsWith('import(') || kind.startsWith('require(')) {
+        form = `${kind}'${spec}'：运行期加载，会造出第二个 echarts chunk`
+      } else if (kind === 'import type' || kind === 'export type') {
+        continue
+      } else if (kind === 'import') {
+        if (isTypeOnlySpecifierList(clause)) continue
+        if (/^\s*import\s*\*\s*as\b/.test(clause)) {
+          form = `import * as … from '${spec}'：命名空间导入，整包保留且无法 tree-shake`
+        } else if (/\bfrom$/.test(clause.trimEnd())) {
+          form = `import { … } from '${spec}'：值导入`
+        } else {
+          form = `import '${spec}'：副作用导入，整包引入`
+        }
+      } else {
+        form = `export … from '${spec}'：值再导出`
+      }
+
+      const line = clean.slice(0, match.index).split('\n').length
+      hits.push({ file, line, spec, form })
+    }
+  }
+  return hits
+}
+
+/**
+ * 扫描整个 src，返回绕过 echarts 单点入口的值导入清单。
+ *
+ * @param {string} root frontend 根目录绝对路径
+ * @returns {Array<{file: string, line: number, spec: string, form: string}>} 命中列表
+ */
+export function scanEChartsValueImports(root) {
+  return findEChartsValueImports(readModuleSources(root))
+}
+
 function fail(message) {
   console.error(`\n[check-bundle-size] ✗ ${message}\n`)
   process.exit(1)
@@ -240,6 +397,33 @@ function selfCheckRules() {
       'echarts.js',
     )
 
+    // echarts 单点入口规则的正反例。
+    // 最容易写错的方向是「把 import type 也报出来」—— 本仓现有 3 处全是 type-only，
+    // 一旦误报，每次跑门禁都会红 3 条，规则立刻会被绕过或被加白名单。
+    const echartsSamples = [
+      {
+        file: 'src/components/Demo.vue',
+        text: [
+          "import type { ECharts } from 'echarts/core'", // 1 允许：语句级 type
+          "import { type ECElementEvent } from 'echarts/core'", // 2 允许：specifier 级 type
+          "import { init } from 'echarts/core'", // 3 违规：值导入
+          "import * as ec from 'echarts'", // 4 违规：命名空间
+          "import 'echarts'", // 5 违规：副作用
+          "const m = await import('echarts/charts')", // 6 违规：动态
+          "const r = require('echarts/renderers')", // 7 违规：require
+          "vi.mock('echarts', () => ({}))", // 8 允许：mock 不是导入
+          "import { load } from './echarts'", // 9 允许：本地模块不是 npm 包
+        ].join('\n'),
+      },
+      {
+        // 单点注册表自身必须放行，否则规则自相矛盾。
+        file: ECHARTS_ENTRY_FILE,
+        text: "import { init, use } from 'echarts/core'",
+      },
+    ]
+    const echartsHits = findEChartsValueImports(echartsSamples)
+    const echartsLines = echartsHits.map((hit) => hit.line).sort((a, b) => a - b)
+
     return (
       viaStatic.reachable.has('payload.js') &&
       viaStatic.missing.length === 0 &&
@@ -255,6 +439,10 @@ function selfCheckRules() {
       verdictLeaked.status === 'leaked' &&
       verdictIncomplete.status === 'incomplete' &&
       verdictBoth.status === 'incomplete' &&
+      // echarts 单点入口：恰好第 3/4/5/6/7 行（5 条），register.ts 放行。
+      echartsLines.length === 5 &&
+      echartsLines.every((line, index) => line === index + 3) &&
+      echartsHits.every((hit) => hit.file === 'src/components/Demo.vue') &&
       entries.length === 1 &&
       entries[0] === 'entry.js'
     )
@@ -313,6 +501,28 @@ function main() {
   )
 
   let failed = false
+
+  // ---- 断言 0（源级，先于产物断言）：echarts 必须只经单点注册表引入 ----
+  // 放在最前：它不依赖 dist，即便这次没 build 也能给出「谁破坏了入口」。
+  const echartsImports = scanEChartsValueImports(frontendRoot)
+  if (echartsImports.length === 0) {
+    console.log(
+      `[check-bundle-size] ✓ echarts 单点入口：除 ${ECHARTS_ENTRY_FILE} 外无任何值导入`,
+    )
+  } else {
+    failed = true
+    console.error(
+      `[check-bundle-size] ✗ 发现 ${echartsImports.length} 处绕过 echarts 单点入口的值导入：`,
+    )
+    for (const hit of echartsImports) {
+      console.error(`  ${hit.file}:${hit.line}  ${hit.form}`)
+    }
+    console.error(
+      `  echarts 只允许由 ${ECHARTS_ENTRY_FILE} 静态具名导入一次（按需注册 + 懒加载的唯一入口）；` +
+        '其它地方一律用 import type（编译期擦除）。绕过它会让 echarts 进首屏或产生第二个 chunk，' +
+        '且体积/可达性两条产物断言只能事后反推原因。',
+    )
+  }
 
   // ---- 断言 1/2：echarts 特征串恰好命中 1 个 chunk ----
   const expectsEcharts = consumers.length > 0 || markerHits.length > 0
