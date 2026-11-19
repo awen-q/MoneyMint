@@ -170,8 +170,18 @@ export function evaluateAmountExpression(expression: string): Money {
   return total.abs()
 }
 
+/**
+ * 账户名的结构最小型：凡是只需要「展示名」的地方（如 `accountLabel`、
+ * 关键词匹配）都不该要求完整账户 —— 这让 `SummaryAccount`、`AccountView`
+ * 与 `FilterableTxn` 侧的最小结构都能直接传入，避免为了类型兼容做 map。
+ */
+export interface AccountLabelSource {
+  name: string
+  display_name?: string
+}
+
 /** 账户展示名（优先 display_name）。 */
-export function accountLabel(account: SummaryAccount): string {
+export function accountLabel(account: AccountLabelSource): string {
   return account.display_name !== undefined && account.display_name !== ''
     ? account.display_name
     : account.name

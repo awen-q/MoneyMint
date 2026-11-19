@@ -58,6 +58,7 @@ describe('筛选 query 化（AC-16）', () => {
       account: 2,
       category: 4,
       member: '阿文',
+      keyword: '火锅',
     }
     const query = filtersToQuery(filters)
     expect(query).toEqual({
@@ -67,6 +68,7 @@ describe('筛选 query 化（AC-16）', () => {
       account: '2',
       category: '4',
       member: '阿文',
+      q: '火锅',
     })
     expect(filtersFromQuery(query)).toEqual(filters)
   })
@@ -101,6 +103,64 @@ describe('筛选 query 化（AC-16）', () => {
     filters.kind = 'all'
     filters.from = '2026-11-01'
     expect(hasActiveFilters(filters)).toBe(true)
+  })
+})
+
+describe('关键词（B3）：query 化与激活判定', () => {
+  it('hasActiveFilters：有关键词为 true，纯空格为 false', () => {
+    expect(hasActiveFilters({ ...emptyFilters(), keyword: '火锅' })).toBe(true)
+    // 纯空格不算激活：否则敲一个空格就冒出「清除筛选」按钮
+    expect(hasActiveFilters({ ...emptyFilters(), keyword: '   ' })).toBe(false)
+    expect(hasActiveFilters({ ...emptyFilters(), keyword: '' })).toBe(false)
+  })
+
+  it('query 往返：keyword → ?q=火锅 → 读回原值', () => {
+    const filters = { ...emptyFilters(), keyword: '火锅' }
+    const query = filtersToQuery(filters)
+    expect(query).toEqual({ q: '火锅' })
+    expect(filtersFromQuery(query).keyword).toBe('火锅')
+  })
+
+  it('空关键词不出现在 query 里（URL 保持干净）', () => {
+    expect(filtersToQuery(emptyFilters())).not.toHaveProperty('q')
+    // 纯空格同样不写出，与 hasActiveFilters 的 trim 判据保持一致
+    expect(filtersToQuery({ ...emptyFilters(), keyword: '   ' })).not.toHaveProperty('q')
+  })
+
+  it('q 缺失 / 数组形状 / 空串一律回退默认值', () => {
+    expect(filtersFromQuery({}).keyword).toBe('')
+    expect(filtersFromQuery({ q: ['火锅', '烤肉'] }).keyword).toBe('火锅')
+    expect(filtersFromQuery({ q: '' }).keyword).toBe('')
+  })
+})
+
+describe('关键词过滤（B3）：applyFilters 真的接上了', () => {
+  it('命中备注 → 只留命中的那条', () => {
+    const result = applyFilters(txns, { ...emptyFilters(), keyword: '午餐' }, accounts)
+    expect(result.map((txn) => txn.id)).toEqual([1])
+  })
+
+  it('命中账户展示名（传 SummaryAccount，证明 A 方案解决了两种账户型的赋值问题）', () => {
+    // 「工商银行」只在 accounts[1].display_name 里出现，交易里没有这个字符串。
+    const result = applyFilters(txns, { ...emptyFilters(), keyword: '招商' }, accounts)
+    expect(result.map((txn) => txn.id)).toEqual([1, 3])
+  })
+
+  it('空关键词幂等：与不带 keyword 时返回同一批 id（不只是条数相同）', () => {
+    const baseline = applyFilters(txns, emptyFilters(), accounts)
+    const withEmpty = applyFilters(txns, { ...emptyFilters(), keyword: '' }, accounts)
+    expect(withEmpty.map((txn) => txn.id)).toEqual(baseline.map((txn) => txn.id))
+  })
+
+  it('纯空格等同空关键词（与 hasActiveFilters 的 trim 口径一致）', () => {
+    const baseline = applyFilters(txns, emptyFilters(), accounts)
+    const withBlank = applyFilters(txns, { ...emptyFilters(), keyword: '   ' }, accounts)
+    expect(withBlank.map((txn) => txn.id)).toEqual(baseline.map((txn) => txn.id))
+  })
+
+  it('负例：不存在的关键词 → 0 条（前四条全绿也不能证明过滤接上了）', () => {
+    const result = applyFilters(txns, { ...emptyFilters(), keyword: '绝不存在的词' }, accounts)
+    expect(result).toHaveLength(0)
   })
 })
 

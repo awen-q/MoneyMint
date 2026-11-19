@@ -18,7 +18,6 @@ import { accountApi, transactionApi } from '@/api/client'
 import { ApiError } from '@/api/errors'
 import type { AccountView, TransactionView } from '@/api/types'
 import {
-  accountLabel,
   displayEntryOf,
   transactionKind,
   transferRoute,
@@ -115,26 +114,15 @@ const rows = computed<Array<{ label: string; value?: string; tags?: string[] }>>
   return list
 })
 
-function typeOf(accountId: number): string {
-  for (const account of accounts.value) {
-    if (account.id === accountId) {
-      return account.type
-    }
-  }
-  return ''
-}
-
 const postingRows = computed<Array<{ account: string; commodity: string; amount: string }>>(() => {
   const t = txn.value
   if (t === null) {
     return []
   }
+  // 票面分录行刻意显示 Beancount 全名（而非 account_display_name）：
+  // `.beancount` 可核对、可与导出文件逐行对照，这是小票的设计前提，不要改成展示名。
   return t.postings.map((posting) => ({
-    account: accountLabel({
-      id: posting.account_id,
-      name: posting.account,
-      type: typeOf(posting.account_id),
-    }),
+    account: posting.account,
     commodity: posting.commodity,
     amount: posting.amount,
   }))

@@ -6,6 +6,7 @@
  * 所有解析都容错：非法值一律回退默认，不抛错。
  */
 import { hasAccountType, transactionKind, type SummaryAccount } from './record'
+import { matchKeyword } from './search'
 
 /** 可筛选交易的最小结构（api/types 的 TransactionView 结构兼容）。 */
 export interface FilterableTxn {
@@ -14,7 +15,9 @@ export interface FilterableTxn {
   flag: string
   description: string
   created_by_name: string
-  postings: Array<{ account_id: number; amount: string }>
+  /** `account` / `tags` 为可选：关键词匹配需要，但历史调用方未提供。 */
+  postings: Array<{ account_id: number; amount: string; account?: string }>
+  tags?: string[]
 }
 
 export type FilterKind = 'all' | 'expense' | 'income' | 'transfer'
@@ -29,6 +32,15 @@ export interface TransactionFilters {
   category: number | null
   /** 记账人（created_by_name 精确匹配），空串表示全部。 */
   member: string
+  /**
+   * 关键词（备注 / 分类名 / 账户名 / 成员 / 标签，五路匹配），空串表示全部。
+   *
+   * **必填**（不是可选）：可选会让每个调用方都判空，而其中一定有一处不判；
+   * 空值语义由 `''` 承担，与其余字段的「空串 = 不筛」保持一致。
+   * 实际匹配逻辑在 `core/search.ts` 的 `matchKeyword`（本模块只负责存取与 query 化）。
+   * URL 键为 `q`（与 from/to/kind/view 等短键风格一致，且会被分享链接带出去）。
+   */
+  keyword: string
 }
 
 /** vue-router `LocationQuery` 兼容形状（数组元素可为 null）。 */
@@ -38,7 +50,15 @@ const KINDS: readonly string[] = ['all', 'expense', 'income', 'transfer']
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 export function emptyFilters(): TransactionFilters {
-  return { from: '', to: '', kind: 'all', account: null, category: null, member: '' }
+  return {
+    from: '',
+    to: '',
+    kind: 'all',
+    account: null,
+    category: null,
+    member: '',
+    keyword: '',
+  }
 }
 
 function firstQuery(value: string | null | (string | null)[] | undefined): string {
@@ -85,6 +105,7 @@ export function filtersFromQuery(query: QueryLike): TransactionFilters {
     filters.category = category
   }
   filters.member = firstQuery(query.member)
+  filters.keyword = firstQuery(query.q)
   return filters
 }
 
@@ -109,6 +130,11 @@ export function filtersToQuery(filters: TransactionFilters): Record<string, stri
   if (filters.member !== '') {
     query.member = filters.member
   }
+  // 纯空白关键词不写入 URL：与 `hasActiveFilters` 的 `trim()` 判据保持一致，
+  // 否则会出现「URL 里有 q、但清除筛选按钮不显示」的自相矛盾。
+  if (filters.keyword.trim() !== '') {
+    query.q = filters.keyword
+  }
   return query
 }
 
@@ -120,7 +146,9 @@ export function hasActiveFilters(filters: TransactionFilters): boolean {
     filters.kind !== 'all' ||
     filters.account !== null ||
     filters.category !== null ||
-    filters.member !== ''
+    filters.member !== '' ||
+    // 用 trim：纯空格不算「有筛选」，否则用户敲了个空格就冒出「清除筛选」按钮。
+    filters.keyword.trim() !== ''
   )
 }
 
@@ -183,6 +211,11 @@ export function applyFilters<T extends FilterableTxn>(
       }
     }
     if (filters.member !== '' && txn.created_by_name !== filters.member) {
+      return false
+    }
+    // 关键词（五路：备注 / 分类名 / 账户名 / 成员 / 标签）。放在最后，
+    // 保证既有五项判断的短路顺序与命中成本不变（关键词匹配要遍历分录与标签）。
+    if (!matchKeyword(txn, filters.keyword, accounts)) {
       return false
     }
     return true

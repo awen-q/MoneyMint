@@ -77,6 +77,52 @@ export interface FormatMoneyOptions {
   signed?: boolean
 }
 
+/** 去掉定点串末尾的 `.0`（`1.0` → `1`），保证不出现 `1.0k` 这种别扭写法。 */
+function trimTrailingZero(fixed: string): string {
+  return fixed.endsWith('.0') ? fixed.slice(0, -2) : fixed
+}
+
+/**
+ * 简写金额（日历格 / 坐标轴专用）：不带币种符号、不带千分位。
+ *
+ * 档位：`< 1000` 取整元；`1000 ~ 9999.99` 一位小数 + `k`；`>= 10000` 一位小数 + `w`。
+ * 进位跨档会复核：`999.95` 先舍入成 `1000`，输出 `1k` 而不是 `1000`。
+ *
+ * **只用于展示，调用方不得把结果 parse 回金额。**
+ */
+export function formatCompact(
+  amount: string,
+  options: FormatMoneyOptions = {},
+): string {
+  const value = parseOrZero(amount)
+  const abs = value.abs()
+  const negative = value.isNeg() && !abs.isZero()
+
+  let body: string
+  if (abs.gte(10000)) {
+    body = `${trimTrailingZero(
+      abs.div(10000).toDecimalPlaces(1, Decimal.ROUND_HALF_UP).toFixed(1),
+    )}w`
+  } else if (abs.gte(1000)) {
+    body = `${trimTrailingZero(
+      abs.div(1000).toDecimalPlaces(1, Decimal.ROUND_HALF_UP).toFixed(1),
+    )}k`
+  } else {
+    const rounded = abs.toDecimalPlaces(0, Decimal.ROUND_HALF_UP)
+    if (rounded.gte(1000)) {
+      // 999.95 → 1000，落回 k 档
+      body = '1k'
+    } else {
+      body = rounded.toFixed(0)
+    }
+  }
+
+  const isDisplayZero = body === '0'
+  if (negative && !isDisplayZero) return `-${body}`
+  if (options.signed && !isDisplayZero) return `+${body}`
+  return body
+}
+
 /**
  * 完整展示：符号 + 金额（+ 可选币种代码）。
  * 已知币种如 `-¥ 1,234.50`；未知币种如 `-1,234.50 XYZ`。
@@ -161,6 +207,23 @@ export class Money {
   /** 相减。 */
   minus(other: Money): Money {
     return new Money(this.amount.minus(other.amount))
+  }
+
+  /**
+   * 定点除法（**仅供展示聚合使用**：日均、环比占比的分子分母）。
+   *
+   * 舍入固定两位 HALF_UP（负数按「远离零」进位），与全站金额口径一致。
+   * 结果**禁止回写交易金额**——账芯不接受派生值。
+   *
+   * @param divisor 非零有限数，否则抛 RangeError（静默兜底会掩盖分母算错）
+   */
+  div(divisor: number): Money {
+    if (!Number.isFinite(divisor) || divisor === 0) {
+      throw new RangeError(`divisor 必须为非零有限数，收到: ${String(divisor)}`)
+    }
+    return new Money(
+      this.amount.div(divisor).toDecimalPlaces(2, Decimal.ROUND_HALF_UP),
+    )
   }
 
   /** 是否为 0（按原始值判断，不做展示舍入）。 */
