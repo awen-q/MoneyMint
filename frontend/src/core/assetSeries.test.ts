@@ -11,6 +11,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { buildAssetSeries, emptyAssetSeries } from '@/core/assetSeries'
+import { Money } from '@/core/Money'
 import type { AssetSeriesResponse } from '@/api/types'
 
 function response(points: Array<{ month: string; assets: string; liabilities: string; net: string }>): AssetSeriesResponse {
@@ -126,5 +127,85 @@ describe('emptyAssetSeries', () => {
       expect(month.liabilities).toBe('0.00')
       expect(month.net).toBe('0.00')
     }
+  })
+})
+
+/**
+ * 稿子真实数据（`docs/reports-redesign-mockup/assets/app.js:255-263` 的 `ASSET_SNAP[2026]`）。
+ *
+ * 原始表是「分」：`a` = 月末总资产（分，正），`l` = 月末负债（分，**正数存储**；
+ * 端点契约里 liabilities 是**负数**，所以下面取负号）。有一个负净资产月
+ * （1~11 月全部为负：房贷 40 万 > 金融资产），正好用来钉「不取 abs、负号保留」。
+ *
+ * 12 月：稿子表只到 11 月（模拟数据截至 2026-11-17）。真实端点的 12 月点由
+ * `repository.BalancesByMonth` 逐月累计得出 —— 12 月的「次月 1 日日初」包含
+ * 已发生的全部 11 月分录，所以无 12 月新分录时 12 月 ≡ 11 月。这里按同一口径
+ * 补上（这也正是稿子页脚「11 月末 = 总资产 ¥315,590.00 / 负债 ¥388,550.00 /
+ * 净资产 −¥72,960.00」那组数字）。
+ */
+const MOCK_CENTS_2026: Array<[number, number]> = [
+  [27450000, 40055000], [27920000, 39935000], [28380000, 39815000],
+  [28850000, 39695000], [29320000, 39575000], [29760000, 39455000],
+  [30180000, 39335000], [30560000, 39215000], [30890000, 39095000],
+  [31280000, 38975000], [31559000, 38855000], [31559000, 38855000],
+]
+
+/** 分 → 定点两位字符串（不带千分位：`Money` 的口径）。 */
+function centsToFixed(value: number): string {
+  const sign = value < 0 ? '-' : ''
+  const abs = Math.abs(value)
+  return `${sign}${Math.floor(abs / 100)}.${String(abs % 100).padStart(2, '0')}`
+}
+
+const REAL_2026: AssetSeriesResponse = response(
+  MOCK_CENTS_2026.map(([assets, liabilities], index) => ({
+    month: `2026-${String(index + 1).padStart(2, '0')}`,
+    assets: centsToFixed(assets),
+    liabilities: centsToFixed(-liabilities),
+    net: centsToFixed(assets - liabilities),
+  })),
+)
+
+describe('buildAssetSeries：稿子真实数据（2026 年，含负净资产）', () => {
+  it('11 月末三项与稿子逐字一致：315590.00 / -388550.00 / -72960.00', () => {
+    const series = buildAssetSeries(REAL_2026, 2026)
+    const nov = series.months[10]
+    expect(nov.month).toBe('2026-11')
+    expect(nov.assets).toBe('315590.00')
+    expect(nov.liabilities).toBe('-388550.00')
+    // 稿子页脚写的「净资产 −¥72,960.00」：负号必须活到这里
+    expect(nov.net).toBe('-72960.00')
+  })
+
+  it('负净资产不被 abs 掉（取绝对值会得到 72960.00 —— 那是「资产 7 万」的错信息）', () => {
+    const series = buildAssetSeries(REAL_2026, 2026)
+    expect(series.net[10]).not.toBe('72960.00')
+    expect(series.net[10].startsWith('-')).toBe(true)
+    // 负债同理：契约是负数，转正号就是把「欠 38 万」写成「有 38 万」
+    expect(series.liabilities[10]).not.toBe('388550.00')
+  })
+
+  it('真实数据自洽：每个月 net 恒等于 assets + liabilities（定点相加，不经浮点）', () => {
+    const series = buildAssetSeries(REAL_2026, 2026)
+    for (const month of series.months) {
+      const sum = Money.from(month.assets).plus(Money.from(month.liabilities))
+      expect(sum.toString()).toBe(Money.from(month.net).toString())
+    }
+  })
+
+  it('真实数据环比：10 月 → 11 月差额 2790.00，占比约 0.89%', () => {
+    const series = buildAssetSeries(REAL_2026, 2026)
+    // 31,559,000 − 31,280,000 = 279,000 分
+    expect(series.months[10].deltaAssets).toBe('2790.00')
+    expect(series.months[10].deltaRatio).toBeCloseTo(2790 / 312800, 10)
+  })
+
+  it('yearEnd 取 12 月（服务端口径下 = 11 月末，本年无 12 月分录）', () => {
+    const series = buildAssetSeries(REAL_2026, 2026)
+    expect(series.yearEnd.assets).toBe('315590.00')
+    expect(series.yearEnd.liabilities).toBe('-388550.00')
+    expect(series.yearEnd.net).toBe('-72960.00')
+    // 有真实负值 → 不是空态（「全 0 才算空」不能把负净资产当空）
+    expect(series.hasAnyValue).toBe(true)
   })
 })
