@@ -148,14 +148,10 @@ describe('navItems：ready ⟺ 路由存在（不变式）', () => {
     }
   })
 
-  it('B6 的其余视图路由当前确实还不存在（落地时本条会红，届时同步翻 ready）', () => {
-    // B3/B5/B4 已落地：`/search`、`/assets`、`/stats` 均已从 pending 移出，
-    // 改为下方正向断言；只剩 B6 的 `/assets/stats`。
-    const pending = ['/assets/stats']
-    for (const path of pending) {
-      expect(resolvesToNamedRoute(path)).toBe(false)
-    }
-  })
+  // B3~B6 全部落地（`/search`、`/stats`、`/assets`、`/assets/stats`）：原先的
+  // 「pending 数组当前还不存在」用例已整条删除 —— 数组清空后它只会变成一条
+  // 永远成立的空断言，那是假守卫。四个页面各自的正向断言见下方，主用例
+  // 「ready ⟺ resolve(to)」仍覆盖全部导航项。
 
   it('B4 已落地：/stats 解析到命名路由 stats，且两处导航项都已 ready', () => {
     expect(resolvesToNamedRoute('/stats')).toBe(true)
@@ -166,6 +162,14 @@ describe('navItems：ready ⟺ 路由存在（不变式）', () => {
     const tabs = MOBILE_TABS.filter((item) => item.to === '/stats')
     expect(tabs.length).toBe(1)
     expect(tabs[0].ready).toBe(true)
+  })
+
+  it('B6 已落地：/assets/stats 解析到命名路由 asset-stats，且导航项已 ready', () => {
+    expect(resolvesToNamedRoute('/assets/stats')).toBe(true)
+    expect(router.resolve('/assets/stats').name).toBe('asset-stats')
+    const items = NAV_MAIN.filter((item) => item.to === '/assets/stats')
+    expect(items.length).toBe(1)
+    expect(items[0].ready).toBe(true)
   })
 
   it('B5 已落地：/assets 解析到命名路由 assets，且两处导航项都已 ready', () => {

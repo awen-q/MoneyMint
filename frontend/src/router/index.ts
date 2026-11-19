@@ -16,6 +16,7 @@ import { useSessionStore } from '@/stores/session'
 import AccountsView from '@/views/AccountsView.vue'
 import AccountDetailView from '@/views/AccountDetailView.vue'
 import AssetsView from '@/views/AssetsView.vue'
+import AssetStatsView from '@/views/AssetStatsView.vue'
 import StatsView from '@/views/StatsView.vue'
 import AwaitInviteView from '@/views/AwaitInviteView.vue'
 import BillsView from '@/views/BillsView.vue'
@@ -65,6 +66,14 @@ const routes: RouteRecordRaw[] = [
     path: '/assets',
     name: 'assets',
     component: AssetsView,
+    meta: { requiresAuth: true },
+  },
+  {
+    // B6：资产统计（design.md 资产统计，仅按月）。与 navItems 的 `ready: true`
+    // 必须同提交（`ready === true ⟺ router.resolve(to)` 得命名路由，双向都会红）。
+    path: '/assets/stats',
+    name: 'asset-stats',
+    component: AssetStatsView,
     meta: { requiresAuth: true },
   },
   {

@@ -39,7 +39,7 @@ export const NAV_MAIN: NavItem[] = [
   { key: 'search', label: '搜索账单', icon: '🔍', to: '/search', ready: true },
   { key: 'stats', label: '统计账单', icon: '◔', to: '/stats', ready: true },
   { key: 'assets', label: '资产', icon: '▤', to: '/assets', ready: true },
-  { key: 'asset-stats', label: '资产统计', icon: '↗', to: '/assets/stats', ready: false },
+  { key: 'asset-stats', label: '资产统计', icon: '↗', to: '/assets/stats', ready: true },
 ]
 
 /**
