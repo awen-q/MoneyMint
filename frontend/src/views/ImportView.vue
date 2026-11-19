@@ -351,7 +351,7 @@ function gotoLedgers(): void {
 .im__desc { margin: 0 0 8px; font-size: 11px; color: var(--fb-sub); line-height: 1.7; }
 .im__notice { margin: 10px 0 0; padding: 8px 12px; border-radius: var(--fb-radius-input); font-size: 12px; background: var(--fb-danger-soft); color: var(--fb-danger-ink); }
 .im__file { display: block; margin: 10px 0; font-size: 12px; }
-.im__textarea { width: 100%; box-sizing: border-box; padding: 10px; border: 1.5px solid var(--fb-line); border-radius: var(--fb-radius-input); font-size: 12px; font-family: monospace; line-height: 1.6; resize: vertical; background: var(--fb-surface, transparent); color: var(--fb-text, inherit); }
+.im__textarea { width: 100%; box-sizing: border-box; padding: 10px; border: 1.5px solid var(--fb-line); border-radius: var(--fb-radius-input); font-size: 12px; font-family: monospace; line-height: 1.6; resize: vertical; background: var(--fb-card); color: var(--fb-ink); }
 .im__buttons { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .im__btn { padding: 6px 12px; font-size: 12px; }
 /* pad / balance 表格的目标 / 累计 / 差额是定点金额，数字列等宽对齐。 */
@@ -365,7 +365,7 @@ function gotoLedgers(): void {
 .im__warnbox { margin: 8px 0; padding: 8px 12px; border-radius: var(--fb-radius-input); background: var(--fb-warn-soft); color: var(--fb-warn-ink); }
 .im__warnbox-title { margin: 0 0 4px; font-size: 12px; font-weight: 600; }
 .im__warnlist { margin: 0; padding-left: 18px; font-size: 11px; line-height: 1.8; }
-.im__target { flex: 1; padding: 8px 10px; font-size: 12px; border: 1.5px solid var(--fb-line); border-radius: var(--fb-radius-input); background: transparent; color: var(--fb-text, inherit); }
+.im__target { flex: 1; padding: 8px 10px; font-size: 12px; border: 1.5px solid var(--fb-line); border-radius: var(--fb-radius-input); background: transparent; color: var(--fb-ink); }
 .im__target--on { border-color: var(--fb-primary); font-weight: 600; background: var(--fb-primary-soft); }
 .im__padbox { margin: 8px 0; }
 </style>

@@ -763,14 +763,16 @@ onMounted(() => {
   flex: 1;
 }
 
-/* 负债正目标的强制确认勾选行。 */
+/* 负债正目标的强制确认勾选行。
+   文字取主墨色 --fb-ink 而非 --fb-sub：它是必须被注意到才能继续的确认门槛，
+   与相邻说明性小字刻意差一档色阶，将来「统一色阶」时不要合并这两处。 */
 .acctd__confirm-check {
   display: flex;
   align-items: center;
   gap: 8px;
   margin: 8px 0;
   font-size: 12px;
-  color: var(--fb-text, inherit);
+  color: var(--fb-ink);
 }
 
 .acctd__balance-panel {
