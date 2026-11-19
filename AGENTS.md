@@ -24,13 +24,21 @@
 | 产物 | `frontend/dist/`（gitignore），由 `LEDGER_WEB_ROOT` 托管；Docker 镜像内 `/app/web` | `/legacy/` **回滚通道已废弃**（批 6 后：无静态托管、无产物目录、无校验脚本；需要旧版只能从 git 历史重建） |
 
 - **批 0~6 全部落地**（2026-11-12 交付）：36 端点、迁移 014 库世代、恢复/导入向导（P-19/P-20）、离线同步内核（`src/core/sync/`，9 份真实契约样本 + 14 引擎用例）、PWA（`public/sw.js`）、CI `web-verify` job、Dockerfile Node 构建、工具链钉版（`.nvmrc` 22.23.4 / `engines >=22.22 <23` / `engine-strict`）。
-- Vitest **301/301 通过**（37 文件）；`go build` / `go vet` / `go test ./...` 全绿。
+- 批 6 交付时 Vitest **301/301（37 文件）**；`go build` / `go vet` / `go test ./...` 全绿（当前值见下方「当前阶段」）。
 - `LEDGER_AUTH_EXPOSE_TOKEN` 默认 `false`（Vue 版只靠 httpOnly Cookie，D-7）；仅当脚本 / 第三方客户端需要从响应体取 Bearer token 时才显式设 `true`（与已废弃的 `/legacy/` 无关）。
 - 后端与账芯**不变**：复式借贷平衡、append-only 不可变交易、`bean-check` 导出校验、离线同步协议全部保留。
 
 **核心不变约束**：导出的 `.beancount` 必须能被 `bean-check` 直接校验通过（退出码 0、无报错）。
 
-**当前阶段**：M7 六批 + **0.6.0（S0~S6 七批，2026-11-15）全部交付**，仓库只剩一套前端；§7 端点表 **41 条路径 / 52 个 `path×method`**（表 45 行；基线 36 + 0.6.0 新增 8 + B6 新增 1）已与 `internal/server/router.go` 逐条核对一致（T62 审计：零孤儿、零缺失；`routes.ts` 现有 40 常量 = 41 − 1 条待 T55 补）；迁移至 **016**，Vitest **901/901 通过**（95 文件；2026-11-19 实测）。剩余边界见 §9。
+**当前阶段**：M7 六批 + 0.6.0（S0~S6）+ **报表重设计 v4.1（B1~B6 六批，2026-11-19）全部交付**，仓库只剩一套前端；§7 端点表 **41 条路径 / 52 个 `path×method`**（表 45 行；基线 36 + 0.6.0 新增 8 + B6 新增 1）已与 `internal/server/router.go` 逐条核对一致（T62 审计：零孤儿、零缺失；`routes.ts` 现有 **41 常量**，与 41 条路径一一对应）；迁移至 **016**，Vitest **943/943 通过**（98 文件；2026-11-19 实测），CI 双下限已抬到实测值（用例 **943** / 测试文件 **98**，只增不减）。剩余边界见 §9。
+
+**报表重设计 v4.1 已交付**（2026-11-19，前端大改 + 后端只增读路径）：
+- **五视图**：账单 `/`（`BillsView`，日历 + 四指标 + 逐日折线 + 按日分组列表）、搜索 `/search`（`SearchView`，七维筛选 + 分币种汇总 + CSV + 加载更多）、统计 `/stats`（`StatsView`，统计/标签双子页、五指标、双环 + 排行、柱状点柱下钻、每日明细含日均）、资产 `/assets`（`AssetsView`）、资产统计 `/assets/stats`（`AssetStatsView`，三线 + 月度变化）。
+- **壳层**：PC 侧栏 5 项直达 + 「管理 · 10」折叠组；移动底栏 4 Tab + 中央 FAB（`repeat(5,1fr)`）；顶栏账本行 + 待同步 / 隐私 / 更多三小件；断点 **900**（消除 769~1023 空白带）；导航清单单一来源 `components/shell/navItems.ts`（`ready === true ⟺ 路由可解析`，由 `shellNav.test.ts` 守）。
+- **图表**：ECharts 5.6.0 + SVG renderer，唯一入口 `core/charts/echarts.ts`；`check:bundle` 有「echarts 单点入口」断言。
+- **数据层**：五视图共用 `stores/ledgerData.ts`（内存快照 + stale-while-revalidate）；`GET /api/transactions` 增加 `from`/`to`/`limit`/`cursor` → **keyset 游标分页**（`limit` 缺省 = 全量，禁止改成默认截断）；新增只读端点 `GET /api/assets/series`（见 §7 B6 小节）。
+- **旧三页已下线**：`HomeView` / `TransactionsView` / `ReportsView` + `ReportCharts.vue` 已删除；`/transactions` 保留**同名路由 + 函数式重定向**（透传 query，`AccountDetailView` 等 3 处仍按名称跳转）。CSV 导出、行点击、四态、AC-16 query 化随迁至新页，**不降级**。
+- **三处刻意差异**（非缺陷，勿当遗漏）：① 资产统计只做**按月**（D-2，稿子的按日 seg 主动削减）；② 日历点日**不弹抽屉**，改为「选中当日 → 列表就地过滤 + 查看整月 ✕ + 笔数」；③ 未建 `TxnDrawer` 组件——分类下钻走页内状态机、标签下钻跳搜索页（`TxnRow` 的 `drawer` 档保留但无调用方）。
 
 **0.6.0 已交付**（2026-11-15）：迁移 015_ledger_ops、账本删除、币种 CRUD、账户下级（`parent_uuid` 必传）、余额校准（`balance_key` 独立列，D-1 日初口径）、Beancount 导入（默认 `target=current` + 批次撤销；导入端点移出账本上下文豁免）、修改交易（`PATCH /api/transactions/{uuid}` = 冲正 + 新建，无版本链；权限收紧：editor 仅可改本人交易）。**两条破坏性变更**（导入语义反转 / 交易权限收紧）详见 `CHANGELOG.md` [0.6.0]。0.6.0 产品口径唯一源：[`docs/0.6.0-prd.md`](docs/0.6.0-prd.md)（N-12：§9 只链接不复制 AC）。
 
@@ -66,7 +74,7 @@ python -m pip install beancount    # 激活 .venv 后执行
 ├── cmd/server/main.go    # 后端入口
 ├── internal/             # 后端分层：config → domain → db → repository → service → handler → server
 │   ├── db/{db,migrate}.go   # 开库 + schema 迁移（当前至 016）；迁移框架见 §4
-│   ├── repository/       # 全部 SQL 集中于此（account/transaction/reversal 冲正内核/commodity/balance/ledger/member/sync/session/user/setting/opening/import）
+│   ├── repository/       # 全部 SQL 集中于此（account/transaction/reversal 冲正内核/commodity/balance/ledger/member/sync/session/user/setting/opening/import/asset）
 │   ├── service/          # 业务：校验/事务编排/余额/自然键合并/同步协议/成员权限/恢复/导入
 │   ├── handler/          # 薄 HTTP 适配层
 │   ├── server/           # 组合根：路由 + CORS/CSRF/auth 中间件 + 静态托管
@@ -86,10 +94,11 @@ python -m pip install beancount    # 激活 .venv 后执行
 ```
 
 **前端架构（Vue 3 SPA，唯一前端）**：
-- `core/Money.ts`：`decimal.js` 定点金额唯一入口（只收 string 构造、`ROUND_HALF_UP`、`toString()` 固定 `toFixed()`）；另有 `core/{accounts,calendar,csv,filters,opening,ordering,record,storage,m2}.ts` 核心领域逻辑（全部带 `.test.ts`）。
+- `core/Money.ts`：`decimal.js` 定点金额唯一入口（只收 string 构造、`ROUND_HALF_UP`、`toString()` 固定 `toFixed()`）；另有 `core/{accounts,assetSeries,assets,bill,calendar,csv,filters,opening,ordering,record,reports,search,stats,txnRow,storage,m2}.ts` 核心领域逻辑（全部带 `.test.ts`）。
+- `core/charts/`：`echarts.ts`（唯一注册入口）、`option.ts`（折线/环图/柱状 option 构造）、`liveCount.ts`（实例计数，**统计页上限 4，零余量**）、`register.ts`。
 - `core/sync/`：离线同步内核——`models.ts`（本地实体/死信分类，`DEAD_CODES` 与后端稳定码同源）、`localStore.ts`（Memory 实现）、`idbStore.ts`（离线提交队列的本地持久化，单事务原子写）、`engine.ts`（SyncEngine：pull→push 重映射→pull、库世代隔离、指数退避、CAS 多标签页租约）+ 9 份真实契约样本（`fixtures/`，其中 6 份被 `engine.test.ts` 引用）。
-- `api/{types,routes,errors,client}.ts`：40 条路由常量（= 后端 41 路径 − 1 条待 T55 补）手写 TS 类型 / 路由常量 / `ApiError` / 类型化 fetch 客户端（401 single-flight / 428 / `X-Ledger-Id` 断言 / FormData 上传；**不生成** OpenAPI）。
-- `stores/`：`session / privacy / recordSheet / sync`；views 22 页 + components（AppLayout / RecordSheet / SyncBadge 等）。
+- `api/{types,routes,errors,client}.ts`：**41 条**路由常量（= 后端 41 条 `/api/` 路径，一一对应）手写 TS 类型 / 路由常量 / `ApiError` / 类型化 fetch 客户端（401 single-flight / 428 / `X-Ledger-Id` 断言 / FormData 上传；**不生成** OpenAPI）。
+- `stores/`：`session / privacy / recordSheet / sync / ledgerData / period`；views **22 页** + components（`bill/ search/ stats/ assets/ charts/ shell/` 六个子目录 + AppLayout / RecordSheet / TxnRow / MoneyText / SyncBadge 等，共 39 个 `.vue`）。
 - `vite.config.ts`：`base: './'`、`build.target: 'es2015'`、`@vitejs/plugin-legacy`（`targets: Safari >= 14`）、`outDir: 'dist'`、`server.proxy['/api'] → 127.0.0.1:8080`、alias `@`、`define.__APP_VERSION__` 读 package.json。
 - PWA：`public/sw.js` 只缓存应用壳与静态资源（`/api/*` 绝不拦截），activate 清理非 fambean 前缀旧缓存（含 Flutter 时代 SW 缓存）；`core/pwa.ts` 更新提示不自动打断录入（AC-35）。
 - **兼容基线**：语法门禁 es2020 + `compat.mjs` API/CSS 特性扫描；禁用 Safari 14.1 缺失 API（`.at()` / `structuredClone` 等）。
@@ -166,7 +175,7 @@ python -m pip install beancount    # 激活 .venv 后执行
 
 ## 7. API 端点清单
 
-> **口径（T62 三处一致性审计后校准）**：`internal/server/router.go` 实际注册 **41 条 `/api/` 路径 / 52 个 `path×method`**；下表按「方法组」展开共 **45 行** —— 其中 4 条路径的方法被拆成两行（`/api/accounts/{uuid}/balance`、`/api/commodities`、`/api/transactions/{uuid}`、`/api/ledgers/{id}`），其余多方法路径（如 `/api/accounts` 的 GET+POST）在 1 行内并列。前端 `frontend/src/api/routes.ts` 现有 **40 个常量**（= 41 路径 − `/api/assets/series`，该常量由 T55 补齐）。**三个数字不可互推**：校验路径一致性请数「路径数」，校验 `routes.ts` 请数常量数，校验本表请数行数。新增端点须三处同步（按 Q-10：既有行不重排，新增端点文末顺延编号）。
+> **口径（T62 三处一致性审计后校准）**：`internal/server/router.go` 实际注册 **41 条 `/api/` 路径 / 52 个 `path×method`**；下表按「方法组」展开共 **45 行** —— 其中 4 条路径的方法被拆成两行（`/api/accounts/{uuid}/balance`、`/api/commodities`、`/api/transactions/{uuid}`、`/api/ledgers/{id}`），其余多方法路径（如 `/api/accounts` 的 GET+POST）在 1 行内并列。前端 `frontend/src/api/routes.ts` 现有 **41 个常量**（与 41 条路径一一对应，B6 的 `assetsSeries` 已补齐）。**三个数字不可互推**：校验路径一致性请数「路径数」，校验 `routes.ts` 请数常量数，校验本表请数行数。新增端点须三处同步（按 Q-10：既有行不重排，新增端点文末顺延编号）。
 
 | 端点 | 方法 | 鉴权 | 说明 |
 |---|---|---|---|
@@ -241,7 +250,7 @@ python -m pip install beancount    # 激活 .venv 后执行
 |---|---|---|---|
 | `/api/assets/series` | GET | 登录+成员（viewer 可读） | B6：`?year=YYYY&commodity=CNY`（`year` 必填四位、`commodity` 缺省取 `ledgers.default_commodity`）→ `200 {commodity, points:[{month:"YYYY-MM", assets, liabilities, net}]}`，**恒 12 个点**（无交易月份也出现，值 `"0.00"`）；金额一律定点两位字符串。口径：**月末末值 = 「次月 1 日日初」**（`t.date < 次月1日`，含月末当天交易；写成月末当天会整体错一个月）；`liabilities` 保持负号**不取 abs**，`net = assets + liabilities` 严格相加（AC-12）；只统计 `commodity` 匹配的分录，不提供跨币种合计。实现在 `repository.BalancesByMonth`（与 `computeBalancesOn` 共用 `postingsBalanceWhere`，一次查询 + 逐月快照，不做 12 次全表扫）。`400` = year 非四位 / 超出 1000~9998 / 账本未设默认币种且未指定 commodity |
 
-> 本端点由 `internal/server/router.go` 与 `AGENTS.md` 两处已同步；`frontend/src/api/routes.ts` 的常量按排期在前端 T55 补齐（同一批前端改动由 fe 负责，避免抢同一个文件）。
+> 本端点由 `internal/server/router.go`、`AGENTS.md`、`frontend/src/api/routes.ts` 三处已同步（`assetsSeries` 常量 + `AssetSeriesResponse` 类型 + `assetSeriesApi.series`）。
 
 ---
 
@@ -250,7 +259,7 @@ python -m pip install beancount    # 激活 .venv 后执行
 - **Beancount 兼容**：改 `internal/export/beancount.go` / `files.go` 后必须重新跑 bean-check。**测试中 `BEAN_CHECK_STRICT=1` 时找不到校验器即失败**，不要改回静默跳过（会形成「测试全绿但账芯从未被验证」的假绿灯）。
 - **备份必须用 `VACUUM INTO`，禁止复制 db 文件**：WAL 模式下未 checkpoint 的数据在 `-wal` 里。实测主库 188 KB / WAL 4.1 MB 时直接复制只得到 236/300 条记录，且**不报错**。快照后必须过 `PRAGMA integrity_check` 与行数比对。
 - **全库级操作要系统管理员**：备份 / 下载 / 恢复校验 `users.is_admin`，不能用账本级 `owner` 代替。
-- **迁移优先**：任何 schema 改动走 `migrate.go`，幂等、记录 `schema_migrations`；新增编号顺延（当前至 016，下一个是 017）。
+- **迁移优先**：任何 schema 改动走 `migrate.go`，幂等、记录 `schema_migrations`；新增编号顺延（当前至 016，下一个是 017，**017 已预留给 B7 审计表，未开工**）。
 - **借贷平衡**：后端 `handleCreateTransaction` 按币种平衡校验；前端记一笔页实时指示。
 - **UUID 引用**：同步实体一律用 `uuid` 互引，勿用服务端自增 `id` 跨端传递；在线用 `account_id`、离线 push 用 `account_uuid`（§6）。
 - **不可变**：交易一旦创建不原地改；改账 = 新增冲正交易。
@@ -261,19 +270,23 @@ python -m pip install beancount    # 激活 .venv 后执行
 
 ---
 
-## 9. 已知边界 / 当前待办（0.6.0 已交付）
+## 9. 已知边界 / 当前待办（0.6.0 + v4.1 已交付）
 
 **已落地（批 0~6，2026-11-12 交付）**：Vue 3 + Vite 脚手架与全部 20 页、`core/Money` 定点金额、`es2015` + plugin-legacy + es2020 语法门禁 + `compat.mjs` API/CSS 扫描、手写 TS 类型 + 类型化 fetch 客户端（401 single-flight / 428 / `X-Ledger-Id` 断言 / FormData）、D-7 httpOnly Cookie + CSRF + CORS 白名单、迁移 013/014、恢复/导入全链路（M2-a~g）、离线同步内核（`core/sync/`，9 份真实契约样本〔其中 6 份被引擎用例引用〕+ 14 引擎用例）、PWA（`public/sw.js` + 更新提示）、CI `web-verify` job（含用例数下限防假绿）、Dockerfile Node 构建、工具链钉版（`.nvmrc` 22.23.4 / `engines >=22.22 <23` / `engine-strict`）、`LEDGER_AUTH_EXPOSE_TOKEN` 默认 `false`。
 
-**已落地（0.6.0，2026-11-15 交付）**：迁移 015_ledger_ops、迁移 016_import_batch_manifest（QA 回归缺陷根治：撤销按 manifest 精确删）、账本删除、币种 CRUD、账户下级、余额校准（`balance_key` 独立列）、Beancount 导入（`target=current` + 批次撤销，导入端点移出账本上下文豁免）、修改交易（冲正 + 新建，权限收紧）、`GET /api/ledgers` 行级计数（P1-03）、`X-Ledger-Id` 回退修正（R3）；§7 端点表 36→**44**；Vitest **356/356**（47 文件）；CI 用例数下限同步 356。**验收口径唯一源**：[`docs/0.6.0-prd.md`](docs/0.6.0-prd.md)（N-12：此处只链接、不复制 AC 全文，避免第二份漂移口径）；架构设计见 [`docs/0.6.0-design.md`](docs/0.6.0-design.md)。
+**已落地（0.6.0，2026-11-15 交付）**：迁移 015_ledger_ops、迁移 016_import_batch_manifest（QA 回归缺陷根治：撤销按 manifest 精确删）、账本删除、币种 CRUD、账户下级、余额校准（`balance_key` 独立列）、Beancount 导入（`target=current` + 批次撤销，导入端点移出账本上下文豁免）、修改交易（冲正 + 新建，权限收紧）、`GET /api/ledgers` 行级计数（P1-03）、`X-Ledger-Id` 回退修正（R3）；§7 端点表 36→**44** 行（交付时值，当前 41 条路径见 §1）；交付时 Vitest **356/356**（47 文件，当前值见 §1）；CI 用例数下限同步 356（现已 943/98）。**验收口径唯一源**：[`docs/0.6.0-prd.md`](docs/0.6.0-prd.md)（N-12：此处只链接、不复制 AC 全文，避免第二份漂移口径）；架构设计见 [`docs/0.6.0-design.md`](docs/0.6.0-design.md)。
+
+**已落地（报表重设计 v4.1，2026-11-19 交付，B1~B6 六批）**：五视图（账单/搜索/统计/资产/资产统计）+ 壳层重构（侧栏 5 直达 + 管理 10、底栏 4 Tab + FAB、断点 900）+ ECharts 5.6.0（SVG，唯一入口 `core/charts/echarts.ts`）+ 服务端 keyset 分页（`from`/`to`/`limit`/`cursor`，`limit` 缺省全量）+ 只读端点 `GET /api/assets/series` + `stores/ledgerData` 单次拉取共享快照；旧三页（`HomeView`/`TransactionsView`/`ReportsView`/`ReportCharts.vue`）下线，`/transactions` 保留函数式重定向透传 query；Vitest **466→943**（58→98 文件），CI 双下限（943 / 98）；迁移仍 **016**（B1~B6 **零迁移**）。批次与验收口径见交付包内 `docs/reports-redesign-dev-plan.md`、`docs/reports-redesign-prd.md`（**不入库**，随交付包留存）。
 
 **遗留 / 注意**：
 1. `package-lock.json` 在 Linux（CI ubuntu）上的 `npm ci` 与 Dockerfile Node 构建，以 GitHub Actions `web-verify` / 镜像构建的运行记录为准，别把「配置写了」当成「已经跑过」；若失败按 lock 缺平台二进制处理（重新在 Linux 生成）。
 2. `docs/` 现存 `0.6.0-prd.md`（产品口径）与 `0.6.0-design.md`（架构设计）两份权威文档（原名 `0.5.2-*`，2026-11-15 老板指令更名对齐版本号，已标记「已交付」）；旧阶段文档仅存 git 历史。
 3. `/legacy/` **回滚通道已废弃**（批 6 后：无静态托管、无产物目录、无校验脚本）。`web-build` 的 `emptyOutDir` 会清空 `frontend/dist`，旧版产物不可能常驻；需要旧版只能从 `d297318` 之前的 git 历史（Flutter 源码）重建。
-4. `CHANGELOG.md` 顶部为 `[0.6.0] - 2026-11-15`，`frontend/package.json` / `docker-compose.yml` / `README.md` 镜像示例已同步 0.6.0；git tag `v0.6.0` 已于 QA 二轮通过后补打（QA 回归全过：三缺陷修复确认无回归），`scripts/verify-version.sh` 无参模式恢复 EXIT=0。
-5. 真机双端联调（浏览器 A/B 同时在线、离线多设备端到端）与批 5 离线链路真机冒烟尚未完整确认。
-6. 下期（M4+）：OFX/CSV 自动导入、Beancount 子集外通用语法（cost 注解 / 价格指令等）、价格 CRUD、规则引擎、Postgres 横向扩展。0.6.0 的遗留实现细节与开放项以 `docs/0.6.0-prd.md` §9 留档为准（N-12）。
+4. `CHANGELOG.md` 顶部仍为 `[0.6.0] - 2026-11-15`，`frontend/package.json` 仍是 `0.6.0`；**v4.1 尚无版本条目 / tag**，发布前必须补 CHANGELOG + 升版本 + 打 tag，再走 `scripts/verify-version.sh`（tag / CHANGELOG / package.json 三处一致）。
+5. 真机双端联调（浏览器 A/B 同时在线、离线多设备端到端）与批 5 离线链路真机冒烟尚未完整确认；**五视图 iOS 14.8 冒烟清单 I/J 两章（`docs/ios14-smoke-checklist.md`）109 项未勾**，ECharts 触摸专项属硬门槛。
+6. **B7「回收站永久删除」未开工**（6 个任务：迁移 017 + `repository/purge.go` + 2 条端点〔41→43 路径〕+ 前端契约 + `TrashView` 单条/清空 + 审计留档）。这是**唯一会破 append-only 语义**的批次（物理删除 + 冲正闭包 + 不轮换 `instance_id`），单独上线，不与 B1~B6 混发。
+7. **58 个提交未 push**（`develop` ahead `origin/develop`）：CI `web-verify`（943/98 双下限）、Dockerfile Node 构建、`check:bundle` 体积门禁都还没在 GitHub runner 上首跑，别把本地全绿当成已验。
+8. 下期（M4+）：OFX/CSV 自动导入、Beancount 子集外通用语法（cost 注解 / 价格指令等）、价格 CRUD、规则引擎、Postgres 横向扩展。0.6.0 的遗留实现细节与开放项以 `docs/0.6.0-prd.md` §9 留档为准（N-12）。
 
 > 旧版功能在新版**一律 Must，不得降级**：CSV 导出、分类拖拽排序、导出不平告警、注册开关、默认账户管理详见方案 §14.5。
 
