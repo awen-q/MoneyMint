@@ -40,7 +40,9 @@ const TARGETS: readonly NumericTarget[] = [
     file: '../views/TransactionsView.vue',
     selectors: ['.txn__cal-n', '.txn__cal-e', '.txn__cal-i', '.txn__day'],
   },
-  { file: '../views/HomeView.vue', selectors: ['.home__card-head'] },
+  // 原「卡头金额行」落点已随 T31 下线，由账单页的日小计行等价承接
+  // （同一类：一行里混排日期/标签 + 金额，等宽才能让列不跳动）。
+  { file: '../views/BillsView.vue', selectors: ['.bills__group-head'] },
   { file: '../views/ImportView.vue', selectors: ['.im__table'] },
   { file: '../views/CommoditiesView.vue', selectors: ['.cmd__table'] },
   { file: '../views/CategoriesView.vue', selectors: ['.cats__meta', '.cats__warn'] },

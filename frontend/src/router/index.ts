@@ -16,10 +16,10 @@ import { useSessionStore } from '@/stores/session'
 import AccountsView from '@/views/AccountsView.vue'
 import AccountDetailView from '@/views/AccountDetailView.vue'
 import AwaitInviteView from '@/views/AwaitInviteView.vue'
+import BillsView from '@/views/BillsView.vue'
 import CategoriesView from '@/views/CategoriesView.vue'
 import ChangePasswordView from '@/views/ChangePasswordView.vue'
 import CommoditiesView from '@/views/CommoditiesView.vue'
-import HomeView from '@/views/HomeView.vue'
 import LoginView from '@/views/LoginView.vue'
 import TrashView from '@/views/TrashView.vue'
 import TransactionDetailView from '@/views/TransactionDetailView.vue'
@@ -51,9 +51,10 @@ const routes: RouteRecordRaw[] = [
     meta: { standalone: true, requiresAuth: true },
   },
   {
+    // `/` = 账单页（v4 首页）。
     path: '/',
-    name: 'home',
-    component: HomeView,
+    name: 'bills',
+    component: BillsView,
     meta: { requiresAuth: true },
   },
   {
@@ -192,7 +193,7 @@ router.beforeEach(async (to) => {
       if (session.needsInvite) {
         return { name: 'await-invite' }
       }
-      return { name: 'home' }
+      return { name: 'bills' }
     }
     return true
   }
@@ -222,7 +223,7 @@ router.beforeEach(async (to) => {
     }
     // M2 恢复向导：全库级操作，非系统管理员一律挡回首页（视图内还有二次断言）。
     if (to.meta.adminOnly === true && session.user?.is_admin !== true) {
-      return { name: 'home' }
+      return { name: 'bills' }
     }
   }
   return true
