@@ -8,27 +8,28 @@
  * API / CSS 特性扫描补位，避免「语法门禁变松、API 层裸奔」。
  *
  * 背景：旧 `npm run compat` 直接扫 `dist/assets/*.js`，那是批 0 陈旧产物，
- * 对批 1 代码零证明力；而 `vite build` 的 `emptyOutDir:true` 会清空
- * `dist/legacy/`（Flutter 回滚兜底），因此绝不能对 dist 原地重建。
+ * 对批 1 代码零证明力；而 `vite build` 的 `emptyOutDir:true` 会清空 `dist/`，
+ * 因此绝不能对 dist 原地重建（会在用户的产物目录里留下半套文件）。
  *
  * 本脚本：
- *  1) 只写 `frontend/.compat-tmp/`，绝不写 `frontend/dist/` 与 `dist/legacy/`；
+ *  1) 只写 `frontend/.compat-tmp/`，绝不写 `frontend/dist/`；
  *  2) 校验临时产物确实来自当前源码（批 1 特征串命中，否则门禁失败）；
- *  3) 前后比对 `dist/legacy/` 文件清单，断言未被改动；
- *  4) 无论成败都清理临时目录；
- *  5) 只调用本地 vite / es-check 的 bin，不新增任何依赖。
+ *  3) 无论成败都清理临时目录；
+ *  4) 只调用本地 vite / es-check 的 bin，不新增任何依赖。
+ *
+ * `/legacy/` 回滚通道已废弃（批 6 之后）：原先「前后比对 dist/legacy/ 未被改动」
+ * 那一步随之删除——目录本来就不存在，留着它只会永远走「跳过比对」分支，
+ * 给读者一个「门禁在保护什么」的错觉。
  */
 import { spawnSync } from 'node:child_process'
-import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const frontendRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const tmpDir = join(frontendRoot, '.compat-tmp')
 const tmpAssetsDir = join(tmpDir, 'assets')
 const distAssetsDir = join(frontendRoot, 'dist', 'assets')
-const legacyDir = join(frontendRoot, 'dist', 'legacy')
 const viteBin = join(frontendRoot, 'node_modules', 'vite', 'bin', 'vite.js')
 const esCheckBin = join(frontendRoot, 'node_modules', 'es-check', 'index.js')
 
@@ -136,32 +137,6 @@ function fail(message) {
   process.exitCode = 1
 }
 
-/**
- * 递归列出目录内文件（相对路径 + 字节数 + mtime 毫秒 + 内容 sha256）。
- * 内容哈希用 Node 内置 crypto，零新增依赖；即便 size 与 mtime 被精确恢复，
- * 内容替换也会被 sha256 检出，真正满足「内容与时间戳不变」的验收口径。
- */
-function snapshot(dirPath) {
-  if (!existsSync(dirPath)) {
-    return null
-  }
-  const entries = []
-  const walk = (current) => {
-    for (const name of readdirSync(current)) {
-      const full = join(current, name)
-      const info = statSync(full)
-      if (info.isDirectory()) {
-        walk(full)
-      } else {
-        const digest = createHash('sha256').update(readFileSync(full)).digest('hex')
-        entries.push(`${relative(dirPath, full)}:${info.size}:${info.mtimeMs}:${digest}`)
-      }
-    }
-  }
-  walk(dirPath)
-  return entries.sort().join('\n')
-}
-
 /** 返回目录内 JS 文件的最新修改时间（ISO 字符串），用于佐证产物新旧。 */
 function latestJsMtime(dirPath) {
   if (!existsSync(dirPath)) {
@@ -196,7 +171,6 @@ function run(label, args) {
 }
 
 function main() {
-  const legacyBefore = snapshot(legacyDir)
   const staleDistTime = latestJsMtime(distAssetsDir)
   // 保证每次都是全新构建，避免复用上一次残留产物。
   rmSync(tmpDir, { recursive: true, force: true })
@@ -213,7 +187,7 @@ function main() {
       }
     }
 
-    // 步骤 1：只构建到临时目录，dist/ 与 dist/legacy/ 完全不参与。
+    // 步骤 1：只构建到临时目录，dist/ 完全不参与（不原地重建）。
     if (
       !run('构建当前源码（临时目录）', [
         viteBin,
@@ -276,28 +250,7 @@ function main() {
       return
     }
 
-    // 步骤 5：证明 dist/legacy/ 回滚目录内容（sha256）、字节数与时间戳一字未动。
-    const legacyAfter = snapshot(legacyDir)
-    if (legacyBefore !== null) {
-      if (legacyBefore !== legacyAfter) {
-        fail('frontend/dist/legacy/ 内容 sha256 / 字节数 / 时间戳发生变化，门禁失败')
-        return
-      }
-      const lines = legacyBefore === '' ? [] : legacyBefore.split('\n')
-      const newest = lines.reduce((max, line) => {
-        const parts = line.split(':')
-        const mtime = Number(parts[parts.length - 2])
-        return Number.isFinite(mtime) && mtime > max ? mtime : max
-      }, 0)
-      const digest = createHash('sha256').update(legacyBefore).digest('hex')
-      console.log(
-        `[compat] frontend/dist/legacy/ 未改动（${lines.length} 个文件，内容 sha256+字节数+mtime 前后一致；` +
-          `快照摘要 ${digest}；最新 mtime ${newest === 0 ? '无' : new Date(newest).toISOString()}）`,
-      )
-    } else {
-      console.log('[compat] frontend/dist/legacy/ 不存在（跳过比对）')
-    }
-    console.log('[compat] PASS：es-check 扫描的是当前源码新产物；dist/ 与 dist/legacy/ 均未触碰')
+    console.log('[compat] PASS：es-check 扫描的是当前源码新产物；dist/ 未触碰')
   } finally {
     rmSync(tmpDir, { recursive: true, force: true })
     console.log('[compat] 已清理临时目录 .compat-tmp/')

@@ -73,8 +73,9 @@ type Config struct {
 	// AuthExposeToken 控制登录/刷新/改密响应体是否继续返回 token
 	// （LEDGER_AUTH_EXPOSE_TOKEN，默认 false）。批 6 cutover 后 Vue 版只靠
 	// httpOnly Cookie（D-7），响应体不再向 JS 暴露 token（XSS 无凭可偷）。
-	// 仅在需要临时回滚 /legacy/ 旧版时显式设 LEDGER_AUTH_EXPOSE_TOKEN=true，
-	// 旧版登录要拿响应体 token 走 Bearer 头。
+	// 仅当「脚本 / 第三方客户端需要直接从响应体拿 Bearer token」时显式设
+	// LEDGER_AUTH_EXPOSE_TOKEN=true（例如 curl 冒烟脚本预先取 token）；
+	// 浏览器路径永远走 httpOnly Cookie，与 /legacy/ 回滚通道无关（该通道已废弃）。
 	AuthExposeToken bool
 }
 
@@ -95,7 +96,7 @@ type Config struct {
 //	LEDGER_AUTH_COOKIE        会话是否用 httpOnly Cookie 承载（默认 true；false 退回 Bearer）
 //	LEDGER_COOKIE_SECURE      Set-Cookie 的 Secure 属性（默认 false，内网 HTTP）
 //	LEDGER_CORS_ORIGINS       跨域来源白名单（逗号分隔；空=仅同源，"*"=通配不带凭证）
-//	LEDGER_AUTH_EXPOSE_TOKEN  响应体是否返回 token（默认 false；仅 /legacy/ 回滚时设 true）
+//	LEDGER_AUTH_EXPOSE_TOKEN  响应体是否返回 token（默认 false；仅供脚本化 Bearer 客户端显式开启）
 func Load() Config {
 	return Config{
 		DBPath:              envOr("LEDGER_DB", "data/ledger.db"),

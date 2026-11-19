@@ -3,7 +3,7 @@
  *
  * 铁律：**只缓存应用壳与静态资源，API 响应一律不缓存**——本地真相源是
  * IndexedDB（core/sync），缓存 API 响应会与同步协议打架。
- * - `/api/*` 与 `/legacy/*` 完全不拦截（网络直连 / 回滚基准原样）；
+ * - `/api/*` 完全不拦截（网络直连；API 响应永不进缓存，与同步协议互不干扰）；
  * - 导航请求：network-first，失败回落缓存的 `/`（离线打开应用壳，AC-26）；
  * - `/assets/*`（Vite 哈希文件名，不可变）与其余同源静态：cache-first；
  * - 更新流程：新 SW 安装后**不自动 skipWaiting**（不得打断正在录入的记账，
@@ -47,8 +47,8 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET') return
   const url = new URL(req.url)
   if (url.origin !== self.location.origin) return
-  // AC-36：API 与 /legacy 回滚基准绝不拦截。
-  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/legacy/')) return
+  // AC-36：API 响应绝不拦截（本地真相源是 IndexedDB，缓存 API 会与同步协议打架）。
+  if (url.pathname.startsWith('/api/')) return
 
   // 导航：network-first，断网回落缓存的壳。
   if (req.mode === 'navigate') {

@@ -12,7 +12,6 @@
 #   web-test      Vue 单元测试（Vitest）
 #   web-typecheck Vue 类型检查（vue-tsc）
 #   web-compat    扫描构建产物 es2020 语法兼容性 + §14.7 API/CSS 特性（es-check + compat.mjs）
-#   check-legacy  校验冻结的 /legacy/ 回滚基准产物（dist/legacy/，不再重建）
 #   test          后端 vet + 全部测试（严格 bean-check）
 #   test-web      前端 Vitest（与 web-test 同义，历史命令名保留）
 #   check         test + 版本校验 + bean-check 自检（CI 同款）
@@ -21,8 +20,8 @@
 #   rehearse      迁移 012 副本库预演（VACUUM INTO 快照 + 两次迁移 + bean-check）
 #
 # cutover（批 6）后仓库只有一套前端；Flutter 源码与构建链已清退（git 历史可查）。
-# dist/legacy/ 为冻结的旧版回滚基准，只读不改，损坏时从 git 历史（batch ≤5 tag/commit）
-# 找回 frontend/dist/legacy 或旧源码重建。
+# `/legacy/` 回滚通道已废弃（无静态托管、无产物目录、无校验脚本）；需要旧版只能从
+# git 历史（batch ≤5 tag/commit）重建，见 AGENTS.md §1。
 #
 # 与 Makefile 一一对应；不依赖 make，可直接调用本脚本。
 
@@ -57,8 +56,6 @@ case "$cmd" in
 
   web-build)
     ( cd frontend && npm run build )
-    # 注意：emptyOutDir 会清空 dist/，若本地还有冻结的 dist/legacy/ 会一并被清掉。
-    # cutover 后 legacy 仅作回滚基准，需要时从 git 历史找回（见文件头说明）。
     echo "✅ frontend/dist"
     ;;
 
@@ -76,10 +73,6 @@ case "$cmd" in
 
   web-compat)
     ( cd frontend && npm run compat )
-    ;;
-
-  check-legacy)
-    bash scripts/check-legacy.sh
     ;;
 
   test)

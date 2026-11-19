@@ -8,7 +8,7 @@
 GO     ?= go
 SHELL  := bash
 
-.PHONY: help dev build web-build web-dev web-test web-typecheck web-compat check-legacy test test-web check version smoke rehearse image clean
+.PHONY: help dev build web-build web-dev web-test web-typecheck web-compat test test-web check version smoke rehearse image clean
 
 help:
 	@echo "make dev           启动后端（托管 frontend/dist）"
@@ -18,7 +18,6 @@ help:
 	@echo "make web-test      Vue 单元测试（Vitest）"
 	@echo "make web-typecheck Vue 类型检查（vue-tsc）"
 	@echo "make web-compat    扫描构建产物 es2020 语法 + §14.7 API/CSS 特性（es-check + compat.mjs）"
-	@echo "make check-legacy  校验冻结的 /legacy/ 回滚基准（dist/legacy/，不再重建）"
 	@echo "make test          后端 vet + 全部测试（严格 bean-check）"
 	@echo "make test-web      Vue 单元测试（与 web-test 同义，历史命令名保留）"
 	@echo "make check         test + bean-check 自检（CI 同款）"
@@ -49,9 +48,6 @@ web-typecheck:
 
 web-compat:
 	cd frontend && npm run compat
-
-check-legacy:
-	bash scripts/check-legacy.sh
 
 test:
 	$(GO) vet ./...
