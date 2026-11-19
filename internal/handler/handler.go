@@ -23,7 +23,8 @@ type Handler struct {
 	// 此时备份端点统一返回 503，而不是伪装成功。
 	engine *backup.Engine
 	// auth 是会话凭据的下发/读取选项（D-7）。默认兼容期形态：
-	// Cookie 开启、内网 HTTP 不设 Secure、响应体保留 token（旧版 /legacy/ 仍用 Bearer）。
+	// Cookie 开启、内网 HTTP 不设 Secure、响应体保留 token（脚本 / 第三方客户端用 Bearer；
+	// `/legacy/` 回滚通道已废弃，本开关与它无关）。
 	auth AuthOptions
 }
 

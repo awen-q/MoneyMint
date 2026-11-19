@@ -32,7 +32,7 @@ func ClientIP(r *http.Request) string {
 // BearerToken 从 Authorization 头提取 Bearer token。
 //
 // D-7 起会话默认走 httpOnly Cookie，本函数仅作两层用途：
-// 1) RequestToken 的兜底读取（旧版 /legacy/ 仍用 Bearer）；
+// 1) RequestToken 的兜底读取（脚本 / 第三方客户端仍用 Bearer，浏览器走 Cookie）；
 // 2) 鉴权中间件判断「本次请求是否显式使用 Bearer」——显式 Bearer 豁免 CSRF。
 func BearerToken(r *http.Request) string {
 	h := r.Header.Get("Authorization")
@@ -186,7 +186,8 @@ func (h *Handler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 
 // authResult 按 LEDGER_AUTH_EXPOSE_TOKEN 决定登录/注册响应是否携带 token。
 //
-// 兼容期默认保留：/legacy/ 的 Flutter 版本登录后仍要拿 token 走 Bearer。
+// 默认保留该分支：脚本 / 第三方客户端需要直接从响应体取 Bearer token，
+// 浏览器路径一律走 httpOnly Cookie（`/legacy/` 回滚通道已废弃，与本开关无关）。
 // 置 false 时清空字段（json tag 为 omitempty），响应只留 user。
 func (h *Handler) authResult(res service.AuthResult) service.AuthResult {
 	if !h.auth.ExposeToken {
