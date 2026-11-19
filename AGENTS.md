@@ -269,7 +269,7 @@ python -m pip install beancount    # 激活 .venv 后执行
 
 **遗留 / 注意**：
 1. `package-lock.json` 在 Linux（CI ubuntu）上的 `npm ci` 与 Dockerfile Node 构建，以 GitHub Actions `web-verify` / 镜像构建的运行记录为准，别把「配置写了」当成「已经跑过」；若失败按 lock 缺平台二进制处理（重新在 Linux 生成）。
-2. `docs/` 现存 `0.6.0-prd.md`（产品口径）与 `0.6.0-design.md`（架构设计）两份权威文档（原名 `0.5.2-*`，2026-11-15 老板指令更名对齐版本号，已标记「已交付」）；19 份旧阶段文档仅存 git 历史。
+2. `docs/` 现存 `0.6.0-prd.md`（产品口径）与 `0.6.0-design.md`（架构设计）两份权威文档（原名 `0.5.2-*`，2026-11-15 老板指令更名对齐版本号，已标记「已交付」）；旧阶段文档仅存 git 历史。
 3. `/legacy/` **回滚通道已废弃**（批 6 后：无静态托管、无产物目录、无校验脚本）。`web-build` 的 `emptyOutDir` 会清空 `frontend/dist`，旧版产物不可能常驻；需要旧版只能从 `d297318` 之前的 git 历史（Flutter 源码）重建。
 4. `CHANGELOG.md` 顶部为 `[0.6.0] - 2026-11-15`，`frontend/package.json` / `docker-compose.yml` / `README.md` 镜像示例已同步 0.6.0；git tag `v0.6.0` 已于 QA 二轮通过后补打（QA 回归全过：三缺陷修复确认无回归），`scripts/verify-version.sh` 无参模式恢复 EXIT=0。
 5. 真机双端联调（浏览器 A/B 同时在线、离线多设备端到端）与批 5 离线链路真机冒烟尚未完整确认。
