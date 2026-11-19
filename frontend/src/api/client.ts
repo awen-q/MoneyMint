@@ -51,6 +51,7 @@ import type {
   OkResponse,
   OpeningResult,
   OpeningView,
+  PurgeResult,
   RegisterRequest,
   RegistrationSettings,
   ResetMemberPasswordRequest,
@@ -605,6 +606,15 @@ export const balanceApi = {
   },
 }
 
+/**
+ * B7：两条永久删除端点共用的确认词。
+ *
+ * 服务端只认这一个值（`strings.TrimSpace(confirm) === '删除'`，不做同义词匹配），
+ * 所以它是一个**契约常量**而不是 UI 文案：UI 层「清空回收站」让用户手输「清空」，
+ * 校验通过后仍然传本词。改这里必须同时改后端 `service.purgeConfirmWord`。
+ */
+export const PURGE_CONFIRM_WORD = '删除'
+
 /** 交易端点（业务端点；创建时透传 Idempotency-Key）。 */
 export const transactionApi = {
   /**
@@ -685,6 +695,28 @@ export const transactionApi = {
       formatApiPath(API_ROUTES.transactionByUuid, { uuid: transactionUuid }),
       body,
     )
+  },
+  /**
+   * 永久删除单笔（B7，仅 owner，**物理删除、不可恢复**）。
+   *
+   * `DELETE` 带 body：`ApiRequestOptions.body` 会被 `requestWithMeta` 统一
+   * `JSON.stringify`，`buildHeaders` 照常补 `Content-Type` / `X-CSRF` / `X-Ledger-Id`
+   * （后端缺 confirm 回 400 txn_purge_confirm_required）。
+   */
+  purge(transactionUuid: string, confirm: string = PURGE_CONFIRM_WORD): Promise<PurgeResult> {
+    return api.delete<PurgeResult>(
+      formatApiPath(API_ROUTES.transactionPurge, { uuid: transactionUuid }),
+      { body: { confirm } },
+    )
+  },
+  /**
+   * 清空回收站（B7，仅 owner）。
+   *
+   * UI 让用户手输「清空」，这里映射成服务端唯一认的确认词 `confirm: '删除'`——
+   * 服务端不做同义词匹配，确认机制一旦宽容就等于没有。
+   */
+  purgeTrash(confirm: string = PURGE_CONFIRM_WORD): Promise<PurgeResult> {
+    return api.post<PurgeResult>(API_ROUTES.transactionsTrashPurge, { confirm })
   },
 }
 

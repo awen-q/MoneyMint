@@ -217,6 +217,10 @@ onMounted(() => { void loadBackups() })
       <p class="ds__desc">
         Beancount 导入为独立新账本（不覆盖既有数据）；还原备份会替换全库并需要确认词解锁。
       </p>
+      <p class="ds__desc">
+        恢复旧备份会让已删除的数据复活：备份文件里包含当时尚未删除的交易，
+        还原后这些交易会重新出现在账本与回收站里。永久删除只作用于当前库，无法从备份外恢复。
+      </p>
       <div class="ds__buttons">
         <button class="fb-btn-primary ds__btn" type="button" @click="goImport">导入 Beancount</button>
         <button v-if="isAdmin" class="fb-btn-ghost ds__btn" type="button" @click="goRestore">还原备份</button>
@@ -240,6 +244,12 @@ onMounted(() => { void loadBackups() })
         <p v-else class="ds__desc">
           最近备份：{{ relativeTime(items[0].created_at) }} · 成功 {{ successfulItems.length }} 份 ·
           占用 {{ formatBackupSize(totalSize) }}
+        </p>
+
+        <!-- B7：与「导入」卡片下方那段**逐字一致**（同一件事两种说法最容易被当成谣言）。 -->
+        <p class="ds__desc">
+          恢复旧备份会让已删除的数据复活：备份文件里包含当时尚未删除的交易，
+          还原后这些交易会重新出现在账本与回收站里。永久删除只作用于当前库，无法从备份外恢复。
         </p>
 
         <div class="ds__buttons">

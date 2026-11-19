@@ -1,6 +1,7 @@
 /**
- * 后端端点路径常量（批 0 起，**现为 41 条**：批 4 扩至 36 条后，B3 搜索分页、
- * B5 资产页、B6 资产时序陆续补齐；数量由 `api/client.contract.test.ts` 硬断言）
+ * 后端端点路径常量（批 0 起，**现为 43 条**：批 4 扩至 36 条后，B3 搜索分页、
+ * B5 资产页、B6 资产时序、B7 永久删除两条陆续补齐；数量由
+ * `api/client.contract.test.ts` 硬断言）
  *
  * 与 `internal/server/router.go` 的 `mux.HandleFunc("/api/...")` 一一对应；
  * 同一路径上的多 HTTP 方法（如 GET/POST /api/accounts）共用一个常量。
@@ -52,10 +53,14 @@ export const API_ROUTES = {
 
   /** GET /api/transactions · POST /api/transactions */
   transactions: '/api/transactions',
-  /** GET /api/transactions/trash */
+  /** GET /api/transactions/trash（B7 起响应追加 purge_summary / purge_log） */
   transactionsTrash: '/api/transactions/trash',
+  /** POST /api/transactions/trash/purge（B7 清空回收站，仅 owner；Body {confirm:"删除"}） */
+  transactionsTrashPurge: '/api/transactions/trash/purge',
   /** POST /api/transactions/{uuid}/restore */
   transactionRestore: '/api/transactions/{uuid}/restore',
+  /** DELETE /api/transactions/{uuid}/purge（B7 永久删除单笔，仅 owner；Body {confirm:"删除"}） */
+  transactionPurge: '/api/transactions/{uuid}/purge',
   /** PATCH /api/transactions/{uuid} · DELETE /api/transactions/{uuid} */
   transactionByUuid: '/api/transactions/{uuid}',
 

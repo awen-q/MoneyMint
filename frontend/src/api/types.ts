@@ -558,11 +558,67 @@ export interface TrashItemView {
   postings: TrashPostingView[]
   /** 服务端按请求用户角色计算（viewer false；0.6.0 S6 AC-5.8，false 时省略）。 */
   can_restore?: boolean
+  /**
+   * B7：仅 owner 且闭包判定可删时为 true（系统交易 / 配对含系统交易 → false）。
+   *
+   * 三个 B7 字段全部 optional：旧后端不返回时必须能降级（不显示入口），
+   * **不能**用「缺键 = true」推断——那会给 viewer 渲染出一个点下去必 403 的按钮。
+   */
+  can_purge?: boolean
+  /** B7：三重系统判定命中（期初 / 校准 / 导入批次），前端显示「系统交易」标记。 */
+  is_system?: boolean
+  /** B7：冲正配对另一条的 uuid（无配对时省略）。存在即表示删除会连带删掉它。 */
+  pair_uuid?: TransactionUUID
+}
+
+/** B7：被永久删除的一条交易。 */
+export interface PurgedTxnView {
+  uuid: TransactionUUID
+  description: string
+  /** 删除前是否在回收站（false = 因冲正配对被连带删除的有效交易）。 */
+  was_in_trash: boolean
+}
+
+/** DELETE /api/transactions/{uuid}/purge · POST /api/transactions/trash/purge */
+export interface PurgeResult {
+  ok: boolean
+  count: number
+  /** 已物理删除的明细；空结果后端也返回 `[]`（不是 null）。 */
+  deleted: PurgedTxnView[]
+  purged_postings: number
+  /** 仅单笔幂等命中（该 uuid 已被删过）时出现；不算失败。 */
+  already_purged?: boolean
+}
+
+/** 回收站页脚「N 笔可删 / M 笔系统交易保留」（服务端算，前端不自己数）。 */
+export interface PurgeSummary {
+  /** 实际会被物理删除的笔数（含被配对连带拉进来的有效交易）。 */
+  deletable: number
+  /** 被保留的笔数（系统交易及其配对）。 */
+  system_kept: number
+  /** 其中不在回收站、会随冲正配对一起被删的笔数（确认弹层的第三行）。 */
+  paired: number
+}
+
+/** 页脚「永久删除记录」审计行（本机审计，最多 50 条，不参与同步）。 */
+export interface PurgeLogEntry {
+  uuid: TransactionUUID
+  description: string
+  /** 删除前的分录金额摘要（最多 3 条，超出加「 …」；后端已补两位小数）。 */
+  amount_note: string
+  was_in_trash: boolean
+  /** 操作人显示名；操作人已注销时为空串。 */
+  actor_name: string
+  purged_at: ISODateTime
 }
 
 /** GET /api/transactions/trash */
 export interface TrashListResponse {
   transactions: TrashItemView[]
+  /** B7 additive；旧后端缺失时按 `deletable = 0` 降级（清空入口禁用）。 */
+  purge_summary?: PurgeSummary
+  /** B7 additive；旧后端缺失或为空时隐藏审计区块。 */
+  purge_log?: PurgeLogEntry[]
 }
 
 /** POST /api/transactions/{uuid}/restore */
