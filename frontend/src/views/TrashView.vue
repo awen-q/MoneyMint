@@ -392,7 +392,7 @@ onMounted(() => {
         </p>
         <ul class="trash__sheet-stats">
           <li>可永久删除 {{ summary.deletable }} 笔</li>
-          <li>{{ summary.system_kept }} 笔系统交易将保留</li>
+          <li>{{ summary.system_kept }} 笔将保留（系统交易及其冲正配对）</li>
           <li v-if="summary.paired > 0">
             其中 {{ summary.paired }} 笔为冲正配对（不在回收站），将一并删除
           </li>

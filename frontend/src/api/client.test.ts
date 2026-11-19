@@ -315,3 +315,73 @@ describe('G-04：幂等键', () => {
     )
   })
 })
+
+describe('B7：永久删除的请求形态（DELETE 真的带 JSON body）', () => {
+  /**
+   * 这一段是整条 B7 链路唯一没被覆盖的地方：
+   * 视图层用例全部 mock 掉了 `transactionApi.purge()`，因此没人验证它**发出**的
+   * 请求到底长什么样。而 body 一旦丢了，后端就是 400 txn_purge_confirm_required，
+   * 「永久删除」直接不可用——功能级失败，却不会让任何既有用例变红。
+   */
+  it('purge() 发出 DELETE + /api/transactions/{uuid}/purge + {"confirm":"删除"}', async () => {
+    setLedgerId(7)
+    setFetchImplementation(async (url: string, init: RequestInit) => {
+      calls.push({ url, init })
+      return makeResponse(200, {
+        ok: true,
+        count: 1,
+        deleted: [{ uuid: 'u-1', description: '早餐', was_in_trash: true }],
+        purged_postings: 2,
+      })
+    })
+
+    const res = await transactionApi.purge('u-1')
+
+    expect(calls).toHaveLength(1)
+    const call = calls[0] as FetchCall
+    // 1) 方法与路径（uuid 走 formatApiPath 替换，不是 query 参数）。
+    expect(call.init.method).toBe('DELETE')
+    expect(call.url).toContain('/api/transactions/u-1/purge')
+    // 2) body 是**序列化后的 JSON 串**，逐字对齐后端只认的确认词。
+    //    直接比字面量（而不是比对象）才钉得住「真的带上了」这件事。
+    expect(call.init.body).toBe(JSON.stringify({ confirm: '删除' }))
+    // 3) 非安全方法必须带 X-CSRF；业务端点必须带 X-Ledger-Id。
+    const headers = headersOf(call)
+    expect(headers['X-CSRF']).toBe('1')
+    expect(headers['X-Ledger-Id']).toBe('7')
+    expect(headers['Content-Type']).toBe('application/json')
+    // 4) 响应按 PurgeResult 解析（幂等字段可缺省）。
+    expect(res.count).toBe(1)
+    expect(res.deleted[0].was_in_trash).toBe(true)
+  })
+
+  it('purgeTrash() 发出 POST + {"confirm":"删除"}（UI 的「清空」不出现在线上载荷里）', async () => {
+    setLedgerId(7)
+    setFetchImplementation(async (url: string, init: RequestInit) => {
+      calls.push({ url, init })
+      return makeResponse(200, { ok: true, count: 0, deleted: [], purged_postings: 0 })
+    })
+
+    await transactionApi.purgeTrash()
+
+    const call = calls[0] as FetchCall
+    expect(call.init.method).toBe('POST')
+    expect(call.url).toContain('/api/transactions/trash/purge')
+    // 服务端只认「删除」：前端让用户手输的「清空」仅存在于 UI，绝不进请求体。
+    expect(call.init.body).toBe(JSON.stringify({ confirm: '删除' }))
+    expect(headersOf(call)['X-CSRF']).toBe('1')
+    expect(headersOf(call)['X-Ledger-Id']).toBe('7')
+  })
+
+  it('显式传确认词时按调用方给的走（purge(uuid, "删除") 与默认值等价）', async () => {
+    setLedgerId(7)
+    setFetchImplementation(async (url: string, init: RequestInit) => {
+      calls.push({ url, init })
+      return makeResponse(200, { ok: true, count: 0, deleted: [], purged_postings: 0 })
+    })
+
+    await transactionApi.purge('u-2', '删除')
+
+    expect((calls[0] as FetchCall).init.body).toBe(JSON.stringify({ confirm: '删除' }))
+  })
+})

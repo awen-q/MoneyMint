@@ -380,7 +380,11 @@ describe('B7-E：清空回收站（手输「清空」解锁）', () => {
     await buttonByText(wrapper, '清空回收站')!.trigger('click')
     const text = wrapper.text()
     expect(text).toContain('可永久删除 2 笔')
-    expect(text).toContain('1 笔系统交易将保留')
+    // 文案必须精确到「及其冲正配对」：system_kept 是**连通分量**口径，
+    // 系统交易若带冲正配对，配对的那笔普通交易也被算进这个数。
+    // 只说「N 笔系统交易将保留」会让用户以为数字里全是系统交易。
+    expect(text).toContain('1 笔将保留（系统交易及其冲正配对）')
+    expect(text).not.toContain('笔系统交易将保留')
     expect(text).toContain('其中 1 笔为冲正配对（不在回收站），将一并删除')
     wrapper.unmount()
   })
