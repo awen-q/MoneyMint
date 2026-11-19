@@ -14,13 +14,16 @@
  *    否则「资产页看人民币、统计页看美元」。
  * 4. **四态判据沿用冻结的 v3.2**：`error` 只在「从未成功加载过」时整页报错；
  *    有旧快照的刷新失败留在 `ready`，只出一条内联提示条。
- * 5. **「资产统计 ›」入口这轮不放**：B6 未上线，放了就是死链
- *    （`navItems.ts` 的 `asset-stats` 也仍 `ready: false`）。
+ * 5. **「资产统计 ›」入口与路由同生共死**：`/assets/stats` 可达却没有入口，等于把功能
+ *    藏起来（用户只能靠侧栏碰运气）；反过来，路由还没通就放按钮就是死链。所以本入口、
+ *    `router/index.ts` 的 `asset-stats` 路由、`navItems.ts` 的 `ready: true` 同批落地。
+ *    两个方向都有机械守卫：删路由 → `shellNav.test.ts` 红；删入口 → 本页测试红。
  *
  * 分组聚合全部由 `core/assets.ts` 产出，净资产由 `core/record.ts` 的
  * `computeBalanceSummary` 产出 —— 本页**不做任何算术**。
  */
 import { computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 
 import { buildAssetBreakdown, type AssetBreakdown } from '@/core/assets'
 import { computeBalanceSummary, type BalanceSummary } from '@/core/record'
@@ -37,6 +40,7 @@ const STALE_NOTICE = '刷新失败，当前显示的是上次数据'
 const data = useLedgerDataStore()
 const period = usePeriodStore()
 const privacy = usePrivacyStore()
+const router = useRouter()
 
 // `!loaded → loading` 的判据意味着漏调它表现为「永久骨架屏」，所以这条调用有测试守。
 onMounted(() => {
@@ -105,6 +109,16 @@ function reload(): void {
   void data.reload()
 }
 
+/**
+ * 进「资产统计」。
+ *
+ * 走**命名路由**（`asset-stats`）而不是拼 `'/assets/stats'` 字符串：路由改写 /
+ * 加 params 时字符串会静默失效（跳到 404 或留在原地），命名路由改错是编译期/测试期红。
+ */
+function goAssetStats(): void {
+  void router.push({ name: 'asset-stats' })
+}
+
 /** 关户提示：列出但标注，避免「钱去哪了」。 */
 const closedNote = computed(() => {
   const count = breakdown.value.closedCount
@@ -123,9 +137,12 @@ const closedNote = computed(() => {
       <p class="assets__desc">存量全景：净资产 / 总资产 / 总负债 + 资产列表</p>
     </header>
 
-    <!-- ② 工具行卡：本轮只有标题（「资产统计 ›」入口等 B6 上线再加，避免死链） -->
+    <!-- ② 工具行卡：标题 + 「资产统计 ›」入口（与 /assets/stats 路由同批落地，见脚本注释 5） -->
     <section class="assets__card assets__card--tool">
-      <h2 class="assets__card-title">资产总览</h2>
+      <div class="assets__tool-row">
+        <h2 class="assets__card-title">资产总览</h2>
+        <button type="button" class="assets__link" @click="goAssetStats">资产统计 ›</button>
+      </div>
     </section>
 
     <!-- 刷新失败但有旧快照：留在 ready，只出内联提示条 -->
@@ -191,6 +208,27 @@ const closedNote = computed(() => {
 
 .assets__card--tool {
   padding: 10px 14px;
+}
+
+/* 稿 `page-assets` 的 `.tool-row`：标题在左、入口在右（tool-spacer 撑开） */
+.assets__tool-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* 稿 `.link-btn`：文字型链接按钮，不是实体按钮（工具卡里实体按钮会抢走注意力） */
+.assets__link {
+  flex: none;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--fb-blue);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 .assets__card-head {

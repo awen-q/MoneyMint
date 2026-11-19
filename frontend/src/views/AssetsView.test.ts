@@ -1,13 +1,16 @@
 // @vitest-environment jsdom
 /**
- * 资产页装配回归（B5 / T53）
+ * 资产页装配回归（B5 / T53，入口部分 B6 / A-2）
  *
- * 覆盖五件必须成立的事：
+ * 覆盖六件必须成立的事：
  * 1. **数据只走 `ledgerData.ensure()`**：一次挂载只调一次 `accountApi.list()`（并发去重）；
  * 2. **四态判据**：加载失败 → error；`loaded` 后无资产账户 → empty，且**两者文案不同**；
  * 3. **`AssetHero` 在 `StateCard` 之外**：error / empty 时净资产区仍然渲染（空态不能藏答案）；
  * 4. **币种取 `period`**：把 period 切成 USD 后，hero 与小计按 USD 口径渲染；
- * 5. **隐私遮挡生效**：开启后金额显示遮挡符，不出现真实数字。
+ * 5. **隐私遮挡生效**：开启后金额显示遮挡符，不出现真实数字；
+ * 6. **「资产统计 ›」入口存在且走命名路由**（B6 / A-2）：`/assets/stats` 可达而页内没有
+ *    入口 = 功能被藏起来。此条与 `shellNav.test.ts` 的「路由可解析 + 导航 ready」构成
+ *    双向守卫：删路由 → 那边红；删入口 → 这里红。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
@@ -28,6 +31,12 @@ const h = vi.hoisted(() => ({
   logout: vi.fn(),
   changePassword: vi.fn(),
   setLedgerIdProvider: vi.fn(),
+  push: vi.fn(),
+}))
+
+vi.mock('vue-router', () => ({
+  useRouter: () => ({ push: h.push, replace: h.push }),
+  useRoute: () => ({ query: {}, path: '/assets', name: 'assets' }),
 }))
 
 vi.mock('@/api/client', () => ({
@@ -181,5 +190,34 @@ describe('AssetsView：数据与四态', () => {
     expect(text).toContain(PRIVACY_MASK)
     expect(text).not.toContain('12,000.00')
     expect(text).not.toContain('300,000.00')
+  })
+})
+
+describe('AssetsView：「资产统计 ›」入口（B6 / A-2）', () => {
+  beforeEach(() => {
+    h.push.mockReset()
+  })
+
+  it('工具卡里有入口，文案与稿子一致（`资产统计 ›`）', async () => {
+    const wrapper = await mountView()
+    const link = wrapper.find('.assets__link')
+    expect(link.exists()).toBe(true)
+    expect(link.text()).toBe('资产统计 ›')
+  })
+
+  it('点击走**命名路由** asset-stats（不是拼字符串 /assets/stats）', async () => {
+    const wrapper = await mountView()
+    await wrapper.find('.assets__link').trigger('click')
+    expect(h.push).toHaveBeenCalledTimes(1)
+    // 断言整个对象：拼字符串路径的实现会 push('/assets/stats')，此处直接红，
+    // 而不会被「反正跳过去了」蒙混过关（路由改名时字符串会静默失效）。
+    expect(h.push).toHaveBeenCalledWith({ name: 'asset-stats' })
+  })
+
+  it('入口在四态之外：加载失败时入口仍然在（错误态不能把出口一起关掉）', async () => {
+    h.accountList.mockRejectedValue(new Error('boom'))
+    const wrapper = await mountView()
+    expect(wrapper.text()).toContain('加载失败')
+    expect(wrapper.find('.assets__link').exists()).toBe(true)
   })
 })
