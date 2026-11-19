@@ -43,6 +43,12 @@ const TARGETS: readonly NumericTarget[] = [
   // 原「卡头金额行」落点已随 T31 下线，由账单页的日小计行等价承接
   // （同一类：一行里混排日期/标签 + 金额，等宽才能让列不跳动）。
   { file: '../views/BillsView.vue', selectors: ['.bills__group-head'] },
+  // 全站金额出现次数最多的一处：交易行右端的金额。行高与列对齐都靠它。
+  { file: '../components/TxnRow.vue', selectors: ['.txn-row__amount'] },
+  // 账单页主视觉数字。注意这里**只锁「结余」与「交易数量」两张卡**：
+  // 收入/支出两卡直接渲染 MoneyText，已由上面的 `.money-text` 条目覆盖，
+  // 不要再为它们加选择器（会变成重复覆盖）。
+  { file: '../components/bill/BillMetrics.vue', selectors: ['.metrics__value'] },
   { file: '../views/ImportView.vue', selectors: ['.im__table'] },
   { file: '../views/CommoditiesView.vue', selectors: ['.cmd__table'] },
   { file: '../views/CategoriesView.vue', selectors: ['.cats__meta', '.cats__warn'] },
