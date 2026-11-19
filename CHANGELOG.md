@@ -6,6 +6,37 @@
 > 版本号单一事实源：git tag（`vX.Y.Z`）。发布前 `scripts/verify-version.sh` 会校验
 > tag / 本文件顶部版本 / `frontend/package.json` 三处一致，不一致则构建失败。
 
+## [Unreleased]
+
+报表重设计 v4.1（B1~B6，前端五视图重构）+ B7 回收站永久删除。账芯（复式平衡 / append-only / `bean-check`）**除 B7 这一处明示破例外**不变。
+
+### ⚠️ Breaking（B7：append-only 的第一次破例，单独上线）
+
+- **永久删除不可恢复**：`DELETE /api/transactions/{uuid}/purge` 与 `POST /api/transactions/trash/purge` 会**物理删除** `transactions` / `postings` 行，应用内无版本链、无撤销。唯一退路是历史备份，而**恢复旧备份会让已删数据复活**（数据安全页已写明）。
+- **仅 owner 可调用**；editor `403 txn_purge_forbidden`。**系统生成交易禁止永久删除**（期初 / 校准 / 导入批次，`409 txn_purge_not_allowed`）——它们各自有生命周期入口（重设期初 / 重新校准 / 撤销批次）。
+- **冲正连带删除**：删 A 会连带删其冲正配对 R（反之亦然，悬空则只删自己）。配对成员若仍有效，**导出与账本净额会变化**——这是有意的账务变更（只删一侧会破坏按币种平衡），确认弹层必须写明。
+- **不轮换 `instance_id`**：软删时已广播 `sync_log op=delete`，永久删除对客户端零可见变化；轮换只会把其他成员离线未提交的记账推进死信。
+- 清空回收站按**连通分量**保留含系统交易的分量，其余物理删除。
+
+### Added
+
+- **B7 审计表（迁移 017）**：`txn_purge_log` 记录「谁在什么时候永久删了哪笔（描述 + 金额摘要 + 是否来自回收站 + 配对 uuid）」，**全成员可见**、只写不删、不参与同步协议。`GET /api/transactions/trash` additive 增 `purge_summary` / `purge_log`（不开新 GET）。
+- **回收站 UI**：行尾「⋯」→「永久删除」（红色二次确认）、页脚「清空回收站」（手输「清空」解锁，显示可删 / 保留笔数）、页脚「永久删除记录」审计区块（最近 50 条）；非 owner 不渲染入口与计数。
+- **报表重设计 v4.1（B1~B6）**：五视图（账单 `/`、搜索 `/search`、统计 `/stats`、资产 `/assets`、资产统计 `/assets/stats`）+ 壳层重构（侧栏 5 直达 + 管理 10、底栏 4 Tab + FAB、断点 900）+ ECharts 5.6.0（SVG renderer，唯一入口 `core/charts/echarts.ts`，`check:bundle` 有单点入口断言）。
+- `GET /api/transactions` 增加 `from` / `to` / `limit` / `cursor`（**keyset 游标分页**；`limit` 缺省 = 全量，不传即旧行为）。
+- 只读端点 `GET /api/assets/series`（资产统计三线，恒 12 个点，月末末值 = 次月 1 日日初）。
+
+### Changed
+
+- 前端旧三页（`HomeView` / `TransactionsView` / `ReportsView` / `ReportCharts.vue`）下线；`/transactions` 保留**同名路由 + 函数式重定向**透传 query。CSV 导出、行点击、四态、AC-16 query 化随迁至新页，**不降级**。
+- `.github/workflows/docker-image.yml`：Vitest 双下限抬到 **966 用例 / 99 文件**（只增不减）。
+- 迁移至 **017**（B1~B6 零迁移，B7 仅加审计表）；端点 **41 → 43 条路径**。
+
+### Fixed
+
+- 审计金额统一补两位小数（`-10` → `-10.00`），与回收站页其他金额口径一致。
+- 非 owner 不再看到「可永久删除 N 笔」这类无入口的计数（死路提示）。
+
 ## [0.6.0] - 2026-11-15
 
 多账本运营版（任务代号 0.5.2）：账本删除、币种 CRUD、账户下级、余额校准、Beancount 导入到当前账本与批次撤销、修改交易（冲正 + 新建）。账芯与离线同步协议不变，迁移 015（无 `edit_key` / `supersedes`，改账不走版本链）。
