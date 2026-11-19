@@ -15,6 +15,7 @@ import { setApiClientHooks } from '@/api/client'
 import { useSessionStore } from '@/stores/session'
 import AccountsView from '@/views/AccountsView.vue'
 import AccountDetailView from '@/views/AccountDetailView.vue'
+import AssetsView from '@/views/AssetsView.vue'
 import AwaitInviteView from '@/views/AwaitInviteView.vue'
 import BillsView from '@/views/BillsView.vue'
 import CategoriesView from '@/views/CategoriesView.vue'
@@ -55,6 +56,14 @@ const routes: RouteRecordRaw[] = [
     path: '/',
     name: 'bills',
     component: BillsView,
+    meta: { requiresAuth: true },
+  },
+  {
+    // B5：资产页（design.md 资产页）。与 navItems 的 `ready: true` 必须同提交
+    // （规划 §2 例外③：`ready === true ⟺ router.resolve(to)` 能解析出命名路由）。
+    path: '/assets',
+    name: 'assets',
+    component: AssetsView,
     meta: { requiresAuth: true },
   },
   {
