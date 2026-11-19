@@ -2,9 +2,12 @@ package service
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"math/big"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -57,6 +60,9 @@ type TransactionCreated struct {
 //
 // userID 用于服务端按请求用户计算 can_edit（AC-5.2）：已冲正 / 期初 / 校准 /
 // 冲正交易一律不可编辑；owner 可改全账本，editor 仅可改自己记的账。
+//
+// 不带任何筛选与分页（等价于 GET /api/transactions 不带 query），
+// 筛选 / 分页走 ListTransactionsPage。
 func (s *Service) ListTransactions(ledgerID, userID int64) ([]TransactionView, error) {
 	role, _ := s.repo.RoleOf(ledgerID, userID) // 非成员为空串 → can_edit 全 false
 	txns, err := s.repo.ListTransactions(ledgerID)
@@ -65,29 +71,367 @@ func (s *Service) ListTransactions(ledgerID, userID int64) ([]TransactionView, e
 	}
 	out := make([]TransactionView, 0, len(txns))
 	for _, t := range txns {
-		v := TransactionView{
-			ID:            t.ID,
-			UUID:          t.UUID,
-			Date:          t.Date,
-			Flag:          t.Flag,
-			Description:   t.Description,
-			CreatedByName: t.CreatedByName,
-			Postings:      make([]PostingView, 0, len(t.Postings)),
-			ReversedBy:    t.ReversedBy,
-			ReversalOf:    t.ReversalOf,
-			CanEdit:       computeCanEdit(t, role, userID),
-		}
-		for _, p := range t.Postings {
-			v.Postings = append(v.Postings, PostingView{
-				AccountID: p.AccountID,
-				Account:   p.AccountName,
-				Commodity: p.Commodity,
-				Amount:    p.Amount,
-			})
-		}
-		out = append(out, v)
+		out = append(out, txnListView(t, role, userID))
 	}
 	return out, nil
+}
+
+// txnListView 把一笔交易的领域模型转换为列表视图（含 can_edit）。
+// 全量列表与筛选分页列表共用，保证两条路径的字段口径一致。
+func txnListView(t domain.Transaction, role string, userID int64) TransactionView {
+	v := TransactionView{
+		ID:            t.ID,
+		UUID:          t.UUID,
+		Date:          t.Date,
+		Flag:          t.Flag,
+		Description:   t.Description,
+		CreatedByName: t.CreatedByName,
+		Postings:      make([]PostingView, 0, len(t.Postings)),
+		ReversedBy:    t.ReversedBy,
+		ReversalOf:    t.ReversalOf,
+		CanEdit:       computeCanEdit(t, role, userID),
+	}
+	for _, p := range t.Postings {
+		v.Postings = append(v.Postings, PostingView{
+			AccountID: p.AccountID,
+			Account:   p.AccountName,
+			Commodity: p.Commodity,
+			Amount:    p.Amount,
+		})
+	}
+	return v
+}
+
+// ---------------------------------------------------------------------------
+// 交易列表的服务端筛选 + keyset 分页（GET /api/transactions?from=&to=&kind=...）
+// ---------------------------------------------------------------------------
+
+// maxTransactionPageLimit 是单页上限（契约 0..200）。超过按 200 处理。
+const maxTransactionPageLimit = 200
+
+// dateOnlyRE 是日期参数的合法形状（与前端 filters.ts 的 DATE_RE 一致）。
+// 只校验形状，不做日历有效性校验：日期在库里是 'YYYY-MM-DD' 文本，
+// 边界比较是字典序，「2026-13-45」这样的形状合法值仍能得到确定结果。
+var dateOnlyRE = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+
+// TransactionListQuery 是 GET /api/transactions 的查询条件，**全部可选**，
+// 零值表示「不筛选 + 全量」。字段与 URL query 参数同名（tag 可重复）。
+type TransactionListQuery struct {
+	From       string   // YYYY-MM-DD，含端点；非法格式忽略该参数
+	To         string   // YYYY-MM-DD，含端点；非法格式忽略该参数
+	Kind       string   // expense / income / transfer；其它值忽略
+	AccountID  int64    // 整数账户 id；0/非法忽略
+	CategoryID int64    // 整数账户 id（与 account 同为 postings.account_id 命中）
+	Member     string   // 会员显示名子串（大小写不敏感）
+	Tags       []string // 可重复；命中任一 tags 元素即算
+	Currency   string   // 命中「存在该 commodity 的分录」
+	Keyword    string   // q：五路关键词；空串或纯空白视为无筛选
+	Limit      int      // 0..200；缺省或 0 = 全量
+	Cursor     string   // 不透明串，base64url("date|id")
+
+	// WithSummary 由 ?with=summary 置位：追加「分币种收支汇总」。
+	//
+	// 必须是**可选**的能力：服务端分页之后，前端对「当前已加载的 20 条」做汇总
+	// 是错的（那是 20 条的和，不是全库的和），所以汇总必须由服务端在 SQL 侧
+	// 用同一套 WHERE 算出来。不带该参数时响应体一个键都不能多。
+	WithSummary bool
+}
+
+// TransactionListResult 是交易列表的服务端筛选 / 分页结果。
+//
+// Paged 表示请求是否显式给了 limit（>0）。**为 false 时 handler 只能输出
+// {"transactions": [...]} 这一个键**——现网有 8 处调用走全量，任何一个
+// 多出来的键或默认截断都会改变它们的行为。
+type TransactionListResult struct {
+	Transactions []TransactionView
+	Total        int    // 满足筛选条件的总笔数（不含游标影响）；仅 Paged / Summary 时有效
+	HasMore      bool   // 是否还有下一页
+	NextCursor   string // 下一页游标；无下一页时为空串
+	Paged        bool   // 请求是否显式分页
+
+	// Summary 仅在请求带 with=summary 时非 nil（否则 handler 不输出 summary 键）。
+	Summary *TransactionSummary
+}
+
+// CommoditySummaryView 是某币种的收支汇总。
+//
+// 金额是**固定两位定点串**（与前端 core/Money 的 toString() 逐字对齐：
+// `toFixed(2)`，不跟账本币种 precision 走）。**不提供跨币种合计金额** ——
+// 跨币种求和永远是错的，笔数放在 TransactionSummary.Total。
+type CommoditySummaryView struct {
+	Commodity string `json:"commodity"`
+	Income    string `json:"income"`  // Σ(−Income 分录)，正数
+	Expense   string `json:"expense"` // Σ(Expenses 分录)，正数
+}
+
+// TransactionSummary 是交易列表的分币种收支汇总（?with=summary）。
+type TransactionSummary struct {
+	Total       int                    `json:"total"` // 满足筛选条件的交易笔数（不是金额）
+	ByCommodity []CommoditySummaryView `json:"by_commodity"`
+}
+
+// summaryDecimals 是汇总金额的小数位数。
+//
+// 固定 2 位而不是读账本币种 precision：前端 summaryByCommodity 的金额出口是
+// Money.toString() → `toFixed(2)`，拿 precision 会与前端出现位数差异。
+const summaryDecimals = 2
+
+// ListTransactionsPage 按筛选条件列出交易，可选 keyset 分页与分币种汇总。
+//
+// 所有筛选与游标谓词都下推到 SQL（repository.transactionFilterWhere 单点生成
+// WHERE 片段，列表 / COUNT / 汇总共用）：
+//   - Limit=0 → 全量，不查 total（Paged=false，响应形状与旧版完全一致）；
+//   - Limit>0 → LIMIT limit+1 判 has_more，并单独 COUNT 出 total；
+//   - WithSummary → 追加 summary（total 复用同一次 COUNT，金额在 Go 用 big.Rat 累加）。
+//
+// 游标非法（非 base64 / 缺分隔符 / 非数字）→ 400（domain.ErrInvalid），
+// **不静默当第一页**：静默会让用户以为已经翻到头。
+func (s *Service) ListTransactionsPage(
+	ledgerID, userID int64, in TransactionListQuery,
+) (TransactionListResult, error) {
+	q, err := buildTransactionQuery(ledgerID, in)
+	if err != nil {
+		return TransactionListResult{}, err
+	}
+
+	role, _ := s.repo.RoleOf(ledgerID, userID)
+	txns, hasMore, err := s.repo.ListTransactionsFiltered(q)
+	if err != nil {
+		return TransactionListResult{}, err
+	}
+
+	res := TransactionListResult{
+		Transactions: make([]TransactionView, 0, len(txns)),
+		HasMore:      hasMore,
+		Paged:        q.Limit > 0,
+	}
+	for _, t := range txns {
+		res.Transactions = append(res.Transactions, txnListView(t, role, userID))
+	}
+
+	// total 与 summary.total 是同一个数（满足筛选条件的笔数）：只查一次 COUNT。
+	if res.Paged || in.WithSummary {
+		res.Total, err = s.repo.CountTransactionsFiltered(q)
+		if err != nil {
+			return TransactionListResult{}, err
+		}
+	}
+
+	if in.WithSummary {
+		byCommodity, err := s.summarizeByCommodity(q)
+		if err != nil {
+			return TransactionListResult{}, err
+		}
+		res.Summary = &TransactionSummary{Total: res.Total, ByCommodity: byCommodity}
+	}
+
+	if res.Paged && hasMore && len(txns) > 0 {
+		last := txns[len(txns)-1]
+		res.NextCursor = encodeTransactionCursor(last.Date, last.ID)
+	}
+	return res, nil
+}
+
+// summarizeByCommodity 计算「分币种收支汇总」，口径逐字对齐前端
+// frontend/src/core/search.ts 的 summaryByCommodity：
+//
+//  1. **符号口径**（Beancount 借方为正）：expense = Σ(Expenses 分录)，
+//     income = Σ(−Income 分录)，两者对外都为正数；**不取 abs** —— 符号错了要暴露，
+//     不能被静默抹平。
+//  2. **归零粒度是「日期 × 币种」的桶**：先按 (date, commodity) 分桶累加，
+//     **逐桶**把负数净额归零，最后再按币种合并已归零的桶。若改成「按币种一次性
+//     累加后归零」，同一个月里「day1 支出 100、day2 纯退款 50」会得到 50，
+//     而账单页月合计是 100 —— 同一账本两个数字。
+//  3. **不跨币种求和**：输出按币种分行，币种按字典序排序，不提供合计金额。
+//     币种集合来自**全部分录**（转账 / 期初只登记币种、不贡献金额）。
+//  4. 金额累加用 big.Rat（禁用 SQL SUM）：amount 以 CAST(... AS TEXT) 取原样
+//     十进制串，避免 REAL 累加把 0.1 + 0.2 变成 0.30000000000000004。
+//  5. **汇总永远是「筛选条件的全集」，与 cursor 无关**（传入的 q 不含游标谓词）。
+//     如果让汇总跟着游标走，用户翻到第二页会看到金额变小，进而以为「钱变少了」——
+//     这是比不显示更糟的误导。翻页只影响 transactions，不影响 total / summary。
+func (s *Service) summarizeByCommodity(q repository.TransactionQuery) ([]CommoditySummaryView, error) {
+	postings, err := s.repo.PostingAmountsFiltered(q)
+	if err != nil {
+		return nil, err
+	}
+
+	// totals 以「出现过的币种」为键：只要某币种在命中交易里有一条分录，
+	// 它就出现在汇总里（金额可能全 0），与前端 counts 的口径一致。
+	totals := make(map[string]*summaryBucket, len(postings))
+	// buckets 以「日期 × 币种」为键，用于逐桶归零。
+	buckets := make(map[summaryBucketKey]*summaryBucket, len(postings))
+
+	for _, p := range postings {
+		if _, ok := totals[p.Commodity]; !ok {
+			totals[p.Commodity] = newSummaryBucket()
+		}
+		if p.AccountType != domain.TypeExpenses && p.AccountType != domain.TypeIncome {
+			continue // 资金 / 权益分录只登记币种，不计入收支
+		}
+		amount := parseSummaryAmount(p.Amount)
+		key := summaryBucketKey{date: p.Date, commodity: p.Commodity}
+		bucket := buckets[key]
+		if bucket == nil {
+			bucket = newSummaryBucket()
+			buckets[key] = bucket
+		}
+		if p.AccountType == domain.TypeExpenses {
+			bucket.expense.Add(bucket.expense, amount)
+		} else {
+			// Income 分录在 Beancount 口径下为负，取反后收入对外恒为正。
+			bucket.income.Sub(bucket.income, amount)
+		}
+	}
+
+	// 逐桶归零后再按币种合并（归零粒度见 doc 第 2 条）。
+	for key, bucket := range buckets {
+		total := totals[key.commodity]
+		total.expense.Add(total.expense, nonNegativeRat(bucket.expense))
+		total.income.Add(total.income, nonNegativeRat(bucket.income))
+	}
+
+	commodities := make([]string, 0, len(totals))
+	for commodity := range totals {
+		commodities = append(commodities, commodity)
+	}
+	sort.Strings(commodities) // 字典序（币种代码是 ASCII，顺序确定）
+
+	out := make([]CommoditySummaryView, 0, len(commodities))
+	for _, commodity := range commodities {
+		total := totals[commodity]
+		out = append(out, CommoditySummaryView{
+			Commodity: commodity,
+			Income:    total.income.FloatString(summaryDecimals),
+			Expense:   total.expense.FloatString(summaryDecimals),
+		})
+	}
+	return out, nil
+}
+
+// summaryBucketKey 是「日期 × 币种」的归零桶键。
+type summaryBucketKey struct {
+	date      string
+	commodity string
+}
+
+// summaryBucket 是某一维度的收支累计器（big.Rat 精确累加）。
+type summaryBucket struct {
+	expense *big.Rat
+	income  *big.Rat
+}
+
+// newSummaryBucket 构造一个归零的累计器。
+func newSummaryBucket() *summaryBucket {
+	return &summaryBucket{expense: new(big.Rat), income: new(big.Rat)}
+}
+
+// nonNegativeRat 把负数净额归零（与前端 positiveOf 一致：对外不展示负的收支）。
+// 返回新对象，避免共享状态。
+func nonNegativeRat(r *big.Rat) *big.Rat {
+	if r.Sign() < 0 {
+		return new(big.Rat)
+	}
+	return new(big.Rat).Set(r)
+}
+
+// parseSummaryAmount 把分录金额解析为精确有理数；非法金额按 0 处理
+// （与前端 moneyOf 一致：一条脏数据不该让整页汇总失败）。
+func parseSummaryAmount(raw string) *big.Rat {
+	r, ok := new(big.Rat).SetString(strings.TrimSpace(raw))
+	if !ok {
+		return new(big.Rat)
+	}
+	return r
+}
+
+// buildTransactionQuery 把 HTTP 层的原始查询条件规范化为仓储查询条件。
+//
+// 容错口径（与前端 filters.ts 的 parse 行为一致）：
+//   - from / to 形状非法 → 忽略该参数（不报错）；合法则去空白后使用；
+//   - kind 不在三支白名单内 → 忽略（含 'all'）；
+//   - account / category <= 0 → 不筛；
+//   - tag 去空白、丢弃空串；
+//   - cursor 非空则必须可解析，否则返回 ErrInvalid（→ 400）。
+func buildTransactionQuery(ledgerID int64, in TransactionListQuery) (repository.TransactionQuery, error) {
+	q := repository.TransactionQuery{LedgerID: ledgerID}
+
+	if from := strings.TrimSpace(in.From); dateOnlyRE.MatchString(from) {
+		q.From = from
+	}
+	if to := strings.TrimSpace(in.To); dateOnlyRE.MatchString(to) {
+		q.To = to
+	}
+	switch kind := strings.TrimSpace(in.Kind); kind {
+	case domain.KindExpense, domain.KindIncome, domain.KindTransfer:
+		q.Kind = kind
+	}
+	if in.AccountID > 0 {
+		q.AccountID = in.AccountID
+	}
+	if in.CategoryID > 0 {
+		q.CategoryID = in.CategoryID
+	}
+	q.Member = strings.TrimSpace(in.Member)
+	for _, tag := range in.Tags {
+		if tag = strings.TrimSpace(tag); tag != "" {
+			q.Tags = append(q.Tags, tag)
+		}
+	}
+	q.Currency = strings.TrimSpace(in.Currency)
+	if keyword := strings.TrimSpace(in.Keyword); keyword != "" {
+		q.Keyword = keyword
+	}
+	q.Limit = clampTransactionLimit(in.Limit)
+	if cursor := strings.TrimSpace(in.Cursor); cursor != "" {
+		decoded, err := decodeTransactionCursor(cursor)
+		if err != nil {
+			return repository.TransactionQuery{}, err
+		}
+		q.Cursor = &decoded
+	}
+	return q, nil
+}
+
+// clampTransactionLimit 把 limit 规范到 0..maxTransactionPageLimit。
+// <=0 表示全量（缺省即全量，不允许「默认 20」）；超过上限按上限截断。
+func clampTransactionLimit(limit int) int {
+	if limit <= 0 {
+		return 0
+	}
+	if limit > maxTransactionPageLimit {
+		return maxTransactionPageLimit
+	}
+	return limit
+}
+
+// encodeTransactionCursor 生成不透明游标：base64url("date|id")，无填充。
+func encodeTransactionCursor(date string, id int64) string {
+	raw := date + "|" + strconv.FormatInt(id, 10)
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+// decodeTransactionCursor 解析游标。任何异常（非 base64 / 缺分隔符 / 日期形状
+// 非法 / id 非数字）都返回 ErrInvalid，由 handler 映射 400。
+func decodeTransactionCursor(encoded string) (repository.TransactionCursor, error) {
+	bad := domain.Invalidf("分页游标无效，请从第一页重新加载")
+	payload, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		// 兼容带 '=' 填充的 URL-safe base64（RawURLEncoding 拒绝填充）。
+		padded, paddedErr := base64.URLEncoding.DecodeString(encoded)
+		if paddedErr != nil {
+			return repository.TransactionCursor{}, bad
+		}
+		payload = padded
+	}
+	parts := strings.Split(string(payload), "|")
+	if len(parts) != 2 || !dateOnlyRE.MatchString(parts[0]) {
+		return repository.TransactionCursor{}, bad
+	}
+	id, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil || id <= 0 {
+		return repository.TransactionCursor{}, bad
+	}
+	return repository.TransactionCursor{Date: parts[0], ID: id}, nil
 }
 
 // computeCanEdit 是 can_edit 的唯一判定口径（AC-5.2 / AC-5.3，服务端权威）：

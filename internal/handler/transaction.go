@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	"familyledger/internal/auth"
@@ -9,7 +10,16 @@ import (
 	"familyledger/internal/service"
 )
 
-// HandleListTransactions 列出交易（含分录）。
+// HandleListTransactions 列出交易（含分录），支持服务端筛选 + keyset 分页。
+//
+// 参数全部可选：from / to / kind / account / category / member / tag（可重复）/
+// currency / q / limit / cursor。语义与容错口径见 service.TransactionListQuery。
+//
+// 响应形状（硬约束）：
+//   - 未显式给 limit（或 limit=0）→ **只有 `{"transactions": [...]}` 一个键**。
+//     现网有 8 处调用走全量，多一个键或默认截断都会改变它们的行为。
+//   - limit>0 → 追加 total / has_more，无下一页时省略 next_cursor。
+//   - with=summary → 追加 summary（分币种收支汇总，见 service.TransactionSummary）。
 func (h *Handler) HandleListTransactions(w http.ResponseWriter, r *http.Request) {
 	ledgerID, ok := auth.LedgerID(r.Context())
 	if !ok {
@@ -17,12 +27,75 @@ func (h *Handler) HandleListTransactions(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	uid, _ := auth.UserID(r.Context())
-	txns, err := h.svc.ListTransactions(ledgerID, uid)
+	res, err := h.svc.ListTransactionsPage(ledgerID, uid, parseTransactionListQuery(r))
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"transactions": txns})
+	body := map[string]any{"transactions": res.Transactions}
+	if res.Paged {
+		body["total"] = res.Total
+		body["has_more"] = res.HasMore
+		if res.HasMore && res.NextCursor != "" {
+			body["next_cursor"] = res.NextCursor
+		}
+	}
+	if res.Summary != nil {
+		body["summary"] = res.Summary
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
+// parseTransactionListQuery 从 URL query 读取筛选/分页参数。
+//
+// 本层只做「取字符串 + 空值容错」，不做格式校验：
+// 日期形状、kind 白名单、limit 区间、游标解析都在 service 层统一处理，
+// 避免校验规则散落在两层（一处改了另一处忘掉）。
+//
+// account / category / limit 的非法值按「忽略」处理（= 0），与契约里
+// 「非法格式忽略该参数」的口径一致。
+func parseTransactionListQuery(r *http.Request) service.TransactionListQuery {
+	q := r.URL.Query()
+	return service.TransactionListQuery{
+		From:        q.Get("from"),
+		To:          q.Get("to"),
+		Kind:        q.Get("kind"),
+		AccountID:   queryInt64(q.Get("account")),
+		CategoryID:  queryInt64(q.Get("category")),
+		Member:      q.Get("member"),
+		Tags:        q["tag"], // 可重复：?tag=a&tag=b
+		Currency:    q.Get("currency"),
+		Keyword:     q.Get("q"),
+		Limit:       int(queryInt64(q.Get("limit"))),
+		Cursor:      q.Get("cursor"),
+		WithSummary: hasWithToken(q["with"], "summary"),
+	}
+}
+
+// hasWithToken 判断 ?with= 列表是否包含指定能力。
+//
+// 支持 `with=summary` 与逗号分隔的 `with=summary,other`（可重复键同理），
+// 便于以后追加导出所需的能力位而不改既有调用方；未识别的能力位一律忽略
+// （与 kind/from 的「非法值忽略」口径一致，不报错）。
+func hasWithToken(values []string, want string) bool {
+	for _, value := range values {
+		for _, token := range strings.Split(value, ",") {
+			if strings.TrimSpace(token) == want {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// queryInt64 解析整数 query 参数；空串或非法值返回 0（调用方按「不筛」处理）。
+// 负数在 service 层按全量 / 不筛处理，这里不做限制。
+func queryInt64(raw string) int64 {
+	n, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // HandleCreateTransaction 创建交易（postings 用 account_id 引用）。

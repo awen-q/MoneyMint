@@ -28,6 +28,22 @@ const (
 	RoleViewer = "viewer"
 )
 
+// 交易筛选口径（GET /api/transactions?kind=...）。
+//
+// 与前端 frontend/src/core/filters.ts 的 FilterKind 一一对应；"all"（不过滤）
+// 由**空串**表达，不设常量 —— 空串是 Go 的零值，缺省即不过滤。
+//
+// 口径（必须与 applyFilters / transactionKind 逐字对齐）：
+//   - KindExpense / KindIncome 是**分录命中**：存在一条对应账户类型的分录即算，
+//     因此一笔「退款 / 报销」交易可以同时命中 expense 与 income；
+//   - KindTransfer 是**整笔判定**：不含 Equity / Expenses / Income 任何分录，
+//     且至少一条分录（期初交易含 Equity 分录，不属于 transfer）。
+const (
+	KindExpense  = "expense"
+	KindIncome   = "income"
+	KindTransfer = "transfer"
+)
+
 // 同步实体类型与操作。
 const (
 	EntityAccount     = "account"

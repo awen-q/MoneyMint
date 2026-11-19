@@ -32,11 +32,7 @@ func (s *Store) listTransactions(ledgerID int64, deleted bool) ([]domain.Transac
 		order = "t.deleted_at DESC, t.id DESC"
 	}
 	rows, err := s.db.Query(
-		`SELECT t.id, t.uuid, t.date, t.flag, t.description, t.tags, COALESCE(t.created_by, 0),
-		        COALESCE(u.display_name, '') AS created_by_name, t.deleted_at,
-		        COALESCE(t.reversal_of, ''), COALESCE(t.opening_account_uuid, ''),
-		        COALESCE(t.opening_version, 0), COALESCE(t.opening_key, ''),
-		        COALESCE(t.reversed_by, '')
+		`SELECT `+txnListColumns+`
 		 FROM transactions t
 		 LEFT JOIN users u ON t.created_by = u.id
 		 WHERE t.ledger_id=? AND `+where+` ORDER BY `+order,
@@ -46,35 +42,61 @@ func (s *Store) listTransactions(ledgerID int64, deleted bool) ([]domain.Transac
 		return nil, err
 	}
 	txns := []domain.Transaction{}
-	ids := []int64{}
 	for rows.Next() {
-		var t domain.Transaction
-		var tags sql.NullString
-		var deletedAt sql.NullString
-		if err := rows.Scan(&t.ID, &t.UUID, &t.Date, &t.Flag, &t.Description, &tags, &t.CreatedBy, &t.CreatedByName, &deletedAt,
-			&t.ReversalOf, &t.OpeningAccountUUID, &t.OpeningVersion, &t.OpeningKey, &t.ReversedBy); err != nil {
+		t, err := scanTransactionRow(rows)
+		if err != nil {
 			rows.Close()
 			return nil, err
 		}
-		t.Tags = parseTags(tags)
-		if deletedAt.Valid {
-			t.DeletedAt = deletedAt.String
-		}
 		txns = append(txns, t)
-		ids = append(ids, t.ID)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
-	if len(ids) == 0 {
-		return txns, nil
+	if err := s.attachPostings(txns); err != nil {
+		return nil, err
 	}
+	return txns, nil
+}
 
+// scanTransactionRow 按 txnListColumns 的列顺序扫描一行交易主表记录。
+// 列表查询与筛选查询共用，避免两处 Scan 顺序各自漂移。
+func scanTransactionRow(rows *sql.Rows) (domain.Transaction, error) {
+	var t domain.Transaction
+	var tags sql.NullString
+	var deletedAt sql.NullString
+	if err := rows.Scan(
+		&t.ID, &t.UUID, &t.Date, &t.Flag, &t.Description, &tags,
+		&t.CreatedBy, &t.CreatedByName, &deletedAt,
+		&t.ReversalOf, &t.OpeningAccountUUID, &t.OpeningVersion, &t.OpeningKey,
+		&t.ReversedBy,
+	); err != nil {
+		return domain.Transaction{}, err
+	}
+	t.Tags = parseTags(tags)
+	if deletedAt.Valid {
+		t.DeletedAt = deletedAt.String
+	}
+	return t, nil
+}
+
+// attachPostings 按交易 id 批量装载分录并回填到各交易的 Postings。
+//
+// 一次 IN 查询装卸所有分录（避免 N+1）；分录顺序由 position 保证稳定，
+// 与 Beancount 导出顺序一致。
+func (s *Store) attachPostings(txns []domain.Transaction) error {
+	if len(txns) == 0 {
+		return nil
+	}
+	ids := make([]int64, len(txns))
+	for i := range txns {
+		ids[i] = txns[i].ID
+	}
 	query, args, err := sqlArgsIn(ids)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	prows, err := s.db.Query(
 		`SELECT p.transaction_id, p.account_id, a.uuid, a.name,
@@ -85,7 +107,7 @@ func (s *Store) listTransactions(ledgerID int64, deleted bool) ([]domain.Transac
 		args...,
 	)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer prows.Close()
 
@@ -94,17 +116,17 @@ func (s *Store) listTransactions(ledgerID int64, deleted bool) ([]domain.Transac
 		var tid int64
 		var p domain.Posting
 		if err := prows.Scan(&tid, &p.AccountID, &p.AccountUUID, &p.AccountName, &p.AccountDisplay, &p.Commodity, &p.Amount, &p.Position); err != nil {
-			return nil, err
+			return err
 		}
 		byTxn[tid] = append(byTxn[tid], p)
 	}
 	if err := prows.Err(); err != nil {
-		return nil, err
+		return err
 	}
 	for i := range txns {
 		txns[i].Postings = byTxn[txns[i].ID]
 	}
-	return txns, nil
+	return nil
 }
 
 // MarkTransactionReversed 把一笔交易标记为「已冲正」，仅当尚未被标记时生效。
