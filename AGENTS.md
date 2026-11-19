@@ -30,7 +30,7 @@
 
 **核心不变约束**：导出的 `.beancount` 必须能被 `bean-check` 直接校验通过（退出码 0、无报错）。
 
-**当前阶段**：M7 六批 + **0.6.0（S0~S6 七批，2026-11-15）全部交付**，仓库只剩一套前端；§7 端点表 **41 条路径 / 52 个 `path×method`**（表 45 行；基线 36 + 0.6.0 新增 8 + B6 新增 1）已与 `internal/server/router.go` 逐条核对一致（T62 审计：零孤儿、零缺失；`routes.ts` 现有 40 常量 = 41 − 1 条待 T55 补）；迁移至 **016**，Vitest **356/356 通过**（47 文件）。剩余边界见 §9。
+**当前阶段**：M7 六批 + **0.6.0（S0~S6 七批，2026-11-15）全部交付**，仓库只剩一套前端；§7 端点表 **41 条路径 / 52 个 `path×method`**（表 45 行；基线 36 + 0.6.0 新增 8 + B6 新增 1）已与 `internal/server/router.go` 逐条核对一致（T62 审计：零孤儿、零缺失；`routes.ts` 现有 40 常量 = 41 − 1 条待 T55 补）；迁移至 **016**，Vitest **901/901 通过**（95 文件；2026-11-19 实测）。剩余边界见 §9。
 
 **0.6.0 已交付**（2026-11-15）：迁移 015_ledger_ops、账本删除、币种 CRUD、账户下级（`parent_uuid` 必传）、余额校准（`balance_key` 独立列，D-1 日初口径）、Beancount 导入（默认 `target=current` + 批次撤销；导入端点移出账本上下文豁免）、修改交易（`PATCH /api/transactions/{uuid}` = 冲正 + 新建，无版本链；权限收紧：editor 仅可改本人交易）。**两条破坏性变更**（导入语义反转 / 交易权限收紧）详见 `CHANGELOG.md` [0.6.0]。0.6.0 产品口径唯一源：[`docs/0.6.0-prd.md`](docs/0.6.0-prd.md)（N-12：§9 只链接不复制 AC）。
 
@@ -89,7 +89,7 @@ python -m pip install beancount    # 激活 .venv 后执行
 - `core/Money.ts`：`decimal.js` 定点金额唯一入口（只收 string 构造、`ROUND_HALF_UP`、`toString()` 固定 `toFixed()`）；另有 `core/{accounts,calendar,csv,filters,opening,ordering,record,storage,m2}.ts` 核心领域逻辑（全部带 `.test.ts`）。
 - `core/sync/`：离线同步内核——`models.ts`（本地实体/死信分类，`DEAD_CODES` 与后端稳定码同源）、`localStore.ts`（Memory 实现）、`idbStore.ts`（离线提交队列的本地持久化，单事务原子写）、`engine.ts`（SyncEngine：pull→push 重映射→pull、库世代隔离、指数退避、CAS 多标签页租约）+ 9 份真实契约样本（`fixtures/`，其中 6 份被 `engine.test.ts` 引用）。
 - `api/{types,routes,errors,client}.ts`：40 条路由常量（= 后端 41 路径 − 1 条待 T55 补）手写 TS 类型 / 路由常量 / `ApiError` / 类型化 fetch 客户端（401 single-flight / 428 / `X-Ledger-Id` 断言 / FormData 上传；**不生成** OpenAPI）。
-- `stores/`：`session / privacy / recordSheet / sync`；views 20 页 + components（AppLayout / RecordSheet / SyncBadge 等）。
+- `stores/`：`session / privacy / recordSheet / sync`；views 22 页 + components（AppLayout / RecordSheet / SyncBadge 等）。
 - `vite.config.ts`：`base: './'`、`build.target: 'es2015'`、`@vitejs/plugin-legacy`（`targets: Safari >= 14`）、`outDir: 'dist'`、`server.proxy['/api'] → 127.0.0.1:8080`、alias `@`、`define.__APP_VERSION__` 读 package.json。
 - PWA：`public/sw.js` 只缓存应用壳与静态资源（`/api/*` 绝不拦截），activate 清理非 fambean 前缀旧缓存（含 Flutter 时代 SW 缓存）；`core/pwa.ts` 更新提示不自动打断录入（AC-35）。
 - **兼容基线**：语法门禁 es2020 + `compat.mjs` API/CSS 特性扫描；禁用 Safari 14.1 缺失 API（`.at()` / `structuredClone` 等）。

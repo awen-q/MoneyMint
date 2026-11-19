@@ -30,11 +30,11 @@
 
 | 关心什么 | 看哪里 |
 |---|---|
-| 后端路由与端点（36 条） | `internal/server/router.go`、`AGENTS.md` §7 |
+| 后端路由与端点（**41 条路径 / 52 个 path×method**；`AGENTS.md` §7 表 45 行） | `internal/server/router.go`、`AGENTS.md` §7 |
 | CORS / CSRF / Cookie 鉴权 | `internal/server/middleware.go`、`internal/config/config.go` |
 | 认证与会话 | `internal/handler/auth.go`、`internal/service/auth.go` |
 | 交易与幂等 | `internal/service/transaction.go`、`internal/repository/transaction.go`、`internal/db/migrate013.go` |
-| 迁移清单（下一个编号 **015**） | `internal/db/migrate.go` 的 `migrations` 数组（当前至 `014_db_instance_id`） |
+| 迁移清单（下一个编号 **017**） | `internal/db/migrate.go` 的 `migrations` 数组（当前至 `016_import_batch_manifest`） |
 | 库世代 | `internal/db/db_instance.go`、`internal/service/instance.go`、`GET /api/db/instance` |
 | 恢复 / 导入 | `internal/restore/`、`internal/beancount/`、`internal/service/{restore,imports}.go`、`internal/handler/{restore,import}.go` |
 | 同步裁决 | `internal/service/sync.go`（push 稳定码 `account_not_found` / `account_closed`） |

@@ -207,7 +207,7 @@ python -m beancount.scripts.check data/family.beancount   # 激活项目 .venv �
 ├── internal/             # 后端分层
 │   ├── config/           # 集中配置（环境变量 + 启动校验）
 │   ├── domain/           # 领域模型 + 哨兵错误
-│   ├── db/               # 开库 + 增量迁移（当前至 015 库世代）
+│   ├── db/               # 开库 + 增量迁移（当前至 016）
 │   ├── repository/       # 数据访问层（SQL 集中于此）
 │   ├── service/          # 业务逻辑层（校验/事务/同步/权限/备份调度/恢复/导入）
 │   ├── handler/          # HTTP 适配层
