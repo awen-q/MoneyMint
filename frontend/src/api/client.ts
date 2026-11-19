@@ -64,6 +64,8 @@ import type {
   PushChange,
   SyncPushResponse,
   TransactionCreated,
+  TransactionListPage,
+  TransactionListQuery,
   TransactionListResponse,
   TransactionUpdated,
   TrashListResponse,
@@ -572,8 +574,47 @@ export const balanceApi = {
 
 /** 交易端点（业务端点；创建时透传 Idempotency-Key）。 */
 export const transactionApi = {
+  /**
+   * 全量列表（**零参**）。
+   *
+   * 签名故意保持零参：现网 7 处调用（账户详情 / 币种 / 数据安全 / 账本 / 报表 /
+   * 交易详情 / 流水）都依赖「缺省 = 全量」这个语义。要分页请用 `listPage`——
+   * 给它加可选参数会让「不小心传了 limit」变成一次静默的截断。
+   */
   list(): Promise<TransactionListResponse> {
     return api.get<TransactionListResponse>(API_ROUTES.transactions)
+  },
+  /**
+   * 分页 / 带筛选的列表（dev-plan §5.8）。
+   *
+   * - 不传 `limit` 即全量（与 `list()` 等价，但可带筛选）；
+   * - `limit: 0` 也是全量，供 CSV 导出二次拉取；
+   * - `cursor` 只表达「从哪里继续」，筛选条件必须每次都原样带上。
+   *
+   * @param query 筛选 + 分页参数
+   * @param options `signal` 用于筛选变化时取消在飞请求（**仍要看代际丢弃**：
+   *     abort 存在时序窗口，可能已经回包）
+   */
+  listPage(
+    query: TransactionListQuery,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<TransactionListPage> {
+    const flat: Record<string, string | number | undefined> = {}
+    if (query.from !== undefined) flat.from = query.from
+    if (query.to !== undefined) flat.to = query.to
+    if (query.kind !== undefined) flat.kind = query.kind
+    if (query.account !== undefined) flat.account = query.account
+    if (query.category !== undefined) flat.category = query.category
+    if (query.member !== undefined) flat.member = query.member
+    if (query.tag !== undefined) flat.tag = query.tag
+    if (query.q !== undefined) flat.q = query.q
+    if (query.limit !== undefined) flat.limit = query.limit
+    if (query.cursor !== undefined && query.cursor !== '') flat.cursor = query.cursor
+    if (query.with !== undefined) flat.with = query.with
+    return api.get<TransactionListPage>(API_ROUTES.transactions, {
+      query: flat,
+      signal: options.signal,
+    })
   },
   create(
     body: CreateTransactionRequest,

@@ -5,7 +5,8 @@
  * 独立于既有 TransactionDetailView.test.ts（批 2 基线），只覆盖 S6 新行为：
  *   - 编辑入口不按 navigator.onLine 显隐（AC-5.4）：按钮保留、禁用态 + 固定文案；
  *   - 已冲正用固定文案「该交易已被冲正，请修改最新版本」，不得复用离线文案；
- *   - 详情页 / 流水列表的「已冲正 / 冲正」徽章（AC-5.5，仅依赖 reversed_by/reversal_of）；
+ *   - 详情页的「已冲正 / 冲正」徽章（AC-5.5）；**列表行的徽章语义已随 T38 迁到
+ *     `TxnRow.test.ts`**（旧流水页下线，徽章归 `core/txnRow.ts` + `TxnRow.vue`）；
  *   - RecordSheet 编辑态提交形态：PATCH 载荷镜像 create（account_id 引用，AC-5.6）。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -13,7 +14,6 @@ import { flushPromises, mount } from '@vue/test-utils'
 import RecordSheet from '@/components/RecordSheet.vue'
 import TrashView from '@/views/TrashView.vue'
 import TransactionDetailView from '@/views/TransactionDetailView.vue'
-import TransactionsView from '@/views/TransactionsView.vue'
 
 const h = vi.hoisted(() => ({
   listTxns: vi.fn(),
@@ -194,35 +194,6 @@ describe('S6-B：冲正徽章（AC-5.5）', () => {
     await flushPromises()
     expect(reversal.text()).toContain('冲正')
     reversal.unmount()
-  })
-
-  it('流水列表：已冲正徽章仅依赖 reversed_by / reversal_of', async () => {
-    h.listTxns.mockResolvedValue({
-      transactions: [
-        {
-          id: 1, uuid: 't-1', date: '2026-11-09', flag: '*', description: '原交易',
-          created_by_name: '阿文', reversed_by: 'rev-1',
-          postings: [
-            { account_id: 2, account: 'Expenses:Food', commodity: 'CNY', amount: '10.00' },
-            { account_id: 1, account: 'Assets:Cash', commodity: 'CNY', amount: '-10.00' },
-          ],
-        },
-        {
-          id: 2, uuid: 't-2', date: '2026-11-09', flag: '*', description: '冲正交易',
-          created_by_name: '阿文', reversal_of: 't-1',
-          postings: [
-            { account_id: 2, account: 'Expenses:Food', commodity: 'CNY', amount: '-10.00' },
-            { account_id: 1, account: 'Assets:Cash', commodity: 'CNY', amount: '10.00' },
-          ],
-        },
-      ],
-    })
-    const wrapper = mount(TransactionsView)
-    await flushPromises()
-    const text = wrapper.text()
-    expect(text).toContain('已冲正')
-    expect(text).toContain('冲正')
-    wrapper.unmount()
   })
 })
 

@@ -22,9 +22,9 @@ import CategoriesView from '@/views/CategoriesView.vue'
 import ChangePasswordView from '@/views/ChangePasswordView.vue'
 import CommoditiesView from '@/views/CommoditiesView.vue'
 import LoginView from '@/views/LoginView.vue'
+import SearchView from '@/views/SearchView.vue'
 import TrashView from '@/views/TrashView.vue'
 import TransactionDetailView from '@/views/TransactionDetailView.vue'
-import TransactionsView from '@/views/TransactionsView.vue'
 
 // 批 3 的 7 个管理与设置页（reports / members / ledgers / sessions /
 // data-safety / sync / settings）改为路由懒加载以压首屏体积。动态
@@ -67,10 +67,24 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
   },
   {
+    // B3：搜索账单（design.md #搜索账单）。与 navItems 的 `ready: true` 必须同提交
+    // （规划 §2 例外③：`ready === true ⟺ router.resolve(to)` 能解析出命名路由）。
+    path: '/search',
+    name: 'search',
+    component: SearchView,
+    meta: { requiresAuth: true },
+  },
+  {
+    // 旧流水页已下线（T38），此处保留**同名路由 + 函数式重定向**：
+    // 1. `name: 'transactions'` 必须保留 —— AccountDetailView / BillsView /
+    //    TransactionDetailView 三处都用 `router.push({ name: 'transactions' })`；
+    // 2. **必须用函数式 redirect 透传 query** —— AccountDetailView 带
+    //    `?account=<id>` 进来，用 `redirect: '/search'` 或 `{ name: 'search' }`
+    //    会把 query 丢掉，用户看到的是一个「没有筛选条件」的搜索页：
+    //    页面正常打开、不报错，只是数据变多，很容易被当成数据错。
     path: '/transactions',
     name: 'transactions',
-    component: TransactionsView,
-    meta: { requiresAuth: true },
+    redirect: (to) => ({ name: 'search', query: to.query }),
   },
   {
     path: '/transactions/detail',

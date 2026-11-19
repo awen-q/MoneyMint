@@ -1,0 +1,351 @@
+// @vitest-environment jsdom
+/**
+ * SearchView 回归（T37）：分页状态机是本页唯一的难点，所以用例集中在「时序」上。
+ *
+ * 六条主用例（对应 team-lead 的验收）：
+ * 1. 首屏带 `limit: 20` 且无 `cursor`；「共 N 笔」取 `total` 而不是行数；
+ * 2. 「加载更多」带上次 `next_cursor` 且其余筛选参数原样带上；追加后无重复 id；
+ * 3. 改筛选 → 游标归零、列表清空、重新走首屏；
+ * 4. **乱序响应丢弃**：先发的慢响应后到，不得覆盖后发的快响应；
+ * 5. CSV 导出断言 `limit === 0`（防「复用分页状态」式优化）；
+ * 6. 空态时搜索卡仍在（空态不能让人失去出口）。
+ */
+import { createPinia, setActivePinia } from 'pinia'
+import { flushPromises, mount } from '@vue/test-utils'
+import type { VueWrapper } from '@vue/test-utils'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+import type { TransactionListPage, TransactionView } from '@/api/types'
+import { useLedgerDataStore } from '@/stores/ledgerData'
+
+import SearchView from './SearchView.vue'
+
+const h = vi.hoisted(() => ({
+  listPage: vi.fn(),
+  list: vi.fn(),
+  accountList: vi.fn(),
+  ledgerList: vi.fn(),
+  replace: vi.fn(),
+  push: vi.fn(),
+  route: { query: {} as Record<string, string> },
+  downloadCsv: vi.fn(),
+}))
+
+vi.mock('@/api/client', () => ({
+  transactionApi: { list: h.list, listPage: h.listPage },
+  accountApi: { list: h.accountList },
+  ledgerApi: { list: h.ledgerList },
+  authApi: { me: vi.fn(), login: vi.fn(), logout: vi.fn(), changePassword: vi.fn() },
+  setLedgerIdProvider: vi.fn(),
+}))
+
+vi.mock('@/core/csv', async () => {
+  const actual = await vi.importActual<typeof import('@/core/csv')>('@/core/csv')
+  return { ...actual, downloadCsv: h.downloadCsv }
+})
+
+vi.mock('vue-router', () => ({
+  useRoute: () => h.route,
+  useRouter: () => ({ replace: h.replace, push: h.push }),
+}))
+
+function makeTxn(id: number): TransactionView {
+  return {
+    id,
+    uuid: `txn-${id}`,
+    date: '2026-11-16',
+    flag: '*',
+    description: `交易 ${id}`,
+    created_by_name: '阿文',
+    postings: [
+      { account_id: 2, account: 'Expenses:Food', commodity: 'CNY', amount: '10.00' },
+      { account_id: 1, account: 'Assets:Bank', commodity: 'CNY', amount: '-10.00' },
+    ],
+  }
+}
+
+function page(ids: number[], extra: Partial<TransactionListPage> = {}): TransactionListPage {
+  return { transactions: ids.map(makeTxn), ...extra }
+}
+
+/** 手动可控的 Promise：用于构造乱序响应。 */
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolveFn: (value: T) => void = () => undefined
+  const promise = new Promise<T>((resolve) => {
+    resolveFn = resolve
+  })
+  return { promise, resolve: resolveFn }
+}
+
+let pinia: ReturnType<typeof createPinia>
+
+function mountView(): VueWrapper {
+  return mount(SearchView, { global: { plugins: [pinia] } })
+}
+
+beforeEach(() => {
+  pinia = createPinia()
+  setActivePinia(pinia)
+  localStorage.clear()
+  for (const fn of Object.values(h)) {
+    if (typeof fn === 'function' && 'mockReset' in fn) {
+      ;(fn as ReturnType<typeof vi.fn>).mockReset()
+    }
+  }
+  h.route.query = {}
+  h.accountList.mockResolvedValue({ accounts: [] })
+  h.list.mockResolvedValue({ transactions: [] })
+  h.ledgerList.mockResolvedValue({ ledgers: [] })
+  const data = useLedgerDataStore()
+  data.accounts = []
+  data.txns = []
+  data.loaded = true
+})
+
+describe('SearchView：首屏与分页', () => {
+  it('首屏请求带 limit: 20 且不带 cursor；「共 N 笔」取 total 不是行数', async () => {
+    h.listPage.mockResolvedValue(page([1, 2, 3], { total: 57, has_more: true, next_cursor: 'c1' }))
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(h.listPage).toHaveBeenCalledTimes(1)
+    const query = h.listPage.mock.calls[0][0] as Record<string, unknown>
+    expect(query.limit).toBe(20)
+    expect(query.cursor).toBeUndefined()
+
+    expect(wrapper.findAll('.search__row')).toHaveLength(3)
+    // 关键：57 来自 total，不是 3
+    expect(wrapper.find('.search__count').text()).toBe('共 57 笔')
+  })
+
+  it('「加载更多」带上次 next_cursor，其余筛选参数原样带上，追加后无重复 id', async () => {
+    h.listPage.mockResolvedValueOnce(
+      page([1, 2], { total: 4, has_more: true, next_cursor: 'c1' }),
+    )
+    const wrapper = mountView()
+    await flushPromises()
+
+    // 换筛选后首屏：仍然有下一页（游标只表达位置，筛选每次都要重带）
+    h.listPage.mockResolvedValueOnce(
+      page([3, 4], { total: 4, has_more: true, next_cursor: 'c1' }),
+    )
+    await wrapper.find('[aria-label="类型筛选"]').setValue('expense')
+    await flushPromises()
+
+    const first = h.listPage.mock.calls[1][0] as Record<string, unknown>
+    expect(first.kind).toBe('expense')
+    expect(first.limit).toBe(20)
+    expect(first.cursor).toBeUndefined()
+
+    // 翻页：第二次请求必须带 cursor，且筛选原样带上
+    h.listPage.mockResolvedValueOnce(page([5, 6], { total: 6, has_more: false }))
+    await wrapper.find('.search__more-btn').trigger('click')
+    await flushPromises()
+
+    const second = h.listPage.mock.calls[2][0] as Record<string, unknown>
+    expect(second.cursor).toBe('c1')
+    expect(second.kind).toBe('expense')
+    expect(second.limit).toBe(20)
+
+    const rows = wrapper.findAll('.search__row')
+    expect(rows).toHaveLength(4)
+    // 追加而不是替换：前两行仍在，且没有重复渲染
+    expect(new Set(rows.map((row) => row.html())).size).toBe(4)
+  })
+
+  it('改筛选 → 游标归零、列表清空、重新走首屏', async () => {
+    h.listPage.mockResolvedValueOnce(page([1, 2], { total: 2, has_more: true, next_cursor: 'c1' }))
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.findAll('.search__row')).toHaveLength(2)
+
+    const pending = deferred<TransactionListPage>()
+    h.listPage.mockImplementationOnce(() => pending.promise)
+
+    await wrapper.find('[aria-label="类型筛选"]').setValue('income')
+
+    // 新请求已发出：此时列表已被清空（骨架态），而不是留着旧结果
+    expect(h.listPage).toHaveBeenCalledTimes(2)
+    const query = h.listPage.mock.calls[1][0] as Record<string, unknown>
+    expect(query.cursor).toBeUndefined()
+    expect(query.kind).toBe('income')
+    expect(wrapper.findAll('.search__row')).toHaveLength(0)
+
+    pending.resolve(page([9], { total: 1, has_more: false }))
+    await flushPromises()
+    expect(wrapper.findAll('.search__row')).toHaveLength(1)
+  })
+
+  it('乱序响应丢弃：慢的先发后到，不得覆盖后发的快响应', async () => {
+    const slow = deferred<TransactionListPage>()
+    const fast = deferred<TransactionListPage>()
+    const wrapper = mountView() // 挂载即发第 1 笔（slow 之前还有一次，用假的挂载响应吃掉）
+    await flushPromises()
+
+    h.listPage.mockImplementationOnce(() => slow.promise)
+    h.listPage.mockImplementationOnce(() => fast.promise)
+
+    // 两次筛选变化 → 两笔请求（A=slow、B=fast）
+    await wrapper.find('[aria-label="类型筛选"]').setValue('expense')
+    await wrapper.find('[aria-label="类型筛选"]').setValue('income')
+
+    fast.resolve(page([22], { total: 1, has_more: false }))
+    await flushPromises()
+    expect(wrapper.findAll('.search__row')).toHaveLength(1)
+
+    // 慢的 A（expense）现在才回来：必须被代际丢弃
+    slow.resolve(page([11, 12], { total: 2, has_more: false }))
+    await flushPromises()
+    expect(wrapper.findAll('.search__row')).toHaveLength(1)
+    expect(wrapper.find('.search__count').text()).toBe('共 1 笔')
+  })
+})
+
+describe('SearchView：CSV 与空态出口', () => {
+  it('CSV 导出用 limit: 0 二次拉全量（不复用分页状态）', async () => {
+    h.listPage.mockResolvedValueOnce(page([1], { total: 1, has_more: false }))
+    const wrapper = mountView()
+    await flushPromises()
+
+    h.listPage.mockResolvedValueOnce(page([1, 2, 3], { total: 3 }))
+    await wrapper.find('.search__export').trigger('click')
+    await flushPromises()
+
+    const exportQuery = h.listPage.mock.calls[1][0] as Record<string, unknown>
+    expect(exportQuery.limit).toBe(0)
+    // 导出不应带分页游标
+    expect(exportQuery.cursor).toBeUndefined()
+    expect(h.downloadCsv).toHaveBeenCalledTimes(1)
+  })
+
+  it('空态时搜索卡仍在页面上（空态不能让人失去出口）', async () => {
+    h.listPage.mockResolvedValue(page([], { total: 0, has_more: false }))
+    const wrapper = mountView()
+    await flushPromises()
+
+    // 空态卡出现
+    expect(wrapper.text()).toContain('暂无数据')
+    // 但搜索框与「更多筛选」仍可用
+    expect(wrapper.find('.search-bar__input').exists()).toBe(true)
+    expect(wrapper.find('.search-bar__toggle').exists()).toBe(true)
+  })
+
+  it('请求失败 → error 态，且搜索卡仍在（可改条件自救）', async () => {
+    h.listPage.mockRejectedValue(new Error('服务暂时不可用'))
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('加载失败')
+    expect(wrapper.find('.search-bar__input').exists()).toBe(true)
+  })
+
+  it('关键词提交后同步 URL（用 filtersToQuery，不是服务端参数）', async () => {
+    h.listPage.mockResolvedValue(page([1], { total: 1, has_more: false }))
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.find('.search-bar__input').setValue('火锅')
+    await wrapper.find('.search-bar__submit').trigger('click')
+    await flushPromises()
+
+    expect(h.replace).toHaveBeenCalled()
+    const payload = h.replace.mock.calls[h.replace.mock.calls.length - 1][0] as {
+      query: Record<string, string>
+    }
+    expect(payload.query.q).toBe('火锅')
+    // 服务端参数白名单里的 limit 不应出现在 URL 里
+    expect(payload.query.limit).toBeUndefined()
+  })
+})
+
+describe('关键词端到端（T38 从旧流水页迁移）', () => {
+  const KEYWORD_TXNS: TransactionView[] = [
+    {
+      id: 1,
+      uuid: 't1',
+      date: '2026-11-09',
+      flag: '*',
+      description: '午餐',
+      created_by_name: '阿文',
+      postings: [
+        { account_id: 2, account: 'Expenses:Food', commodity: 'CNY', amount: '38.50' },
+        { account_id: 1, account: 'Assets:Bank', commodity: 'CNY', amount: '-38.50' },
+      ],
+    },
+    {
+      id: 2,
+      uuid: 't2',
+      date: '2026-11-01',
+      flag: '*',
+      description: '十月工资',
+      created_by_name: '太太',
+      postings: [
+        { account_id: 3, account: 'Income:Salary', commodity: 'CNY', amount: '-9500.00' },
+        { account_id: 1, account: 'Assets:Bank', commodity: 'CNY', amount: '9500.00' },
+      ],
+    },
+    {
+      id: 3,
+      uuid: 't3',
+      date: '2026-11-05',
+      flag: '*',
+      description: '搬钱',
+      created_by_name: '阿文',
+      postings: [
+        { account_id: 1, account: 'Assets:Bank', commodity: 'CNY', amount: '-2000.00' },
+        { account_id: 1, account: 'Assets:Bank', commodity: 'CNY', amount: '2000.00' },
+      ],
+    },
+  ]
+
+  /** 服务端按 `q` 过滤（模拟真实后端行为）。 */
+  function serverFiltered(query: Record<string, unknown>): TransactionListPage {
+    const q = typeof query.q === 'string' ? query.q : ''
+    const rows =
+      q === ''
+        ? KEYWORD_TXNS
+        : KEYWORD_TXNS.filter((txn) => txn.description.indexOf(q) >= 0)
+    return { transactions: rows, total: rows.length, has_more: false }
+  }
+
+  it('URL 带 ?q=午餐 → 请求参数带 q，且渲染行数真的减少（URL→筛选→请求→渲染 四跳）', async () => {
+    h.route.query = { q: '午餐' }
+    h.listPage.mockImplementation((query: Record<string, unknown>) =>
+      Promise.resolve(serverFiltered(query)),
+    )
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    // ① 请求真的带上了关键词
+    const query = h.listPage.mock.calls[0][0] as Record<string, unknown>
+    expect(query.q).toBe('午餐')
+    // ② 渲染行数随之减少（3 → 1），而不是「请求发了但界面没变」
+    expect(wrapper.findAll('.search__row')).toHaveLength(1)
+    expect(wrapper.text()).toContain('午餐')
+  })
+
+  it('无 q 时渲染全部 3 行（对照）', async () => {
+    h.route.query = {}
+    h.listPage.mockImplementation((query: Record<string, unknown>) =>
+      Promise.resolve(serverFiltered(query)),
+    )
+    const wrapper = mountView()
+    await flushPromises()
+    expect((h.listPage.mock.calls[0][0] as Record<string, unknown>).q).toBeUndefined()
+    expect(wrapper.findAll('.search__row')).toHaveLength(3)
+  })
+
+  it('?q=绝不存在的词 → 请求带上该词、0 行、显示空态文案（不是空白页）', async () => {
+    h.route.query = { q: '绝不存在的词' }
+    h.listPage.mockImplementation((query: Record<string, unknown>) =>
+      Promise.resolve(serverFiltered(query)),
+    )
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect((h.listPage.mock.calls[0][0] as Record<string, unknown>).q).toBe('绝不存在的词')
+    expect(wrapper.findAll('.search__row')).toHaveLength(0)
+    expect(wrapper.text()).toContain('暂无数据')
+  })
+})

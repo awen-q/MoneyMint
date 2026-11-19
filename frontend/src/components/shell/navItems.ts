@@ -36,7 +36,7 @@ export interface NavItem {
  */
 export const NAV_MAIN: NavItem[] = [
   { key: 'bills', label: '账单', icon: '⌂', to: '/', ready: true },
-  { key: 'search', label: '搜索账单', icon: '🔍', to: '/search', ready: false },
+  { key: 'search', label: '搜索账单', icon: '🔍', to: '/search', ready: true },
   { key: 'stats', label: '统计账单', icon: '◔', to: '/stats', ready: false },
   { key: 'assets', label: '资产', icon: '▤', to: '/assets', ready: true },
   { key: 'asset-stats', label: '资产统计', icon: '↗', to: '/assets/stats', ready: false },

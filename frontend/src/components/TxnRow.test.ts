@@ -7,13 +7,18 @@
  * - 点整行 emit open；`aria-label` 含 title；
  * - `meta` 少项时不会渲染空 span（组件不做 falsy 过滤，也不会因为不过滤而出错）；
  * - 金额只经 `MoneyText`：已在 core 归一为两位定点，转账（signed=false）不自补 `+`。
+ *
+ * **徽章语义的两组判定**在 T38 从旧流水页迁到这里（原用例 mount 已下线的
+ * `TransactionsView` 验同一件事）：`reversal 组`（已冲正 / 冲正，**互斥**）与
+ * `kind 组`（转账 / 期初）**相互独立、可同时出现**，总计 0~2 枚。
  */
 import { createPinia } from 'pinia'
 import { nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import type { TxnRowView } from '@/core/txnRow'
+import { buildTxnRow, type TxnRowView } from '@/core/txnRow'
+import type { AccountView, TransactionView } from '@/api/types'
 import { PRIVACY_MASK } from '@/core/privacy'
 import { usePrivacyStore } from '@/stores/privacy'
 import TxnRow from './TxnRow.vue'
@@ -238,5 +243,83 @@ describe('TxnRow：副行与金额', () => {
     const text = wrapper.find('.txn-row__amount').text()
     expect(text).toBe('-1,234.50')
     expect(text).not.toContain('¥')
+  })
+})
+
+describe('TxnRow：徽章语义（T38 从旧流水页迁移）', () => {
+  const ACCOUNTS: AccountView[] = [
+    { id: 1, name: 'Assets:Bank', uuid: 'u1', type: 'Assets', open_date: '2026-01-01', sort_order: 1 },
+    { id: 2, name: 'Expenses:Food', uuid: 'u2', type: 'Expenses', open_date: '2026-01-01', sort_order: 2 },
+    { id: 3, name: 'Equity:Opening', uuid: 'u3', type: 'Equity', open_date: '2026-01-01', sort_order: 3 },
+  ]
+
+  function makeTxn(overrides: Partial<TransactionView> = {}): TransactionView {
+    return {
+      id: 1,
+      uuid: 't-1',
+      date: '2026-11-09',
+      flag: '*',
+      description: '原交易',
+      created_by_name: '阿文',
+      postings: [
+        { account_id: 2, account: 'Expenses:Food', commodity: 'CNY', amount: '10.00' },
+        { account_id: 1, account: 'Assets:Bank', commodity: 'CNY', amount: '-10.00' },
+      ],
+      ...overrides,
+    }
+  }
+
+  function badgesOf(txn: TransactionView): string[] {
+    return buildTxnRow(txn, ACCOUNTS, 'search').badges.map((badge) => badge.label)
+  }
+
+  it('reversed_by 非空 → 「已冲正」（reversal 组只有一个，不与「冲正」并存）', () => {
+    expect(badgesOf(makeTxn({ reversed_by: 'rev-1' }))).toEqual(['已冲正'])
+  })
+
+  it('reversal_of 非空且未被冲正 → 「冲正」', () => {
+    expect(badgesOf(makeTxn({ reversal_of: 't-0' }))).toEqual(['冲正'])
+  })
+
+  it('两组独立：被冲正的转账同时出「已冲正」+「转账」', () => {
+    const transfer = makeTxn({
+      reversed_by: 'rev-1',
+      postings: [
+        { account_id: 1, account: 'Assets:Bank', commodity: 'CNY', amount: '-2000.00' },
+        { account_id: 1, account: 'Assets:Bank', commodity: 'CNY', amount: '2000.00' },
+      ],
+    })
+    expect(badgesOf(transfer)).toEqual(['已冲正', '转账'])
+  })
+
+  it('期初交易出「期初」；普通支出无徽章', () => {
+    const opening = makeTxn({
+      postings: [
+        { account_id: 1, account: 'Assets:Bank', commodity: 'CNY', amount: '500.00' },
+        { account_id: 3, account: 'Equity:Opening', commodity: 'CNY', amount: '-500.00' },
+      ],
+    })
+    expect(badgesOf(opening)).toEqual(['期初'])
+    expect(badgesOf(makeTxn())).toEqual([])
+  })
+
+  it('徽章渲染到 DOM：两枚并排、按 core 顺序、tone 类正确', () => {
+    const view = makeView()
+    const transfer = makeTxn({
+      reversed_by: 'rev-1',
+      postings: [
+        { account_id: 1, account: 'Assets:Bank', commodity: 'CNY', amount: '-2000.00' },
+        { account_id: 1, account: 'Assets:Bank', commodity: 'CNY', amount: '2000.00' },
+      ],
+    })
+    const built = buildTxnRow(transfer, ACCOUNTS, 'search')
+    const wrapper = mount(TxnRow, {
+      props: { view: { ...view, badges: built.badges }, variant: 'search' },
+      global: { plugins: [createPinia()] },
+    })
+    const badges = wrapper.findAll('.txn-row__badge')
+    expect(badges.map((badge) => badge.text())).toEqual(['已冲正', '转账'])
+    expect(badges[0].classes()).toContain('txn-row__badge--reversal')
+    expect(badges[1].classes()).toContain('txn-row__badge--transfer')
   })
 })

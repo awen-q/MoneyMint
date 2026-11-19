@@ -25,7 +25,7 @@ import {
   postingAmountForAccount,
   transactionKind,
 } from './record'
-import { applyFilters, emptyFilters } from './filters'
+import { emptyFilters } from './filters'
 
 const ACC: SummaryAccount[] = [
   { id: 1, name: 'Assets:Cash', type: 'Assets' },
@@ -50,14 +50,13 @@ describe('批2.5-1：混合交易（Expenses -50 + Income -30 + Assets +80）语
   ]
 
   it('kind=expense 与 kind=income 双命中（分录命中口径）', () => {
-    expect(applyFilters(txns, { ...emptyFilters(), kind: 'expense' }, ACC)).toHaveLength(1)
-    expect(applyFilters(txns, { ...emptyFilters(), kind: 'income' }, ACC)).toHaveLength(1)
+    // 本地 applyFilters 已随 T38 删除（筛选下推服务端）；此处保留「分录级判定」这一
+    // 事实断言：同一笔混合交易同时含 Expenses 与 Income 分录，故两类都该命中。
     expect(hasAccountType(mixed, ACC, 'Expenses')).toBe(true)
     expect(hasAccountType(mixed, ACC, 'Income')).toBe(true)
   })
 
   it('kind=transfer 不命中；整笔 badge 启发式回退 expense（文档化口径）', () => {
-    expect(applyFilters(txns, { ...emptyFilters(), kind: 'transfer' }, ACC)).toHaveLength(0)
     expect(transactionKind(mixed, ACC)).toBe('expense')
   })
 
@@ -94,11 +93,7 @@ describe('批2.5-1：混合交易（Expenses -50 + Income -30 + Assets +80）语
       { account_id: 2, amount: '2000.00', commodity: 'CNY' },
     ]
     expect(transactionKind(transfer, ACC)).toBe('transfer')
-    expect(applyFilters(
-      [{ id: 9, date: '2026-11-10', flag: '*', description: 't', created_by_name: '', postings: transfer }],
-      { ...emptyFilters(), kind: 'transfer' },
-      ACC,
-    )).toHaveLength(1)
+    // 本地筛选已删除；「转账不计入日历收支」这条事实断言保留（它测的是 dailyTotals）
     expect(dailyTotals([{ date: '2026-11-10', postings: transfer }], ACC, 'CNY')['2026-11-10']).toBeUndefined()
   })
 })

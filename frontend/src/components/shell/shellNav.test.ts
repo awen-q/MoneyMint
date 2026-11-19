@@ -149,8 +149,8 @@ describe('navItems：ready ⟺ 路由存在（不变式）', () => {
   })
 
   it('B3/B4/B6 的其余视图路由当前确实还不存在（落地时本条会红，届时同步翻 ready）', () => {
-    // B5 已落地：`/assets` 已从 pending 移出，改为下方正向断言。
-    const pending = ['/search', '/stats', '/assets/stats']
+    // B3/B5 已落地：`/search` 与 `/assets` 已从 pending 移出，改为正向断言。
+    const pending = ['/stats', '/assets/stats']
     for (const path of pending) {
       expect(resolvesToNamedRoute(path)).toBe(false)
     }

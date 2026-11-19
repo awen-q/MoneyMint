@@ -425,8 +425,9 @@ export function computeBalanceSummary(
  *
  * ⚠️ 文档化口径（批 2.5 三分法降级）：本判定是**整笔启发式**，仅供
  * 列表 badge 展示与 kind 筛选旧值兼容（transfer 项），**禁止作为任何
- * 统计依据**——收支统计一律分录级（见 calendar.dailyTotals），筛选的
- * expense / income 已改为分录命中（见 filters.applyFilters）。
+ * 统计依据**——收支统计一律分录级（见 calendar.dailyTotals）。筛选的
+ * expense / income 是**分录命中**，但该口径自 T38 起由服务端承载
+ * （`internal/service/transaction.go`，前端只发 `kind` 参数，不再本地过滤）。
  */
 export type TransactionKind = 'transfer' | 'expense' | 'income' | 'opening'
 

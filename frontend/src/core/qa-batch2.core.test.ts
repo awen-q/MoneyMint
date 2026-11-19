@@ -19,7 +19,6 @@ import {
 import { buildMonthGrid, dailyTotals } from './calendar'
 import { buildTransactionsCsv, csvQuoted, type CsvRow } from './csv'
 import {
-  applyFilters,
   emptyFilters,
   filtersFromQuery,
   filtersToQuery,
@@ -221,7 +220,7 @@ describe('批2-B：dailyTotals 口径（转账剔除 / 币种）', () => {
       ],
       calAccounts,
     )
-    // 兼容模式下混加仍然发生；当前唯一调用处 TransactionsView.vue:84 已传三参。
+    // 兼容模式下混加仍然发生；生产调用方（账单页日历）一律显式传第三参 mainCommodity。
     expect(totals['2026-11-10']?.expense).toBe('150.00')
   })
 
@@ -406,35 +405,6 @@ describe('批2-E：筛选 query 往返稳定性', () => {
   it('非法值回退默认：kind bogus→all、account -1→null、日期 abc→空', () => {
     const f = filtersFromQuery({ from: 'abc', kind: 'bogus', account: '-1' })
     expect(f).toEqual(emptyFilters())
-  })
-
-  it('applyFilters：日期含端点、kind 判定、account/category 命中、member 精确匹配', () => {
-    const txns = [
-      { id: 1, date: '2026-11-01', flag: '*', description: 'a', created_by_name: '小明',
-        postings: [{ account_id: 4, amount: '10.00' }, { account_id: 1, amount: '-10.00' }] },
-      { id: 2, date: '2026-11-30', flag: '*', description: 'b', created_by_name: '小红',
-        postings: [{ account_id: 5, amount: '-20.00' }, { account_id: 2, amount: '20.00' }] },
-      { id: 3, date: '2026-12-01', flag: '*', description: 'c', created_by_name: '小明',
-        postings: [{ account_id: 1, amount: '-5.00' }, { account_id: 2, amount: '5.00' }] },
-    ]
-    // 含端点：11-01 与 11-30 都命中，12-01 排除
-    expect(
-      applyFilters(txns, { ...emptyFilters(), from: '2026-11-01', to: '2026-11-30' }, calAccounts).map((t) => t.id),
-    ).toEqual([1, 2])
-    // kind=transfer：交易 3 全部为资金分录
-    expect(
-      applyFilters(txns, { ...emptyFilters(), kind: 'transfer' }, calAccounts).map((t) => t.id),
-    ).toEqual([3])
-    // account 命中任一分录即可
-    expect(
-      applyFilters(txns, { ...emptyFilters(), account: 1 }, calAccounts).map((t) => t.id),
-    ).toEqual([1, 3])
-    // member 精确匹配
-    expect(
-      applyFilters(txns, { ...emptyFilters(), member: '小红' }, calAccounts).map((t) => t.id),
-    ).toEqual([2])
-    expect(hasActiveFilters(emptyFilters())).toBe(false)
-    expect(hasActiveFilters({ ...emptyFilters(), member: 'x' })).toBe(true)
   })
 })
 

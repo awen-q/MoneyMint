@@ -67,7 +67,7 @@ vi.mock('@/views/BillsView.vue', () => ({ default: { template: '<div/>' } }))
 vi.mock('@/views/LoginView.vue', () => ({ default: { template: '<div/>' } }))
 vi.mock('@/views/TrashView.vue', () => ({ default: { template: '<div/>' } }))
 vi.mock('@/views/TransactionDetailView.vue', () => ({ default: { template: '<div/>' } }))
-vi.mock('@/views/TransactionsView.vue', () => ({ default: { template: '<div/>' } }))
+vi.mock('@/views/SearchView.vue', () => ({ default: { template: '<div/>' } }))
 
 // 无限重定向 / 导航 abort 会让 push 的 Promise reject；注册空 handler 消除
 // 未处理的 rejection 噪音，真实落点一律由下方断言判定。

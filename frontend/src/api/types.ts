@@ -454,6 +454,43 @@ export interface TransactionListResponse {
   transactions: TransactionView[]
 }
 
+/**
+ * `GET /api/transactions` 的查询参数（dev-plan §5.8 冻结契约）。
+ *
+ * **`limit` 缺省 = 全量**：不传就返回该账本全部交易（现网 7 处调用依赖这个语义）。
+ * 传 `limit: 0` 同样是全量，专供 CSV 导出。只有显式传 1..200 才是分页。
+ */
+export interface TransactionListQuery {
+  from?: string
+  to?: string
+  kind?: string
+  account?: number
+  category?: number
+  member?: string
+  tag?: string
+  q?: string
+  limit?: number
+  /** keyset 游标（不透明串，不进 URL）。 */
+  cursor?: string
+  /** `summary` 让服务端附带全量汇总，供搜索页汇总卡使用。 */
+  with?: 'summary'
+}
+
+/**
+ * 分页响应。
+ *
+ * 三个元字段**全部可选**且是故意的：服务端在不带 `limit`（全量）时不返回它们，
+ * TS 因此强迫每个消费者处理「没有 total / 没有下一页」的可能——
+ * 这比把它们标成必填、再各处 `?? 0` 兜底更难写错。
+ */
+export interface TransactionListPage {
+  transactions: TransactionView[]
+  /** 全量命中条数（分页时才有）；「共 N 笔」必须用它，不能用本页行数。 */
+  total?: number
+  has_more?: boolean
+  next_cursor?: string
+}
+
 /** POST /api/transactions 请求体（在线记账必须用 account_id）。 */
 export interface CreateTransactionRequest {
   date: ISODate

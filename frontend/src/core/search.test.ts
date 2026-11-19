@@ -3,13 +3,13 @@
  *
  * 锁死四类容易漂移的口径：
  * 1. 分币种汇总**禁跨币种求和**（无 total 字段），且排序按币种字典序（稳定维度）；
- * 2. 归零粒度与 `bill.ts` 一致 —— 按（日期 × 币种）归零后再合并，有交叉断言；
- * 3. 关键词五路匹配；空关键词命中全部且**不遍历**；
- * 4. 账户名同时匹配展示名与 Beancount 全名。
+ * 2. 归零粒度与 `bill.ts` 一致 —— 按（日期 × 币种）归零后再合并，有交叉断言。
+ *
+ * 关键词匹配（原第 3、4 条）已随 T38 下推服务端并从本文件移除。
  */
 import { describe, expect, it } from 'vitest'
 
-import { matchKeyword, summaryByCommodity } from '@/core/search'
+import { summaryByCommodity } from '@/core/search'
 import { monthTotals } from '@/core/bill'
 import type { AccountView, PostingView, TransactionView } from '@/api/types'
 
@@ -221,85 +221,5 @@ describe('summaryByCommodity', () => {
       posting(1, 'Assets:Bank', '-10.00'),
     ])
     expect(summaryByCommodity([txn])[0].expense).toBe('10.00')
-  })
-})
-
-describe('matchKeyword：五路匹配', () => {
-  const baseTxn = makeTxn(
-    1,
-    '2026-11-10',
-    [
-      posting(2, 'Expenses:Food', '25.50'),
-      posting(1, 'Assets:Bank', '-25.50'),
-    ],
-    { description: '和爸妈吃火锅', created_by_name: '林小满', tags: ['family', '聚餐'] },
-  )
-
-  it('命中备注', () => {
-    expect(matchKeyword(baseTxn, '火锅', ACCOUNTS)).toBe(true)
-    expect(matchKeyword(baseTxn, '和爸妈', ACCOUNTS)).toBe(true)
-  })
-
-  it('命中分类展示名（搜「餐饮」命中 Expenses:Food）', () => {
-    expect(matchKeyword(baseTxn, '餐饮', ACCOUNTS)).toBe(true)
-  })
-
-  it('命中账户全名片段（搜 Food 命中 Expenses:Food）与账户展示名', () => {
-    expect(matchKeyword(baseTxn, 'Food', ACCOUNTS)).toBe(true)
-    expect(matchKeyword(baseTxn, '银行卡', ACCOUNTS)).toBe(true)
-    // accounts 未加载时仍可搜到全名
-    expect(matchKeyword(baseTxn, 'Assets:Bank', [])).toBe(true)
-  })
-
-  it('命中标签 / 成员各一条', () => {
-    expect(matchKeyword(baseTxn, '聚餐', ACCOUNTS)).toBe(true)
-    expect(matchKeyword(baseTxn, '林小满', ACCOUNTS)).toBe(true)
-  })
-
-  it('大小写不敏感（COFFEE 命中 coffee）', () => {
-    const coffee = makeTxn(
-      2,
-      '2026-11-10',
-      [posting(2, 'Expenses:Food', '9.90')],
-      { description: 'coffee', tags: ['Coffee'] },
-    )
-    expect(matchKeyword(coffee, 'COFFEE', ACCOUNTS)).toBe(true)
-    expect(matchKeyword(coffee, 'coffee', ACCOUNTS)).toBe(true)
-  })
-
-  it('无命中返回 false', () => {
-    expect(matchKeyword(baseTxn, '不存在的词', ACCOUNTS)).toBe(false)
-    expect(matchKeyword(baseTxn, 'xyz', [])).toBe(false)
-  })
-
-  it('纯空白关键词等同空串：返回 true 且不遍历 txn', () => {
-    expect(matchKeyword(baseTxn, '', ACCOUNTS)).toBe(true)
-    expect(matchKeyword(baseTxn, '   ', ACCOUNTS)).toBe(true)
-    // 用 getter 证明「不遍历」：任何 postings 访问都会抛错。
-    const trap = {
-      id: 9,
-      uuid: 'uuid-trap',
-      date: '2026-11-10',
-      flag: '*',
-      description: 'x',
-      created_by_name: '',
-      get postings(): PostingView[] {
-        throw new Error('空关键词不应遍历 postings')
-      },
-    } as unknown as TransactionView
-    expect(matchKeyword(trap, '  ', ACCOUNTS)).toBe(true)
-  })
-
-  it('tags / postings 为空的边界不炸', () => {
-    const bare = makeTxn(3, '2026-11-10', [], { description: '', created_by_name: '' })
-    expect(matchKeyword(bare, '任何词', ACCOUNTS)).toBe(false)
-    expect(matchKeyword(bare, '', ACCOUNTS)).toBe(true)
-
-    const legacy = makeTxn(4, '2026-11-10', [posting(2, 'Expenses:Food', '1.00')], {
-      description: '旧响应',
-    })
-    delete (legacy as { tags?: string[] }).tags
-    expect(matchKeyword(legacy, '旧响应', ACCOUNTS)).toBe(true)
-    expect(matchKeyword(legacy, '不存在', ACCOUNTS)).toBe(false)
   })
 })

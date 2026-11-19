@@ -36,10 +36,9 @@ const TARGETS: readonly NumericTarget[] = [
     selectors: ['.rpt__count', '.rpt__pct', '.rpt__rank-no', '.rpt__member-name small'],
   },
   { file: '../views/LedgersView.vue', selectors: ['.ldg__name small', '.ldg__panel p'] },
-  {
-    file: '../views/TransactionsView.vue',
-    selectors: ['.txn__cal-n', '.txn__cal-e', '.txn__cal-i', '.txn__day'],
-  },
+  // 原「日历格 + 日分组头」落点随旧流水页下线（T38），由账单页日历卡等价承接
+  // （同一类：格内金额、日号、日小计都要等宽，否则列会随数字宽度抖动）。
+  { file: '../components/bill/BillCalendar.vue', selectors: ['.cal__day', '.cal__amount'] },
   // 原「卡头金额行」落点已随 T31 下线，由账单页的日小计行等价承接
   // （同一类：一行里混排日期/标签 + 金额，等宽才能让列不跳动）。
   { file: '../views/BillsView.vue', selectors: ['.bills__group-head'] },

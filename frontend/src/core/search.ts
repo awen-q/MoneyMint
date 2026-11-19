@@ -1,9 +1,11 @@
 /**
  * 搜索页聚合层（B3，纯逻辑）
  *
- * 两个纯函数，喂给搜索页的两块内容：
- * - `summaryByCommodity`：结果集的**分币种**汇总（收入 / 支出 / 笔数）；
- * - `matchKeyword`：关键词**五路**匹配（备注 / 分类名 / 账户名 / 成员 / 标签）。
+ * `summaryByCommodity`：结果集的**分币种**汇总（收入 / 支出 / 笔数）。
+ *
+ * **关键词匹配已不在前端**（T38）：筛选全部下推到服务端（`?q=`），本模块原有的
+ * `matchKeyword` 随 `filters.applyFilters` 一并删除 —— 那份实现没有任何生产
+ * 调用者，留着只会让 review 的人以为前端也在做关键词匹配，从而不去看服务端用例。
  *
  * 口径与 `core/bill.ts`、`core/calendar.ts`、`core/reports.ts` 同源（勿各自演化）：
  *
@@ -24,19 +26,7 @@
  * 与 `api/types` 的类型。
  */
 import { Money } from './Money'
-import { accountLabel, type AccountLabelSource } from './record'
 import type { AccountView, TransactionView } from '../api/types'
-
-/** 关键词匹配所需的最小交易结构（`TransactionView` 与 `FilterableTxn` 都满足）。 */
-export interface KeywordMatchableTxn {
-  description: string
-  created_by_name?: string
-  tags?: string[]
-  postings: Array<{ account_id: number; account?: string }>
-}
-
-/** 关键词匹配所需的最小账户结构（`SummaryAccount` 与 `AccountView` 都满足）。 */
-export type KeywordMatchableAccount = AccountLabelSource & { id: number }
 
 /** 某币种的汇总（各金额均为固定两位定点串）。 */
 export interface CommoditySummary {
@@ -172,75 +162,3 @@ export function summaryByCommodity(
 }
 
 /** 匹配用的归一化：去首尾空白 + 小写。 */
-function normalize(value: string): string {
-  return value.trim().toLowerCase()
-}
-
-function findAccount(
-  accounts: readonly KeywordMatchableAccount[],
-  accountId: number,
-): KeywordMatchableAccount | undefined {
-  for (const account of accounts) {
-    if (account.id === accountId) {
-      return account
-    }
-  }
-  return undefined
-}
-
-/**
- * 关键词五路匹配（备注 / 分类名 / 账户名 / 成员 / 标签）。
- *
- * - 全部 `trim()` + `toLowerCase()` 后 `includes`，**任一路命中即 true**；
- * - **空关键词（含纯空白）直接返回 `true`**（等同无筛选），且**不遍历** txn —— 
- *   让「空串 = 命中全部」成为函数内建语义，调用方只需
- *   `txns.filter((txn) => matchKeyword(txn, kw, accounts))`，无需各处写
- *   `kw === '' || ...`；
- * - 账户名同时匹配**展示名**（`accountLabel`，如「餐饮」）与**Beancount 全名**
- *   （`Expenses:Food:Drink` 与 `account.name`）—— 用户记得的可能是 `Food`
- *   而不是「餐饮」，只匹配展示名会造成「明明有这个账户却搜不到」；
- * - 用 `toLowerCase()` 而非 locale-aware 比较：本项目以中文为主，西文标签受益于
- *   大小写不敏感。**已知局限**：土耳其文 `İ → i̇`、德语 `ß` 不展开；若将来真有多
- *   语言需求，改 `toLocaleLowerCase` / `localeCompare`。
- */
-export function matchKeyword(
-  txn: KeywordMatchableTxn,
-  keyword: string,
-  accounts: readonly KeywordMatchableAccount[],
-): boolean {
-  const needle = normalize(keyword)
-  if (needle === '') {
-    return true
-  }
-  if (normalize(txn.description).indexOf(needle) >= 0) {
-    return true
-  }
-  const member = txn.created_by_name
-  if (typeof member === 'string' && normalize(member).indexOf(needle) >= 0) {
-    return true
-  }
-  if (Array.isArray(txn.tags)) {
-    for (const tag of txn.tags) {
-      if (typeof tag === 'string' && normalize(tag).indexOf(needle) >= 0) {
-        return true
-      }
-    }
-  }
-  for (const posting of txn.postings) {
-    // 展示名优先（accounts 未加载时退化为只有全名，仍可搜到）。
-    const account = findAccount(accounts, posting.account_id)
-    if (account !== undefined) {
-      if (normalize(accountLabel(account)).indexOf(needle) >= 0) {
-        return true
-      }
-      if (normalize(account.name).indexOf(needle) >= 0) {
-        return true
-      }
-    }
-    // `account` 在最小型里是可选（`FilterableTxn` 未约束该字段），必须守卫。
-    if (typeof posting.account === 'string' && normalize(posting.account).indexOf(needle) >= 0) {
-      return true
-    }
-  }
-  return false
-}
