@@ -69,6 +69,7 @@ M7 前端全量重构收官后的首个补丁版本：Vue 3 SPA 取代 Flutter W
 - **在线记账幂等 G-04**（批 1，`814627a` / `4feccaf`）：迁移 013 增 `transactions.client_request_id` + 部分唯一索引，冲突矩阵覆盖 201 / 200 / 两类 409；前端类型化 fetch 客户端含 401 single-flight、428 跳改密、`X-Ledger-Id` 强制断言。
 - **账本主体与口径修正**（批 2 `e018cc0` / 批 2.5 `20fd5d8`）：流水 / 详情 / 回收站 / 账户 / 账户详情 / 分类 / 币种 / 改密 / 待邀请共 11 页；`core/Money` 定点金额、日历与筛选 query 化、CSV 导出、期初与关户守门；批 2.5 按 fava / beancount 双审计裁决对齐口径。
 - **`dist/legacy/` 回滚产物**：Flutter 旧版以 `--base-href /legacy/` 重建后复制，配套 `build-legacy.sh` / `check-legacy.sh` 与 `web-*` 命令族。
+  - （注：`/legacy/` 回滚通道已于批 6 后废弃，见 AGENTS.md §1；本条为历史发布记录，保留原文。）
 
 ### Changed（文档口径收口，2026-11-11）
 
