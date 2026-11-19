@@ -293,30 +293,47 @@ describe('B7-D：错误码映射（弹层不关，用户要看到原因）', () 
 })
 
 describe('B7-E：清空回收站（手输「清空」解锁）', () => {
-  it('deletable=0 时「清空回收站」按钮 disabled', async () => {
-    h.trash.mockResolvedValue(
-      trashResponse([itemFixture({ can_purge: false })], { deletable: 0, system_kept: 1 }),
-    )
-    const wrapper = await mountTrash()
-
-    const btn = buttonByText(wrapper, '清空回收站')
-    expect(btn).toBeTruthy()
-    expect(btn!.attributes('disabled')).toBeDefined()
-    wrapper.unmount()
-  })
-
-  it('editor（全部 can_purge=false，但 deletable>0）：清空入口禁用，点不出弹层', async () => {
-    // deletable 是数据口径（服务端按闭包算，与角色无关），editor 也可能 >0；
-    // 若只看 deletable，按钮会亮着、点下去必然 403。这里钉住「按 can_purge 收紧」。
+  it('editor（全部 can_purge=false，但 deletable>0）：入口与可删计数都**不渲染**，点不出弹层', async () => {
+    // deletable 是数据口径（服务端按闭包算，与角色无关），editor 也可能 >0：
+    //   - 只看 deletable → 按钮亮着、点下去必然 403（死路）；
+    //   - 只禁用按钮、继续显示计数 → 「告诉你可删 N 笔但不给你入口」，仍是死路提示。
+    // 所以入口与计数整块按 hasPurgeable 收起。这里两条都钉住。
     h.trash.mockResolvedValue(
       trashResponse([itemFixture({ can_purge: false })], { deletable: 2 }),
     )
     const wrapper = await mountTrash()
 
-    const btn = buttonByText(wrapper, '清空回收站')
-    expect(btn!.attributes('disabled')).toBeDefined()
-    await btn!.trigger('click')
+    expect(buttonByText(wrapper, '清空回收站')).toBeFalsy()
+    // 用页脚容器断言而不是文本子串："可永久删除" 是 "不可永久删除" 的子串，容易假绿。
+    expect(wrapper.find('.trash__footer').exists()).toBe(false)
     expect(wrapper.find('#trash-purge-confirm').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('owner 但全部被系统保留（can_purge=false 且 deletable=0）：入口与计数同样不渲染', async () => {
+    h.trash.mockResolvedValue(
+      trashResponse([itemFixture({ can_purge: false, is_system: true })], {
+        deletable: 0,
+        system_kept: 1,
+      }),
+    )
+    const wrapper = await mountTrash()
+
+    expect(buttonByText(wrapper, '清空回收站')).toBeFalsy()
+    expect(wrapper.find('.trash__footer').exists()).toBe(false)
+    expect(wrapper.text()).toContain('系统交易 · 不可永久删除')
+    wrapper.unmount()
+  })
+
+  it('审计区块与清空入口互不影响：非 owner 仍能看到「永久删除记录」', async () => {
+    h.trash.mockResolvedValue(
+      trashResponse([itemFixture({ can_purge: false })], { deletable: 2 }, [logFixture()]),
+    )
+    const wrapper = await mountTrash()
+
+    expect(buttonByText(wrapper, '清空回收站')).toBeFalsy()
+    expect(wrapper.text()).toContain('永久删除记录')
+    expect(wrapper.text()).toContain('被永久删除的支出')
     wrapper.unmount()
   })
 
@@ -407,9 +424,8 @@ describe('B7-F：审计区块「永久删除记录」', () => {
     const wrapper = await mountTrash()
 
     expect(wrapper.text()).not.toContain('永久删除记录')
-    // 概览降级为「0 可删」→ 清空入口禁用，不显示「可永久删除 N 笔」。
-    expect(wrapper.text()).not.toContain('可永久删除')
-    expect(buttonByText(wrapper, '清空回收站')!.attributes('disabled')).toBeDefined()
+    // 旧后端既无 purge_summary 也无 can_purge → 没有「我能删」的信号，入口与计数整块不渲染。
+    expect(wrapper.find('.trash__footer').exists()).toBe(false)
     wrapper.unmount()
   })
 })

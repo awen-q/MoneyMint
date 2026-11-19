@@ -57,6 +57,16 @@ const sorted = computed(() =>
 )
 
 /**
+ * 是否至少有一条「服务端说我能删」的记录（= 当前用户是否 owner 且有可删项）。
+ *
+ * 用于把「清空回收站」入口 + 「可永久删除 N 笔」计数**整块**收起：
+ * 非 owner（editor / viewer）下服务端逐条返回 `can_purge=false`，此时若只禁用按钮
+ * 而继续显示计数，等于「告诉你可删 N 笔，但不给你入口」——死路提示，比不显示更差。
+ * 审计区块不受本开关影响（全体成员可见是已定口径）。
+ */
+const hasPurgeable = computed(() => items.value.some((item) => item.can_purge === true))
+
+/**
  * 清空入口可用条件：有可删项 + 当前用户至少有一条 can_purge + 不在忙态。
  *
  * 第二个条件是对定稿「`deletable > 0 && !busy`」的**等价收紧**：
@@ -67,10 +77,7 @@ const sorted = computed(() =>
  * `can_purge === true`（全被系统判定保留时 deletable 就是 0）。
  */
 const canPurgeAll = computed(
-  () =>
-    summary.value.deletable > 0 &&
-    items.value.some((item) => item.can_purge === true) &&
-    !busy.value,
+  () => summary.value.deletable > 0 && hasPurgeable.value && !busy.value,
 )
 
 /** 手输「清空」严等解锁（不做同义词 / 模糊匹配）。 */
@@ -317,7 +324,9 @@ onMounted(() => {
         </li>
       </ul>
 
-      <div class="trash__footer">
+      <!-- 清空入口 + 可删计数整块按 hasPurgeable 收口：非 owner 不渲染入口也不渲染计数
+           （避免「告诉你可删 N 笔但不给你入口」的死路提示）；审计区块不在此开关内。 -->
+      <div v-if="hasPurgeable" class="trash__footer">
         <button
           type="button"
           class="fb-btn-ghost trash__purge-all"
