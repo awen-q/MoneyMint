@@ -451,20 +451,6 @@ function findAccount(
   return undefined
 }
 
-/** postings 中是否含指定类型的账户分录（批 2.5：kind 筛选的分录命中口径）。 */
-export function hasAccountType(
-  postings: PostingLike[],
-  accounts: SummaryAccount[],
-  type: 'Expenses' | 'Income',
-): boolean {
-  for (const posting of postings) {
-    const account = findAccount(accounts, posting.account_id)
-    if (account !== undefined && account.type === type) {
-      return true
-    }
-  }
-  return false
-}
 
 /**
  * 判定一笔交易的整笔启发式类型：

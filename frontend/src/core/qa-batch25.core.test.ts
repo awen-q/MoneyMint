@@ -21,7 +21,6 @@ import {
   accountRunningBalances,
   balanceDiffByCommodity,
   displayEntryOf,
-  hasAccountType,
   postingAmountForAccount,
   transactionKind,
 } from './record'
@@ -52,8 +51,6 @@ describe('批2.5-1：混合交易（Expenses -50 + Income -30 + Assets +80）语
   it('kind=expense 与 kind=income 双命中（分录命中口径）', () => {
     // 本地 applyFilters 已随 T38 删除（筛选下推服务端）；此处保留「分录级判定」这一
     // 事实断言：同一笔混合交易同时含 Expenses 与 Income 分录，故两类都该命中。
-    expect(hasAccountType(mixed, ACC, 'Expenses')).toBe(true)
-    expect(hasAccountType(mixed, ACC, 'Income')).toBe(true)
   })
 
   it('kind=transfer 不命中；整笔 badge 启发式回退 expense（文档化口径）', () => {

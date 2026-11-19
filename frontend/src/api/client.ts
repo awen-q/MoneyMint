@@ -513,8 +513,26 @@ export function formatApiPath(
 
 /** 账户端点（业务端点，必须携带 X-Ledger-Id）。 */
 export const accountApi = {
-  list(): Promise<AccountListResponse> {
-    return api.get<AccountListResponse>(API_ROUTES.accounts)
+  /**
+   * 账户列表。
+   *
+   * **`includeClosed` 默认 `false`**：后端缺省只返未关户账户，7+ 处既有调用
+   * （记账账户选择器、账户管理、分类/币种/设置页等）都依赖这个语义，
+   * 不存在「顺手把它改成 true」的余地——**记账时选到已关户账户**是这条改动
+   * 最坏的后果。
+   *
+   * 需要看到关户账户的只有「资产页 / 账户管理」这类需要完整视图的场景，
+   * 目前由 `ledgerData` 显式传 `true`（store 只给全量原始数据，过滤留页面）。
+   *
+   * @param opts.includeClosed 是否包含已关户账户
+   */
+  list(opts: { includeClosed?: boolean } = {}): Promise<AccountListResponse> {
+    if (opts.includeClosed !== true) {
+      return api.get<AccountListResponse>(API_ROUTES.accounts)
+    }
+    return api.get<AccountListResponse>(API_ROUTES.accounts, {
+      query: { include_closed: '1' },
+    })
   },
   create(body: CreateAccountRequest): Promise<AccountCreated> {
     return api.post<AccountCreated>(API_ROUTES.accounts, body)

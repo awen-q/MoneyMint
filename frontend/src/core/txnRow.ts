@@ -200,7 +200,11 @@ function buildTitle(
  */
 function buildBadges(txn: TransactionView, kind: TransactionKind): TxnRowBadge[] {
   const out: TxnRowBadge[] = []
-  // reversal 组：三选一。
+  // reversal 组：三选一，**组内互斥**（`已冲正` 优先于 `冲正`）。
+  // 为什么已冲正优先：一笔已作废的交易，最需要被看到的是「它作废了」；
+  // 「它当初是冲正来的」是次要信息（详情页有 reversal_of 链接可查）。
+  // 这条注明是为了挡住后人「顺手改成两条都出」——两组是独立维度（reversal 组 ×
+  // kind 组），组内不是。
   if ((txn.reversed_by ?? '') !== '') {
     out.push({ label: '已冲正', tone: 'reversal' })
   } else if ((txn.reversal_of ?? '') !== '') {
