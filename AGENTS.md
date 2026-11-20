@@ -309,7 +309,7 @@ python -m pip install beancount    # 激活 .venv 后执行
 8. **61 个提交未 push**（`develop` ahead `origin/develop`）：CI `web-verify`（966/99 双下限）、Dockerfile Node 构建、`check:bundle` 体积门禁都还没在 GitHub runner 上首跑，别把本地全绿当成已验。**注意 B7 要求单独上线**：push 后先把前端 commit 留在本地或回退入口露出，别让 B1~B6 与 B7 混发。
 9. 下期（M4+）：OFX/CSV 自动导入、Beancount 子集外通用语法（cost 注解 / 价格指令等）、价格 CRUD、规则引擎、Postgres 横向扩展。0.6.0 的遗留实现细节与开放项以交付包内产品文档的留档为准（N-12）。
 
-> 旧版功能在新版**一律 Must，不得降级**：CSV 导出、分类拖拽排序、导出不平告警、注册开关、默认账户管理详见方案 §14.5。
+> 旧版功能在新版**一律 Must，不得降级**：CSV 导出、分类拖拽排序、导出不平告警、注册开关、默认账户管理。
 
 ---
 

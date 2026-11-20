@@ -131,7 +131,7 @@ describe('emptyAssetSeries', () => {
 })
 
 /**
- * 稿子真实数据（`docs/reports-redesign-mockup/assets/app.js:255-263` 的 `ASSET_SNAP[2026]`）。
+ * 稿子真实数据（原 v4.1 效果图 `ASSET_SNAP[2026]`，设计稿已随交付清退）。
  *
  * 原始表是「分」：`a` = 月末总资产（分，正），`l` = 月末负债（分，**正数存储**；
  * 端点契约里 liabilities 是**负数**，所以下面取负号）。有一个负净资产月
