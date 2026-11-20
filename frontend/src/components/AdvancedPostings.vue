@@ -13,9 +13,12 @@ import { formatAmount, Money } from '@/core/Money'
 import {
   accountLabel,
   advancedRowsReady,
+  amountDirection,
   balanceDiffByCommodity,
   balanceGroups,
+  magnitudeOf,
   resolveAccountCommodity,
+  signAmount,
   type AdvancedRow,
   type BalanceGroup,
   type PostingView,
@@ -53,7 +56,8 @@ watch(
 function cloneRows(rows: ReadonlyArray<AdvancedRow>): AdvancedRow[] {
   return rows.map((row) => ({
     accountId: row.accountId,
-    amount: row.amount,
+    // 边界归一化：旧草稿 / 异常后端数据可能带来非 string，统一成合法定点串形状。
+    amount: typeof row.amount === 'string' ? row.amount : '',
     commodity: row.commodity === undefined || row.commodity === '' ? '' : row.commodity,
   }))
 }
@@ -132,8 +136,32 @@ function onAmountChange(index: number, event: Event): void {
   if (row === undefined) {
     return
   }
-  row.amount = (event.target as HTMLInputElement).value
+  const target = event.target as HTMLInputElement
+  const raw = typeof target.value === 'string' ? target.value : ''
+  // 兼容粘贴/测试里的带符号输入：显式负号优先决定方向；否则沿用当前方向。
+  // 金额框只负责幅值，符号由方向赋予，故必须先剥掉输入里的 +/-。
+  const dir = raw.trim().startsWith('-') ? 'credit' : amountDirection(row.amount)
+  row.amount = signAmount(dir, raw)
   commit()
+}
+
+/** 借贷 Toggle：保留幅值，按所选方向重新赋号。 */
+function onDirectionChange(index: number, dir: 'debit' | 'credit'): void {
+  const row = localRows.value[index]
+  if (row === undefined) {
+    return
+  }
+  row.amount = signAmount(dir, magnitudeOf(row.amount))
+  commit()
+}
+
+/** ＋/− 翻转：等价快捷切换借贷方向。 */
+function onFlipDirection(index: number): void {
+  const row = localRows.value[index]
+  if (row === undefined) {
+    return
+  }
+  onDirectionChange(index, amountDirection(row.amount) === 'debit' ? 'credit' : 'debit')
 }
 
 function onCommodityChange(index: number, event: Event): void {
@@ -201,44 +229,85 @@ defineExpose({ canSubmit, addRow, removeRow, autoBalance })
 
     <div class="js-advrows">
       <div v-for="(row, index) in localRows" :key="index" class="adv-row rs-adv-row" :data-row="index">
-        <select
-          :value="row.accountId === null ? '' : String(row.accountId)"
-          :aria-label="`第 ${index + 1} 行账户`"
-          data-rf="acc"
-          @change="onAccountChange(index, $event)"
-        >
-          <option value="">选择账户…</option>
-          <option v-for="account in accounts" :key="account.id" :value="String(account.id)">
-            {{ accountLabel(account) }} · {{ account.name }}
-          </option>
-        </select>
-        <input
-          type="text"
-          inputmode="decimal"
-          :value="row.amount"
-          :aria-label="`第 ${index + 1} 行金额`"
-          data-rf="amt"
-          placeholder="0.00"
-          @input="onAmountChange(index, $event)"
-          @change="onAmountChange(index, $event)"
-        />
-        <select
-          class="row-cur"
-          :value="row.commodity"
-          :aria-label="`第 ${index + 1} 行币种`"
-          data-rf="cur"
-          @change="onCommodityChange(index, $event)"
-        >
-          <option v-for="code in commodities" :key="code" :value="code">{{ code }}</option>
-        </select>
-        <button
-          type="button"
-          class="adv-remove"
-          :aria-label="`删除第 ${index + 1} 行`"
-          data-act="remove-row"
-          :data-row="index"
-          @click="removeRow(index)"
-        >✕</button>
+        <div class="row-top">
+          <select
+            :value="row.accountId === null ? '' : String(row.accountId)"
+            :aria-label="`第 ${index + 1} 行账户`"
+            data-rf="acc"
+            @change="onAccountChange(index, $event)"
+          >
+            <option value="">选择账户…</option>
+            <option v-for="account in accounts" :key="account.id" :value="String(account.id)">
+              {{ accountLabel(account) }} · {{ account.name }}
+            </option>
+          </select>
+          <button
+            type="button"
+            class="adv-remove"
+            :aria-label="`删除第 ${index + 1} 行`"
+            data-act="remove-row"
+            :data-row="index"
+            @click="removeRow(index)"
+          >✕</button>
+        </div>
+        <div class="row-bottom">
+          <div class="dir-toggle" role="group" :aria-label="`第 ${index + 1} 行借贷方向`">
+            <button
+              type="button"
+              class="seg debit"
+              :class="{ on: amountDirection(row.amount) === 'debit' }"
+              :aria-pressed="amountDirection(row.amount) === 'debit'"
+              data-rf="dir"
+              data-dir="debit"
+              @click="onDirectionChange(index, 'debit')"
+            >借</button>
+            <button
+              type="button"
+              class="seg credit"
+              :class="{ on: amountDirection(row.amount) === 'credit' }"
+              :aria-pressed="amountDirection(row.amount) === 'credit'"
+              data-rf="dir"
+              data-dir="credit"
+              @click="onDirectionChange(index, 'credit')"
+            >贷</button>
+          </div>
+          <div class="amt-box">
+            <span
+              class="sign-hint"
+              :class="{ neg: amountDirection(row.amount) === 'credit' }"
+              data-rf="sign"
+              aria-hidden="true"
+            >{{ amountDirection(row.amount) === 'debit' ? '+' : '−' }}</span>
+            <input
+              type="text"
+              inputmode="decimal"
+              :value="magnitudeOf(row.amount)"
+              :aria-label="`第 ${index + 1} 行金额（正数）`"
+              data-rf="amt"
+              placeholder="0.00"
+              @input="onAmountChange(index, $event)"
+              @change="onAmountChange(index, $event)"
+            />
+          </div>
+          <button
+            type="button"
+            class="signflip"
+            :aria-label="`翻转第 ${index + 1} 行借贷方向`"
+            title="正负翻转（切换借贷方向）"
+            data-act="flip"
+            :data-row="index"
+            @click="onFlipDirection(index)"
+          >＋/−</button>
+          <select
+            class="row-cur"
+            :value="row.commodity"
+            :aria-label="`第 ${index + 1} 行币种`"
+            data-rf="cur"
+            @change="onCommodityChange(index, $event)"
+          >
+            <option v-for="code in commodities" :key="code" :value="code">{{ code }}</option>
+          </select>
+        </div>
       </div>
     </div>
 
@@ -344,6 +413,9 @@ defineExpose({ canSubmit, addRow, removeRow, autoBalance })
   color: var(--fb-brand);
   font-size: 11.5px;
   cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  line-height: 1.2;
 }
 
 .g-note {
@@ -354,23 +426,41 @@ defineExpose({ canSubmit, addRow, removeRow, autoBalance })
 }
 
 .adv-row {
+  margin-top: 8px;
+  padding: 9px;
+  border: 1px solid var(--fb-line);
+  border-radius: 12px;
+  background: var(--fb-card);
+}
+
+/* 两行 grid：上行账户+删除，下行 Toggle+金额+翻转+币种（与批准效果图一致） */
+.row-top {
   display: grid;
-  grid-template-columns: 1fr 92px 62px 44px;
+  grid-template-columns: minmax(0, 1fr) 44px;
   gap: 6px;
   align-items: center;
-  margin-top: 8px;
+}
+
+.row-bottom {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) 44px 68px;
+  gap: 6px;
+  align-items: center;
+  margin-top: 7px;
 }
 
 .adv-row select,
 .adv-row input {
-  min-height: 44px;
+  min-height: 46px;
   width: 100%;
   padding: 0 7px;
   border: 1.5px solid var(--fb-line);
   border-radius: var(--fb-radius-input);
   background: var(--fb-card);
   color: var(--fb-ink);
-  font-size: 11.5px;
+  font-family: inherit;
+  /* ★ 防 iOS 聚焦缩放：computed font-size <16px 会整页放大 */
+  font-size: 16px;
 }
 
 .adv-row input {
@@ -382,18 +472,147 @@ defineExpose({ canSubmit, addRow, removeRow, autoBalance })
 .adv-row .row-cur {
   min-width: 0;
   font-family: var(--fb-font-mono);
-  font-size: 11px;
+  font-size: 16px;
+}
+
+/* 借/贷分段 Toggle：借=正、贷=负，与 core/record.amountDirection 同源。
+   iOS/WebKit 下 flex:1 对 button 元素会按内容固有宽度分配，选中色块缩在格子左侧；
+   改用 Grid 两等分显式列宽，列宽计算不再依赖 button 的 flex 固有尺寸。 */
+.dir-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-height: 46px;
+  padding: 3px;
+  gap: 2px;
+  border: 1.5px solid var(--fb-line);
+  border-radius: var(--fb-radius-input);
+  background: var(--fb-soft);
+}
+
+.dir-toggle .seg {
+  /* 显式钉死几何：撑满 grid 单元并清掉 button UA 默认内边距/外边距，
+     绕开 iOS/WebKit 对 button 固有宽度的私有渲染行为。 */
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fb-sub);
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 800;
+  cursor: pointer;
+  /* iOS Safari 默认给 button 套 -webkit-appearance:button（原生内边距/圆角/渐变），
+     显式清掉并固定行高，Chrome/iOS 表现一致。 */
+  appearance: none;
+  -webkit-appearance: none;
+  line-height: 1.2;
+}
+
+.dir-toggle .seg.debit.on {
+  background: var(--fb-brand);
+  color: var(--fb-white);
+}
+
+.dir-toggle .seg.credit.on {
+  background: var(--fb-seal);
+  color: var(--fb-white);
+}
+
+/* 金额框组：符号提示（自动赋号）+ 只填正数的 input */
+.amt-box {
+  display: flex;
+  align-items: center;
+  min-height: 46px;
+  border: 1.5px solid var(--fb-line);
+  border-radius: var(--fb-radius-input);
+  background: var(--fb-card);
+  overflow: hidden;
+}
+
+.amt-box:focus-within {
+  border-color: var(--fb-brand);
+}
+
+.sign-hint {
+  flex: 0 0 30px;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-right: 1px solid var(--fb-line);
+  color: var(--fb-green);
+  background: var(--fb-green-soft);
+  font-family: var(--fb-font-mono);
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.sign-hint.neg {
+  color: var(--fb-danger);
+  background: var(--fb-danger-soft);
+}
+
+.amt-box input {
+  min-height: 44px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* ＋/− 翻转：等价快捷切换借贷方向 */
+.signflip {
+  /* 与 .seg 同类的 grid 单元按钮：显式撑满居中，避免 iOS 靠内容宽度贴边。
+     字号 / 触控高度 / 配色保持不变。 */
+  width: 100%;
+  height: 100%;
+  min-width: 44px;
+  min-height: 46px;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--fb-warn);
+  border-radius: var(--fb-radius-input);
+  background: var(--fb-warn-soft);
+  color: var(--fb-warn-ink);
+  font-family: var(--fb-font-mono);
+  font-size: 16px;
+  font-weight: 800;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  line-height: 1.2;
 }
 
 .adv-remove {
+  /* 同上：44px grid 列内显式撑满居中，不改字号 / 触控 / 颜色。 */
+  width: 100%;
+  height: 100%;
   min-width: 44px;
-  min-height: 44px;
+  min-height: 46px;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border: 1px solid var(--fb-line);
   border-radius: var(--fb-radius-input);
   background: var(--fb-card);
   color: var(--fb-danger);
-  font-size: 12px;
+  font-size: 16px;
   cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  line-height: 1.2;
 }
 
 .add-row,
@@ -407,6 +626,9 @@ defineExpose({ canSubmit, addRow, removeRow, autoBalance })
   color: var(--fb-brand);
   font-size: 11.5px;
   cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  line-height: 1.2;
 }
 
 .auto-row {
@@ -465,8 +687,8 @@ defineExpose({ canSubmit, addRow, removeRow, autoBalance })
 }
 
 @media (max-width: 380px) {
-  .adv-row {
-    grid-template-columns: 1fr 78px 56px 40px;
+  .row-bottom {
+    grid-template-columns: 64px minmax(0, 1fr) 44px 58px;
     gap: 4px;
   }
 }

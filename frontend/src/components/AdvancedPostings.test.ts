@@ -172,3 +172,119 @@ describe('AdvancedPostings：编辑态冲正口径', () => {
     wrapper.unmount()
   })
 })
+
+describe('AdvancedPostings：借贷方向 Toggle / 翻转 / 带符号往返（v2）', () => {
+  it('点「贷」→ emit 带符号 amount，金额框只显示正数、符号提示为 −', async () => {
+    const { wrapper } = mountRows(rows([[3, '38.50', 'CNY'], [1, '-38.50', 'CNY']]))
+    const credit = wrapper.findAll('.adv-row')[0].find('[data-dir="credit"]')
+    expect(credit.attributes('aria-pressed')).toBe('false')
+    await credit.trigger('click')
+    await flushPromises()
+
+    const next = (wrapper.emitted('update:rows')?.[0]?.[0] ?? []) as AdvancedRow[]
+    expect(next[0].amount).toBe('-38.50')
+    const row = wrapper.findAll('.adv-row')[0]
+    expect((row.find('[data-rf="amt"]').element as HTMLInputElement).value).toBe('38.50')
+    expect(row.find('.sign-hint').text()).toBe('−')
+    expect(row.find('[data-rf="amt"]').attributes('inputmode')).toBe('decimal')
+    wrapper.unmount()
+  })
+
+  it('点「＋/−」→ 方向翻转，38.50 ⇄ -38.50 往返一致', async () => {
+    const { wrapper } = mountRows(rows([[3, '38.50', 'CNY'], [1, '-38.50', 'CNY']]))
+    await wrapper.findAll('.adv-row')[0].find('[data-act="flip"]').trigger('click')
+    let next = (wrapper.emitted('update:rows')?.slice(-1)[0]?.[0] ?? []) as AdvancedRow[]
+    expect(next[0].amount).toBe('-38.50')
+
+    await wrapper.findAll('.adv-row')[0].find('[data-act="flip"]').trigger('click')
+    next = (wrapper.emitted('update:rows')?.slice(-1)[0]?.[0] ?? []) as AdvancedRow[]
+    expect(next[0].amount).toBe('38.50')
+    wrapper.unmount()
+  })
+
+  it('粘贴带符号 -38.50 → 方向自动变贷，amount 保持带负号', async () => {
+    const { wrapper } = mountRows(rows([[3, '38.50', 'CNY'], [1, '-38.50', 'CNY']]))
+    await wrapper.findAll('.adv-row')[0].find('[data-rf="amt"]').setValue('-38.50')
+    await flushPromises()
+
+    const next = (wrapper.emitted('update:rows')?.slice(-1)[0]?.[0] ?? []) as AdvancedRow[]
+    expect(next[0].amount).toBe('-38.50')
+    const row = wrapper.findAll('.adv-row')[0]
+    expect(row.find('.sign-hint').text()).toBe('−')
+    expect(row.find('[data-dir="credit"]').attributes('aria-pressed')).toBe('true')
+    wrapper.unmount()
+  })
+
+  it('编辑态 + 负 amount：无「返回简化模式」且方向显示贷', () => {
+    const { wrapper } = mountRows(rows([[3, '-38.50', 'CNY'], [1, '38.50', 'CNY']]), true)
+    expect(wrapper.find('[data-act="back-simple"]').exists()).toBe(false)
+    const row = wrapper.findAll('.adv-row')[0]
+    expect(row.find('.sign-hint').text()).toBe('−')
+    expect(row.find('[data-dir="credit"]').attributes('aria-pressed')).toBe('true')
+    wrapper.unmount()
+  })
+
+  it('magnitude 保真：输入 `12.` 原样写入 amount，不被规范化', async () => {
+    const { wrapper } = mountRows(rows([[3, '0.00', 'CNY'], [1, '0.00', 'CNY']]))
+    await wrapper.findAll('.adv-row')[0].find('[data-rf="amt"]').setValue('12.')
+    await flushPromises()
+
+    const next = (wrapper.emitted('update:rows')?.slice(-1)[0]?.[0] ?? []) as AdvancedRow[]
+    expect(next[0].amount).toBe('12.')
+    expect(
+      (wrapper.findAll('.adv-row')[0].find('[data-rf="amt"]').element as HTMLInputElement).value,
+    ).toBe('12.')
+    wrapper.unmount()
+  })
+})
+
+describe('AdvancedPostings：新增分录空值不崩溃', () => {
+  it('新增行清空金额 → emit 空串（非裸 "-"），输入框为空且 canSubmit=false', async () => {
+    const { wrapper } = mountRows(rows([[3, '38.50', 'CNY'], [1, '-38.50', 'CNY']]))
+    await wrapper.find('[data-act="add-row"]').trigger('click')
+    await flushPromises()
+    await wrapper.findAll('.adv-row')[2].find('[data-rf="amt"]').setValue('')
+    await flushPromises()
+
+    const next = (wrapper.emitted('update:rows')?.slice(-1)[0]?.[0] ?? []) as AdvancedRow[]
+    expect(next[2].amount).toBe('')
+    expect(
+      (wrapper.findAll('.adv-row')[2].find('[data-rf="amt"]').element as HTMLInputElement).value,
+    ).toBe('')
+    expect(canSubmitOf(wrapper)).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('新增行清空金额后再点「贷」→ amount 仍为空串，不写入非法裸 "-"', async () => {
+    const { wrapper } = mountRows(rows([[3, '38.50', 'CNY'], [1, '-38.50', 'CNY']]))
+    await wrapper.find('[data-act="add-row"]').trigger('click')
+    await flushPromises()
+    await wrapper.findAll('.adv-row')[2].find('[data-rf="amt"]').setValue('')
+    await flushPromises()
+    await wrapper.findAll('.adv-row')[2].find('[data-dir="credit"]').trigger('click')
+    await flushPromises()
+
+    const next = (wrapper.emitted('update:rows')?.slice(-1)[0]?.[0] ?? []) as AdvancedRow[]
+    expect(next[2].amount).toBe('')
+    expect(
+      (wrapper.findAll('.adv-row')[2].find('[data-rf="amt"]').element as HTMLInputElement).value,
+    ).toBe('')
+    expect(canSubmitOf(wrapper)).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('旧草稿 amount=undefined → 边界归一化为空串，渲染不抛 TypeError', () => {
+    const broken = [
+      { accountId: 1, amount: undefined as unknown as string, commodity: 'CNY' },
+      { accountId: 3, amount: '1.00', commodity: 'CNY' },
+    ]
+    const wrapper = mount(AdvancedPostings, {
+      props: { rows: broken, accounts: ACCOUNTS, commodities: ['CNY', 'USD'], bean: '预览' },
+    })
+    expect(
+      (wrapper.findAll('.adv-row')[0].find('[data-rf="amt"]').element as HTMLInputElement).value,
+    ).toBe('')
+    expect(canSubmitOf(wrapper)).toBe(false)
+    wrapper.unmount()
+  })
+})

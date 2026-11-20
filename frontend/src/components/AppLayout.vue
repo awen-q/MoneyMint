@@ -216,9 +216,23 @@ function goChangePassword(): void {
 
 /* ---------- 断点 900（LO-04：由 1024 下调，消除 769–1023 的空白带） ---------- */
 @media (min-width: 900px) {
+  /* PC：侧栏锁视口、只有主区内容滚动。用 100vh 不用 --vvh（避免与弹窗键盘机制耦合）；
+     tokens.css 明令禁止 100dvh（Safari 14.1 首帧为 0）。 */
+  .layout {
+    height: 100vh;
+    min-height: 0; /* 覆盖基础 min-height:100vh，否则仍被内容撑高 */
+    overflow: hidden; /* 阻断整页滚动链 */
+  }
+  .layout__main {
+    min-height: 0; /* flex 子项默认 min-height:auto，必须归零才能出现内滚动条 */
+  }
+
   /* X-02：PC 内边距对齐设计 `.page`（`26px 28px`）。移动端保持 16px ——
      四页视图内部已把自带横向 margin 归零，标题与卡片左边界因此对齐。 */
   .layout__content {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     padding: 26px 28px;
     padding-bottom: 24px;
   }

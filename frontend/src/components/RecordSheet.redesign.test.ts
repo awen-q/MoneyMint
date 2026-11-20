@@ -8,6 +8,9 @@
  * - 主操作全局唯一、无「取消」、不平衡禁保存（含 disabled 原生派发守门）；
  * - --vvh / body.kbd-open 监听在 unmount 后成对清理。
  */
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 
@@ -384,6 +387,36 @@ describe('形态与键盘避让的副作用清理', () => {
     wrapper.unmount()
     expect(document.body.classList.contains('kbd-open')).toBe(false)
     expect(document.documentElement.style.getPropertyValue('--vvh')).toBe('')
+  })
+
+  it('键盘态选择器覆盖高级金额框 data-rf="amt"，且三处判定共用同一常量', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/components/RecordSheet.vue'), 'utf8')
+    // 常量同时纳入简化态 inp-text 与高级态金额框钩子。
+    expect(source).toMatch(/input\.inp-text, textarea\.inp-text, input\[data-rf='amt'\]/)
+    // onFocusIn / onFocusOut / openKeypad 反向互斥必须共用常量，防止任一处漏改再度脱节。
+    expect(source.match(/matches\(SYSTEM_KEYBOARD_TARGET\)/g) ?? []).toHaveLength(3)
+    expect(source).not.toMatch(/matches\(['"]input\.inp-text, textarea\.inp-text['"]\)/)
+  })
+
+  it('高级录入金额框聚焦进入键盘态、失焦退出（跨子组件冒泡）', async () => {
+    // focusin 监听挂在 document 上，VTU 默认游离节点无法冒泡，必须 attachTo。
+    const wrapper = mount(RecordSheet, { attachTo: document.body })
+    await flushPromises()
+    const toggle = wrapper.findAll('button').find((button) => button.text().includes('高级模式'))
+    expect(toggle, '高级模式切换按钮不存在').toBeDefined()
+    await toggle!.trigger('click')
+    await flushPromises()
+
+    const amtInput = wrapper.find('input[data-rf="amt"]')
+    expect(amtInput.exists(), '高级金额框不存在').toBe(true)
+    expect(document.body.classList.contains('kbd-open')).toBe(false)
+
+    amtInput.element.dispatchEvent(new Event('focusin', { bubbles: true }))
+    expect(document.body.classList.contains('kbd-open')).toBe(true)
+    amtInput.element.dispatchEvent(new Event('focusout', { bubbles: true }))
+    expect(document.body.classList.contains('kbd-open')).toBe(false)
+
+    wrapper.unmount()
   })
 })
 

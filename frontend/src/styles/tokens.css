@@ -49,6 +49,8 @@
   --fb-sidebar: #20352c;
   --fb-side-fg: #d8d2c3;
   --fb-side-head: #9a9c8c;
+  /* 侧栏宽度：ShellSidebar 与 RecordSheet PC 居中基准共用，消除两处 232px 硬编码漂移 */
+  --fb-sidebar-w: 232px;
 
   /* 渐变（首页 hero，11 个 fb-hero View 共用；逐字取作用域现成值） */
   --fb-hero-gradient: linear-gradient(150deg, #1f332c 0%, #2f5d4e 58%, #3f735e 100%);

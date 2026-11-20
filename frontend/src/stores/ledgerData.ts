@@ -24,6 +24,7 @@ import { accountApi, transactionApi } from '@/api/client'
 import { ApiError } from '@/api/errors'
 import type { AccountView, TransactionView } from '@/api/types'
 import { useSessionStore } from '@/stores/session'
+import { useRecordSheetStore } from '@/stores/recordSheet'
 
 /** 加载失败的兜底文案（与现网页面口径一致；ApiError 自带文案优先）。 */
 const DEFAULT_LOAD_ERROR = '账本数据加载失败，请重试'
@@ -45,6 +46,8 @@ function messageOf(err: unknown): string {
 
 export const useLedgerDataStore = defineStore('ledgerData', () => {
   const session = useSessionStore()
+  /** 保存成功信号来源（新建 notifySaved / 编辑 notifyChanged）；此处单向依赖，不反向引用。 */
+  const sheet = useRecordSheetStore()
 
   /** 当前账本的账户全量快照。 */
   const accounts: Ref<AccountView[]> = ref<AccountView[]>([])
@@ -180,6 +183,17 @@ export const useLedgerDataStore = defineStore('ledgerData', () => {
     () => {
       reset()
       void ensure()
+    },
+  )
+
+  // 保存成功（记一笔 / 修改交易）使内存快照失效：视图只在 onMounted 调 ensure()，
+  // 而 ensure() 在 loaded === true 时短路，若不在此处失效，返回列表/报表仍显示旧数据。
+  // 刻意不用 immediate：首次加载仍走视图的 ensure()，避免创建 store 就多打一次 reload。
+  // reload() 自带 stale-while-revalidate（loaded 不置 false），刷新期间旧快照继续可见。
+  watch(
+    () => sheet.savedEpoch,
+    () => {
+      void reload()
     },
   )
 

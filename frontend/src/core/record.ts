@@ -80,6 +80,48 @@ export interface AdvancedRow {
   commodity: string
 }
 
+/**
+ * 带符号金额串 → 借贷方向：非负=借(debit)，负=贷(credit)；非法值按借兜底。
+ *
+ * 与 PostingView.isDebit 同源（都看 Money.isNegative），供高级录入 UI 派生
+ * Toggle 方向；方向是 UI 状态，不进 AdvancedRow、不落库。
+ */
+export function amountDirection(amount: string): 'debit' | 'credit' {
+  // 非 string / 空串都按借兜底：草稿恢复或后端异常数据可能带来 undefined，
+  // 不能让 UI 在读取方向时抛 TypeError（Money.from 内部会调 .trim()）。
+  if (typeof amount !== 'string' || amount.trim() === '') {
+    return 'debit'
+  }
+  try {
+    return Money.from(amount).isNegative() ? 'credit' : 'debit'
+  } catch {
+    return 'debit'
+  }
+}
+
+/**
+ * 方向 + 正数文本 → AdvancedRow.amount（唯一写入口；剥掉输入里的 +/-）。
+ *
+ * 硬约束：返回值**永远是合法 string**——空幅值（含纯符号 `-` / `--` 输入）
+ * 归一为空串，绝不产生裸符号串。裸 `-` 曾是页面崩溃源：它经由 bean 预览的
+ * Money.from 抛出 RangeError，使 RecordSheet 整棵组件树渲染失败。
+ * 合法输入的文本形态（如 `12.` / `-0.00`）原样保留，不影响往返恒等。
+ */
+export function signAmount(dir: 'debit' | 'credit', magnitude: string): string {
+  const raw = typeof magnitude === 'string' ? magnitude : ''
+  // 连续剥掉前导 +/-：幅值框只收正数，用户粘贴的带符号值由本函数统一赋号。
+  const mag = raw.trim().replace(/^[+-]+/, '')
+  if (mag === '') {
+    return ''
+  }
+  return dir === 'credit' ? `-${mag}` : mag
+}
+
+/** 带符号串 → 正数显示文本（保真输入，如 `12.` 不改写成 `12.0`；非 string 兜底空串）。 */
+export function magnitudeOf(amount: string): string {
+  return typeof amount === 'string' ? amount.replace(/^[+-]/, '') : ''
+}
+
 /** 分录展示行：真实导出名 + 中文 DisplayName + 借贷徽标（仅 UI，Beancount 无借贷字段）。 */
 export interface PostingView {
   account: SummaryAccount

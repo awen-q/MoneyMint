@@ -15,7 +15,9 @@ import { nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 
 import { ApiError } from '@/api/errors'
+import type { TransactionCreateResult } from '@/api/client'
 import { useLedgerDataStore } from '@/stores/ledgerData'
+import { useRecordSheetStore } from '@/stores/recordSheet'
 import { useSessionStore } from '@/stores/session'
 import type {
   AccountListResponse,
@@ -385,5 +387,126 @@ describe('ledgerData：切账本自动重建', () => {
     expect(data.accounts[0].name).toBe('账本二银行')
     expect(data.txns[0].id).toBe(2)
     expect(data.loading).toBe(false)
+  })
+})
+
+describe('ledgerData：保存成功自动失效（savedEpoch 订阅）', () => {
+  it('首次创建 store 不因 savedEpoch watch 立即 reload（非 immediate，首次仍走 ensure）', async () => {
+    h.accountList.mockResolvedValue(accountRes([makeAccount(1, 'Assets:Bank')]))
+    h.txnList.mockResolvedValue(txnRes([makeTxn(1)]))
+
+    const session = useSessionStore()
+    session.ledgerId = 1
+    const data = useLedgerDataStore()
+
+    // 只创建、不调 ensure：若 savedEpoch watch 误加 immediate，此处会多发一次 reload 请求。
+    await settle()
+    expect(h.accountList).not.toHaveBeenCalled()
+    expect(h.txnList).not.toHaveBeenCalled()
+    expect(data.loaded).toBe(false)
+  })
+
+  it('notifyChanged / notifySaved 推进 savedEpoch 触发二次全量拉取，txns 更新为新数据', async () => {
+    h.accountList.mockResolvedValue(accountRes([makeAccount(1, 'Assets:Bank')]))
+    h.txnList.mockResolvedValue(txnRes([makeTxn(7)]))
+
+    const session = useSessionStore()
+    session.ledgerId = 1
+    const data = useLedgerDataStore()
+    await data.ensure()
+    expect(data.txns[0].id).toBe(7)
+
+    // 编辑态：notifyChanged
+    h.txnList.mockResolvedValue(txnRes([makeTxn(7), makeTxn(8)]))
+    useRecordSheetStore().notifyChanged()
+    await settle()
+    expect(h.accountList).toHaveBeenCalledTimes(2)
+    expect(h.txnList).toHaveBeenCalledTimes(2)
+    expect(data.txns).toHaveLength(2)
+    expect(data.txns[1].id).toBe(8)
+    expect(data.loaded).toBe(true)
+    expect(data.error).toBe('')
+
+    // 新建态：notifySaved
+    h.txnList.mockResolvedValue(txnRes([makeTxn(7), makeTxn(8), makeTxn(9)]))
+    useRecordSheetStore().notifySaved({} as TransactionCreateResult)
+    await settle()
+    expect(h.accountList).toHaveBeenCalledTimes(3)
+    expect(data.txns).toHaveLength(3)
+    expect(data.txns[2].id).toBe(9)
+  })
+
+  it('savedEpoch 触发的刷新期间 loaded 保持 true、旧 txns 不被清空（stale-while-revalidate）', async () => {
+    h.accountList.mockResolvedValue(accountRes([makeAccount(1, 'Assets:Bank')]))
+    h.txnList.mockResolvedValue(txnRes([makeTxn(7)]))
+
+    const session = useSessionStore()
+    session.ledgerId = 1
+    const data = useLedgerDataStore()
+    await data.ensure()
+
+    const slowAccount = deferred<AccountListResponse>()
+    const slowTxn = deferred<TransactionListResponse>()
+    h.accountList.mockReturnValueOnce(slowAccount.promise)
+    h.txnList.mockReturnValueOnce(slowTxn.promise)
+
+    useRecordSheetStore().notifyChanged()
+    await nextTick()
+
+    // 刷新中：loading 为真但 loaded 不变、旧快照仍在，页面不会误判成首屏骨架。
+    expect(data.loading).toBe(true)
+    expect(data.loaded).toBe(true)
+    expect(data.txns).toHaveLength(1)
+    expect(data.txns[0].id).toBe(7)
+
+    slowAccount.resolve(accountRes([makeAccount(1, 'Assets:Bank')]))
+    slowTxn.resolve(txnRes([makeTxn(8)]))
+    await settle()
+
+    expect(data.loading).toBe(false)
+    expect(data.loaded).toBe(true)
+    expect(data.txns[0].id).toBe(8)
+  })
+
+  it('savedEpoch 触发的重载失败：error 有文案、不 throw、旧快照保留，再推进可重试成功', async () => {
+    h.accountList.mockResolvedValue(accountRes([makeAccount(1, 'Assets:Bank')]))
+    h.txnList.mockResolvedValue(txnRes([makeTxn(7)]))
+
+    const session = useSessionStore()
+    session.ledgerId = 1
+    const data = useLedgerDataStore()
+    await data.ensure()
+
+    h.accountList.mockRejectedValueOnce(new ApiError(503, '服务暂时不可用'))
+    useRecordSheetStore().notifyChanged()
+    await settle()
+
+    expect(data.error).toBe('服务暂时不可用')
+    expect(data.loaded).toBe(true)
+    expect(data.txns).toHaveLength(1)
+    expect(data.txns[0].id).toBe(7)
+    expect(data.loading).toBe(false)
+
+    // 失败不缓存 pending：再推进一次应重新发请求并成功。
+    h.accountList.mockResolvedValue(accountRes([makeAccount(1, 'Assets:Bank')]))
+    h.txnList.mockResolvedValue(txnRes([makeTxn(9)]))
+    useRecordSheetStore().notifyChanged()
+    await settle()
+
+    expect(h.accountList).toHaveBeenCalledTimes(3)
+    expect(data.error).toBe('')
+    expect(data.txns[0].id).toBe(9)
+  })
+
+  it('无账本态推进 savedEpoch：不发请求，走既有「尚未选择账本」分支', async () => {
+    const data = useLedgerDataStore()
+
+    useRecordSheetStore().notifyChanged()
+    await settle()
+
+    expect(h.accountList).not.toHaveBeenCalled()
+    expect(h.txnList).not.toHaveBeenCalled()
+    expect(data.error).toBe('尚未选择账本')
+    expect(data.loaded).toBe(false)
   })
 })

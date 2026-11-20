@@ -2,7 +2,7 @@
 /**
  * C-01 记一笔（最终稿：H5 全屏暖纸账本 + Beancount 双录）
  *
- * - 形态：CSS 断点决定 <1024 全屏 H5 / >=1024 居中 460px 弹窗；JS 仅同步 --vvh。
+ * - 形态：CSS 断点决定 <900 全屏 H5 / >=900 主区居中 460px 弹窗；JS 仅同步 --vvh。
  * - 视觉：暖纸色板只在本浮层 / 小票作用域生效（tokens.css），不做全站换肤。
  * - 账户：真实数据源 accountApi.list() 的 AccountView；name 是 ASCII 导出名，
  *   display_name 是中文展示名；零硬编码示例账户。
@@ -62,7 +62,7 @@ import ReceiptSlip from '@/components/ReceiptSlip.vue'
 
 const props = withDefaults(
   defineProps<{
-    /** auto：按 1024 断点自动切换；其余用于强制指定容器形态。 */
+    /** auto：按 900 断点自动切换（与侧栏一致）；其余用于强制指定容器形态。 */
     variant?: 'auto' | 'dialog' | 'sheet' | 'fullscreen'
   }>(),
   { variant: 'auto' },
@@ -180,7 +180,8 @@ function prefillFromEditTxn(): void {
   form.tags = Array.isArray(txn.tags) ? txn.tags.slice() : []
   form.advancedPostings = txn.postings.map((posting) => ({
     accountId: posting.account_id,
-    amount: posting.amount,
+    // 编辑态回填同样归一化：异常后端数据不得让 row.amount 变成非 string 流进 UI。
+    amount: typeof posting.amount === 'string' ? posting.amount : '',
     commodity: posting.commodity === undefined || posting.commodity === '' ? session.defaultCommodity : posting.commodity,
   }))
   advancedMode.value = true
@@ -283,6 +284,25 @@ const previewError = computed<string>(() => {
   }
 })
 
+/**
+ * Bean 预览专用金额兜底：空串 / 非法定点串（如 `12.`、裸 `-`）按 0.00 展示。
+ *
+ * buildBeanSnippet → beanAmount → Money.from 没有 try/catch，任何非法串都会
+ * 让 beanText computed 抛错，进而整棵组件树渲染崩溃（页面卡死）。
+ * 合法串原样返回，保证 -0.00 等往返形态不变；提交仍由 buildAdvancedPostings 守门。
+ */
+function previewAmount(amount: string): string {
+  if (typeof amount !== 'string' || amount.trim() === '') {
+    return '0.00'
+  }
+  try {
+    Money.from(amount)
+    return amount
+  } catch {
+    return '0.00'
+  }
+}
+
 /** 高级态的草稿分录（含未选账户 / 不平），供配平卡与预览实时展示。 */
 const advancedDrafts = computed<PostingDraft[]>(() =>
   (form.advancedPostings ?? []).map((row) => {
@@ -291,7 +311,7 @@ const advancedDrafts = computed<PostingDraft[]>(() =>
       accountId: row.accountId === null ? -1 : row.accountId,
       accountName: account === undefined ? '' : accountLabel(account),
       commodity: row.commodity === '' || row.commodity === undefined ? commodityCode.value : row.commodity,
-      amount: row.amount === '' ? '0.00' : row.amount,
+      amount: previewAmount(row.amount),
     }
   }),
 )
@@ -724,7 +744,11 @@ function rowsWithCommodity(rows: Array<{ accountId: number | null; amount: strin
       : account === undefined
         ? commodityCode.value
         : resolveAccountCommodity(account, commodityCode.value)
-    return { accountId: row.accountId, amount: row.amount, commodity }
+    return {
+      accountId: row.accountId,
+      amount: typeof row.amount === 'string' ? row.amount : '',
+      commodity,
+    }
   })
 }
 
@@ -786,7 +810,7 @@ function buildAdvancedPostings(): PostingDraft[] | null {
       advancedError.value = '分录账户不在当前账本'
       return null
     }
-    if (row.amount.trim() === '') {
+    if (typeof row.amount !== 'string' || row.amount.trim() === '') {
       advancedError.value = '存在空金额的分录'
       return null
     }
@@ -1073,6 +1097,18 @@ function close(): void {
 
 // ─────────── 形态与键盘避让：副作用必须成对清理 ───────────
 
+/**
+ * 交给系统键盘接手的控件选择器。
+ *
+ * - 简化态金额 / 描述输入带 inp-text；
+ * - 高级态金额框在子组件 AdvancedPostings 内，只有 data-rf="amt"（无 inp-text）。
+ *
+ * focusin / focusout 挂在 document 上冒泡，能捕获子组件输入框；进出场判定与自定义键盘
+ * 反向互斥共用本常量，避免任一处漏改导致 body.kbd-open 与 --vvh 脱节
+ * （系统键盘缩了 panel，压缩样式却没启用）。
+ */
+const SYSTEM_KEYBOARD_TARGET = "input.inp-text, textarea.inp-text, input[data-rf='amt']"
+
 function syncVv(): void {
   const viewport = typeof window === 'undefined' ? null : window.visualViewport
   const height = viewport !== null && viewport !== undefined ? viewport.height : window.innerHeight
@@ -1083,7 +1119,7 @@ function syncVv(): void {
 
 function onFocusIn(event: Event): void {
   const target = event.target as HTMLElement
-  if (target !== null && typeof target.matches === 'function' && target.matches('input.inp-text, textarea.inp-text')) {
+  if (target !== null && typeof target.matches === 'function' && target.matches(SYSTEM_KEYBOARD_TARGET)) {
     // 系统键盘接手时收起自定义键盘，两个键盘不共存。
     keypadOpen.value = false
     kbdOpen.value = true
@@ -1093,7 +1129,7 @@ function onFocusIn(event: Event): void {
 
 function onFocusOut(event: Event): void {
   const target = event.target as HTMLElement
-  if (target !== null && typeof target.matches === 'function' && target.matches('input.inp-text, textarea.inp-text')) {
+  if (target !== null && typeof target.matches === 'function' && target.matches(SYSTEM_KEYBOARD_TARGET)) {
     kbdOpen.value = false
     document.body.classList.remove('kbd-open')
   }
@@ -1110,7 +1146,7 @@ function openKeypad(): void {
     active !== null &&
     typeof active.matches === 'function' &&
     typeof active.blur === 'function' &&
-    active.matches('input.inp-text, textarea.inp-text')
+    active.matches(SYSTEM_KEYBOARD_TARGET)
   ) {
     active.blur()
   }
@@ -2238,6 +2274,11 @@ watch(
 .rs-body textarea {
   font-size: 16px;
 }
+/* scoped 隔离使上面的规则穿透不到子组件，追加深度兜底防未来遗漏 */
+.rs-body :deep(input),
+.rs-body :deep(select) {
+  font-size: 16px;
+}
 
 .rs-select {
   min-height: 40px;
@@ -2607,10 +2648,12 @@ body.kbd-open .rs-body {
   padding-top: 8px;
 }
 
-/* ≥1024：居中 460px 弹窗（形态由 CSS 决定，不探测设备） */
-@media (min-width: 1024px) {
+/* ≥900：与侧栏断点一致。用 padding-left 把 flex 居中基准移到右侧主区：
+   遮罩背景仍覆盖全屏，panel 在主区内居中，且不引入 transform 包含块。 */
+@media (min-width: 900px) {
   .rs-mask--auto {
     align-items: center;
+    padding-left: var(--fb-sidebar-w, 232px);
   }
   .rs-mask--auto .rs-panel,
   .rs-mask--dialog .rs-panel {

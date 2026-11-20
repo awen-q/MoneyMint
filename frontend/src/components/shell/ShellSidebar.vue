@@ -83,8 +83,8 @@ const emit = defineEmits<{
 /* X-06：宽度对齐设计 `--sidebar-w: 232px`（原 240，窄 8px 且挤压内容区） */
 .sb {
   display: none;
-  width: 232px;
-  flex: 0 0 232px;
+  width: var(--fb-sidebar-w, 232px);
+  flex: 0 0 var(--fb-sidebar-w, 232px);
   flex-direction: column;
   background: var(--fb-sidebar);
   color: var(--fb-side-fg);

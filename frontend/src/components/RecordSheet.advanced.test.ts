@@ -131,6 +131,36 @@ describe('批 2.5 修 5：高级双录', () => {
     expect(wrapper.text()).toContain('CNY 差额 70.00')
   })
 
+  it('新增分录清空金额后点「贷」→ 页面不崩溃，Bean 预览仍渲染且保存被拦截', async () => {
+    const wrapper = await mountAdvanced()
+    const add = wrapper.findAll('button').find((b) => b.text().includes('添加分录'))
+    await add?.trigger('click')
+    await flushPromises()
+
+    // 这就是老板报的崩页链：空幅值 + 贷方向若写成裸 "-"，beanAmount 的
+    // Money.from 会抛 RangeError，令 beanText computed 崩溃、整页卡死。
+    await wrapper.findAll('.rs-adv-row')[2].find('[data-rf="amt"]').setValue('')
+    await flushPromises()
+    await wrapper.findAll('.rs-adv-row')[2].find('[data-dir="credit"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.js-bean').exists()).toBe(true)
+    expect(wrapper.find('.js-bean').text()).toContain('<待选账户> 0.00 CNY')
+    expect((findSave(wrapper).element as HTMLButtonElement).disabled).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('金额输入中途的 `12.` 不使 Bean 预览崩溃（非法中间态按 0.00 预览）', async () => {
+    const wrapper = await mountAdvanced()
+    await fillRow(wrapper, 0, '3', '12.')
+    await flushPromises()
+
+    expect(wrapper.find('.js-bean').exists()).toBe(true)
+    expect(wrapper.find('.js-bean').text()).toContain('Expenses:Food 0.00 CNY')
+    expect((findSave(wrapper).element as HTMLButtonElement).disabled).toBe(true)
+    wrapper.unmount()
+  })
+
   it('跨币种各自配平即可通过（USD 账户自动带出 commodity_restriction）', async () => {
     h.create.mockResolvedValue({ id: 2, uuid: 't-2', date: '2026-11-10', postings: 4 })
     const wrapper = await mountAdvanced()
