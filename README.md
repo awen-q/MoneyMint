@@ -8,8 +8,9 @@
 - **标准兼容**：可导出标准 `.beancount` 文本，通过 `bean-check` 校验。
 - **自动备份**：每日一致性快照（WAL 安全），保留策略自动清理，浏览器直接下载。
 
-> **当前状态（2026-11-12，批 6 cutover 完成）**：M7 前端全量重构批 0~6 全部落地，
-> **Vue 3 + Vite 纯 SPA 已是唯一前端**；Flutter 版源码与构建链已清退（git 历史可查），
+> **当前状态（v0.6.1，2026-11-19）**：M7 前端全量重构批 0~6 全部落地，
+> **Vue 3 + Vite 纯 SPA 已是唯一前端**；报表重设计 v4.1、B7 回收站永久删除、
+> 0.6.1 四页视觉对齐设计稿均已交付。Flutter 版源码与构建链已清退（git 历史可查），
 > `/legacy/` 回滚通道已于批 6 后废弃（无产物、无脚本；需要旧版只能从 git 历史重建）。
 > 想直接跑起来用，按下面「快速开始」即可；架构与约定看 [`AGENTS.md`](AGENTS.md)。
 
@@ -24,6 +25,7 @@
 - **离线多端同步**：append-only + 不可变交易 + 全局水位，增量 pull / 逐条幂等 push，天然几乎无冲突。
 - **标准导出**：单文件或多文件目录（`main.bean` + `accounts/` + `date/`）两种导出，解压后可直接 `bean-check`。
 - **PWA**：可安装、离线壳、IndexedDB 离线提交队列。
+- **回收站永久删除（B7）**：仅 `owner` 可将回收站中的交易物理删除（含冲正配对连带），逐笔审计留痕；期初 / 校准 / 导入等系统交易受保护不可删。
 
 ## 技术栈
 
@@ -40,7 +42,7 @@
 
 ```bash
 # 1. 构建（或使用 CI 发布的镜像）
-docker build -t yourname/money-mint:0.6.0 .
+docker build -t yourname/money-mint:0.6.1 .
 
 # 2. 准备数据目录
 mkdir -p ./data
@@ -51,7 +53,7 @@ docker run -d --name famben -p 8080:8080 \
   -e LEDGER_OWNER_USER=awen \
   -e LEDGER_OWNER_PASSWORD=你的密码 \
   -v $(pwd)/data:/app/data \
-  yourname/money-mint:0.6.0
+  yourname/money-mint:0.6.1
 
 # 4. 浏览器打开 http://<主机IP>:8080 ，用预设的 owner 账号登录
 ```
@@ -207,7 +209,7 @@ python -m beancount.scripts.check data/family.beancount   # 激活项目 .venv �
 ├── internal/             # 后端分层
 │   ├── config/           # 集中配置（环境变量 + 启动校验）
 │   ├── domain/           # 领域模型 + 哨兵错误
-│   ├── db/               # 开库 + 增量迁移（当前至 016）
+│   ├── db/               # 开库 + 增量迁移（当前至 017）
 │   ├── repository/       # 数据访问层（SQL 集中于此）
 │   ├── service/          # 业务逻辑层（校验/事务/同步/权限/备份调度/恢复/导入）
 │   ├── handler/          # HTTP 适配层

@@ -7,7 +7,7 @@
 
 - Vue 3.5 + Vue Router 4.5 + Pinia 2.3（全量重写，M7；原 Flutter 版已于批 6 cutover 清退）
 - Vite 5（`build.target: 'es2015'` + `@vitejs/plugin-legacy`，Safari 14.1 / iOS 14.8 兼容基线）
-- TypeScript ~5.6 + vue-tsc；Vitest 2.1（301 用例 / 37 文件）
+- TypeScript ~5.6 + vue-tsc；Vitest（用例数与文件数以 CI 实测为准，见 `.github/workflows/docker-image.yml`）
 - 金额运算统一走 `decimal.js` 封装（`src/core/Money`），禁止裸浮点加减
 
 ## 命令
@@ -43,7 +43,8 @@ frontend/
 
 - 语法门禁 es2020（放行路由懒加载动态 `import()`）；API/CSS 特性扫描见 `scripts/compat.mjs`
 - 禁用 `.at()` / `structuredClone` / `crypto.randomUUID` / `BroadcastChannel` / `navigator.locks` 等
-  Safari 14.1 缺失 API；禁装 ECharts / Vuetify / moment 等（§14.7 清单）
+  Safari 14.1 缺失 API；禁装 Vuetify / Framework7 / moment / monaco / leaflet / swiper 等（§14.7 清单）；
+  **ECharts 5.6.0 已解禁**（SVG renderer、`echarts/core` 按需，唯一入口 `core/charts/echarts.ts`）
 - Service Worker 只缓存应用壳与静态资源，`/api/*` 绝不拦截
 
 ## 版本号

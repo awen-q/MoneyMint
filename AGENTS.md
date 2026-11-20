@@ -4,7 +4,7 @@
 > 用户：全栈独做（老板），后端 Go / 前端与产品决策均本人拍板。沟通可直接给结论。
 > 提醒：因独做全栈，"分配负责人/邀请角色关注"类提醒不适用，改为提醒其自写验收标准、留档、关键模块自评审。
 
-**文档分工**：AI / 开发者技术上下文 = 本文；用户与部署快速上手 = [`README.md`](README.md)；Claude 系工具的工作约定 = [`CLAUDE.md`](CLAUDE.md)。**本文只记「已实现的现状」，待办见 §9，勿把计划当现状。**
+**文档分工**：AI / 开发者技术上下文 = 本文；用户与部署快速上手 = [`README.md`](README.md)；Claude 系工具的工作约定 = [`CLAUDE.md`](CLAUDE.md)。**本文只记「已实现的现状 + 仍有效的硬约束 + 真实待办（§9）」，勿把计划当现状、勿留状态快照。** 状态性事实写「以 X 为准」，禁止硬编码会过期的数字（见 §8 文档治理铁律）。
 
 ---
 
@@ -23,14 +23,14 @@
 | 源码 | `frontend/index.html`、`frontend/src/`、`frontend/public/` | ~~`frontend/lib/`、`frontend/test/`、`pubspec.*`~~ 已 `git rm`（批 6），需要时从 git 历史找回 |
 | 产物 | `frontend/dist/`（gitignore），由 `LEDGER_WEB_ROOT` 托管；Docker 镜像内 `/app/web` | `/legacy/` **回滚通道已废弃**（批 6 后：无静态托管、无产物目录、无校验脚本；需要旧版只能从 git 历史重建） |
 
-- **批 0~6 全部落地**（2026-11-12 交付）：36 端点、迁移 014 库世代、恢复/导入向导（P-19/P-20）、离线同步内核（`src/core/sync/`，9 份真实契约样本 + 14 引擎用例）、PWA（`public/sw.js`）、CI `web-verify` job、Dockerfile Node 构建、工具链钉版（`.nvmrc` 22.23.4 / `engines >=22.22 <23` / `engine-strict`）。
-- 批 6 交付时 Vitest **301/301（37 文件）**；`go build` / `go vet` / `go test ./...` 全绿（当前值见下方「当前阶段」）。
+- **批 0~6 全部落地**（2026-11-12 交付）：全套后端端点（**当前端点数以 §7 / `router.go` 为准**）、迁移 014 库世代、恢复/导入向导（P-19/P-20）、离线同步内核（`src/core/sync/`，9 份真实契约样本 + 14 引擎用例）、PWA（`public/sw.js`）、CI `web-verify` job、Dockerfile Node 构建、工具链钉版（`.nvmrc` 22.23.4 / `engines >=22.22 <23` / `engine-strict`）。
+- 批 6 交付时前端测试与 `go build` / `go vet` / `go test ./...` 均全绿；**测试数以 CI 实测为准**（见 `.github/workflows/docker-image.yml`），不在此硬编码。
 - `LEDGER_AUTH_EXPOSE_TOKEN` 默认 `false`（Vue 版只靠 httpOnly Cookie，D-7）；仅当脚本 / 第三方客户端需要从响应体取 Bearer token 时才显式设 `true`（与已废弃的 `/legacy/` 无关）。
 - 后端与账芯**不变**：复式借贷平衡、append-only 不可变交易、`bean-check` 导出校验、离线同步协议全部保留。
 
 **核心不变约束**：导出的 `.beancount` 必须能被 `bean-check` 直接校验通过（退出码 0、无报错）。
 
-**当前阶段**：M7 六批 + 0.6.0（S0~S6）+ **报表重设计 v4.1（B1~B6 六批）** + **B7 回收站永久删除（2026-11-19）** + **0.6.1 四页视觉对齐设计稿（2026-11-19，纯前端样式）全部交付**，仓库只剩一套前端；§7 端点表 **43 条路径 / 54 个 `path×method`**（表 47 行；基线 36 + 0.6.0 新增 8 + B6 新增 1 + B7 新增 2）已与 `internal/server/router.go` 逐条核对一致（T62 审计：零孤儿、零缺失；`routes.ts` 现有 **43 常量**，与 43 条路径一一对应）；迁移至 **017**，Vitest **966/966 通过**（99 文件；2026-11-19 实测），CI 双下限已抬到实测值（用例 **966** / 测试文件 **99**，只增不减）。剩余边界见 §9。
+**当前阶段**：M7 六批 + 0.6.0（S0~S6）+ **报表重设计 v4.1（B1~B6 六批）** + **B7 回收站永久删除（2026-11-19）** + **0.6.1 四页视觉对齐设计稿（2026-11-19，纯前端样式）全部交付**，仓库只剩一套前端（Vue 3 SPA）；当前版本 **v0.6.1**（tag / CHANGELOG / `frontend/package.json` 三处一致，发布与校验走 `scripts/verify-version.sh`）；迁移至 **017**（下一个 018）；§7 端点表 **43 条路径 / 54 个 `path×method`**（表 47 行；`routes.ts` 43 常量，与 43 条路径一一对应）已与 `internal/server/router.go` 逐条核对一致（T62 审计：零孤儿、零缺失）。**测试数与下限以 CI 实测为准**（见 `.github/workflows/docker-image.yml`，勿硬编码）。剩余边界见 §9。
 
 **报表重设计 v4.1 已交付**（2026-11-19，前端大改 + 后端只增读路径）：
 - **五视图**：账单 `/`（`BillsView`，日历 + 四指标 + 逐日折线 + 按日分组列表）、搜索 `/search`（`SearchView`，七维筛选 + 分币种汇总 + CSV + 加载更多）、统计 `/stats`（`StatsView`，统计/标签双子页、五指标、双环 + 排行、柱状点柱下钻、每日明细含日均）、资产 `/assets`（`AssetsView`）、资产统计 `/assets/stats`（`AssetStatsView`，三线 + 月度变化）。
@@ -277,37 +277,37 @@ python -m pip install beancount    # 激活 .venv 后执行
 - **兼容基线（iOS 14.8 / Safari 14.1.2）**：`build.target: 'es2015'` + plugin-legacy；**禁 WASM / WebGL / CanvasKit / OffscreenCanvas**；禁用 `structuredClone` / `crypto.randomUUID` / `.at()` / `findLast` / `Object.hasOwn` / `showModal` / `BroadcastChannel` / `navigator.locks`；CSS 不用 `aspect-ratio` / `:has()` / `dvh` / `inset`。`es-check` 只查语法，须另补 API / CSS 扫描；**升级任何前端依赖都要过 AC-19 与真机冒烟**，不允许「本地能跑就升」。
 - **`/legacy/` 回滚通道已废弃（批 6 之后）**：后端 `static.go` 从来没有 `/legacy/` 托管，该通道一直是「一个产物目录 + 一个校验脚本 + 一堆文档承诺」；目录被 `npm run build` 的 `emptyOutDir` 清掉、`scripts/check-legacy.sh` 也已删除。需要旧版只能从 git 历史（批 ≤5）重建源码，**不存在「打开开关就能回滚」这回事**。旧 SW 清理已由 Vue 版 `public/sw.js` activate 步骤覆盖（删除非 fambean 前缀缓存；旧 `flutter_service_worker.js` 404 后浏览器自动注销）。
 - **注释语言**：代码注释用中文；保留 `schema.sql` 中 Beancount 映射注释。
+- **文档治理（铁律）**：已完成项与状态快照（未 push 提交数、版本号 / 测试数快照、临时开关状态、某次交付的过程数字）**不写入长期文档，完成后即删**；长期文档只保留**特性、不变约束、真实待办**。状态性事实写「以 X 为准」（如「以 CI 实测为准」「以 GitHub Actions 运行记录为准」），**禁止硬编码会过期的数字**。引用本文档任何「当前 / 尚未 / 遗留 / N 个提交 / 下限 / 版本 / 迁移号」前，先跑源头命令核实，跑不了就注明「未验证」。
+- **版本一致性**：版本号以 `frontend/package.json` 为准，与 `CHANGELOG.md` / `git tag` 三处一致，发布前走 `bash scripts/verify-version.sh`；本文只写「以 tag / CHANGELOG / package.json 为准」，不硬编码当前版本号（状态性表述见上条铁律）。
 
 ---
 
-## 9. 已知边界 / 当前待办（0.6.0 + v4.1 + B7 已交付）
+## 9. 真实待办与仍有效的约束
 
-**已落地（批 0~6，2026-11-12 交付）**：Vue 3 + Vite 脚手架与全部 20 页、`core/Money` 定点金额、`es2015` + plugin-legacy + es2020 语法门禁 + `compat.mjs` API/CSS 扫描、手写 TS 类型 + 类型化 fetch 客户端（401 single-flight / 428 / `X-Ledger-Id` 断言 / FormData）、D-7 httpOnly Cookie + CSRF + CORS 白名单、迁移 013/014、恢复/导入全链路（M2-a~g）、离线同步内核（`core/sync/`，9 份真实契约样本〔其中 6 份被引擎用例引用〕+ 14 引擎用例）、PWA（`public/sw.js` + 更新提示）、CI `web-verify` job（含用例数下限防假绿）、Dockerfile Node 构建、工具链钉版（`.nvmrc` 22.23.4 / `engines >=22.22 <23` / `engine-strict`）、`LEDGER_AUTH_EXPOSE_TOKEN` 默认 `false`。
+本节只列**真实待办**与**仍有效的硬约束**；已交付的版本与设计决策见 `CHANGELOG.md` 与交付包文档，完成的过程数字与状态快照不再在此堆积（见 §8 文档治理铁律）。
 
-**已落地（0.6.0，2026-11-15 交付）**：迁移 015_ledger_ops、迁移 016_import_batch_manifest（QA 回归缺陷根治：撤销按 manifest 精确删）、账本删除、币种 CRUD、账户下级、余额校准（`balance_key` 独立列）、Beancount 导入（`target=current` + 批次撤销，导入端点移出账本上下文豁免）、修改交易（冲正 + 新建，权限收紧）、`GET /api/ledgers` 行级计数（P1-03）、`X-Ledger-Id` 回退修正（R3）；§7 端点表 36→**44** 行（交付时值，当前 43 条路径见 §1）；交付时 Vitest **356/356**（47 文件，当前值见 §1）；CI 用例数下限同步 356（现已 966/99）。**验收口径唯一源**：仓库内的 0.6.0 产品文档与架构设计（N-12：此处只引用、不复制 AC 全文，避免第二份漂移口径）。
+### 9.1 仍有效的硬约束（B7 账务语义与陷阱）
 
-**已落地（报表重设计 v4.1，2026-11-19 交付，B1~B6 六批）**：五视图（账单/搜索/统计/资产/资产统计）+ 壳层重构（侧栏 5 直达 + 管理 10、底栏 4 Tab + FAB、断点 900）+ ECharts 5.6.0（SVG，唯一入口 `core/charts/echarts.ts`）+ 服务端 keyset 分页（`from`/`to`/`limit`/`cursor`，`limit` 缺省全量）+ 只读端点 `GET /api/assets/series` + `stores/ledgerData` 单次拉取共享快照；旧三页（`HomeView`/`TransactionsView`/`ReportsView`/`ReportCharts.vue`）下线，`/transactions` 保留函数式重定向透传 query；Vitest **466→943**（58→98 文件，B1~B6 交付时值），CI 双下限（当时 943 / 98）；迁移仍 **016**（B1~B6 **零迁移**）。批次与验收口径见交付包内 v4.1 开发计划与 PRD（**不入库**，随交付包留存）。
+> B7 回收站永久删除是**唯一破 append-only 语义的批次**，单独上线；以下账务语义与实现陷阱是仍有效的约束，勿当漏洞回退（端点契约见 §7 B7 小节，审计表见 §4 迁移 017）。
 
-**B7 回收站永久删除已交付**（2026-11-19，**唯一破 append-only 语义的批次**，单独上线）：
-- **迁移 017** `txn_purge_log`（审计表，只写不删、**不参与同步协议**、不随 `instance_id` 轮换）+ `idx_purge_log_ledger(ledger_id, id DESC)`。
-- **两条端点**（41 → 43 路径）：`DELETE /api/transactions/{uuid}/purge`、`POST /api/transactions/trash/purge`，均需 `confirm:"删除"`。
-- **仅 owner**（editor `403 txn_purge_forbidden`）；**冲正连带删**（配对在回收站 / 仍有效 / 悬空三态，闭包 visited + 深度上限 8 + 严格限 `ledger_id`）；**系统交易禁删**（`opening_account_uuid` / `balance_key` / `import_batch_id` 任一非空 → 单笔 409 `txn_purge_not_allowed`、清空整分量保留）；**幂等**（行不存在时查 `sync_log` 有无该 uuid 的 `delete` → 200 `already_purged`，否则 404）。
+- **迁移 017 `txn_purge_log`**：审计表只写不删、**不参与同步协议**、不随 `instance_id` 轮换；`pair_uuid` 对称写，`origin_deleted_at` 记录删除前软删时间（未软删的配对成员为空串）。
+- **仅 owner**：editor `403 txn_purge_forbidden`；审计全成员可见（`GET /api/transactions/trash` additive 增 `purge_summary` / `purge_log`，不开新 GET），入口 owner-only（`TrashItemView` 增 `can_purge` / `is_system` / `pair_uuid`）。
+- **冲正连带删**：配对在回收站 / 仍有效 / 悬空三态，闭包 `visited` + 深度上限 8 + 严格限 `ledger_id`。
+- **系统交易禁删**：`opening_account_uuid` / `balance_key` / `import_batch_id` 任一非空 → 单笔 `409 txn_purge_not_allowed`、清空时按**连通分量**保留整分量（A→R1→R2 之类的链不能只保留前半条）。
+- **幂等**：行不存在时查 `sync_log` 有无该 uuid 的 `delete` → `200 already_purged`，否则 `404 txn_not_found`。
 - **不轮换 `instance_id`**：软删时已广播 delete，轮换只会把他人离线草稿推进死信。
-- **审计全成员可见、入口 owner-only**：`GET /api/transactions/trash` additive 增 `purge_summary` / `purge_log`（不开新 GET，端点不涨）；`TrashItemView` 增 `can_purge` / `is_system` / `pair_uuid`。
 - **AC-B7-1 的边界**：`导出字节不变` 只对**无冲正配对**的普通交易成立；配对连带删除会改变导出与账本净额，是**有意的账务变更**，确认弹层必须写明「将同时删除冲正配对交易」。
-- **三处比设计更严的实现**（勿当成漏洞回退）：① 清空按**连通分量**保留（A→R1→R2 只保留前半条会切出半条链）；② 清空入口多判一条「至少一条 `can_purge`」（`deletable` 是数据口径，editor 也会拿到 > 0），非 owner 连计数行都不渲染；③ `amount_note` 纯字符串补两位小数（不读币种精度、不加千分位）。
-- `repository.purgeHookBeforeDeleteTransactions` 是**包内测试接缝**（生产恒 nil、仅 `_test.go` 赋值），唯一理由是「删交易前注入并发」是 `affected != len(closure)` 回滚的唯一自动化防线；禁止被生产代码赋值。
+- **三处比设计更严的实现**（勿当漏洞回退）：① 清空按**连通分量**保留（避免切出半条链）；② 清空入口多判一条「至少一条 `can_purge`」（`deletable` 是数据口径，editor 也会拿到 > 0），非 owner 连计数行都不渲染；③ `amount_note` 纯字符串补两位小数（不读币种精度、不加千分位）。
+- **测试接缝**：`repository.purgeHookBeforeDeleteTransactions` 是**包内测试接缝**（生产恒 nil、仅 `_test.go` 赋值），唯一理由是「删交易前注入并发」是 `affected != len(closure)` 回滚的唯一自动化防线；禁止被生产代码赋值。
 
-**遗留 / 注意**：
+### 9.2 真实待办 / 注意
+
 1. `package-lock.json` 在 Linux（CI ubuntu）上的 `npm ci` 与 Dockerfile Node 构建，以 GitHub Actions `web-verify` / 镜像构建的运行记录为准，别把「配置写了」当成「已经跑过」；若失败按 lock 缺平台二进制处理（重新在 Linux 生成）。
 2. `docs/` 下已入库 0.6.0 产品口径与架构设计两份权威文档（原名 `0.5.2-*`，2026-11-15 更名对齐版本号，已标记「已交付」）；v4.1 及本轮设计文档**不入库**，随交付包 / 本机留存，故本文不写任何文档文件链接；旧阶段文档仅存 git 历史。
-3. `/legacy/` **回滚通道已废弃**（批 6 后：无静态托管、无产物目录、无校验脚本）。`web-build` 的 `emptyOutDir` 会清空 `frontend/dist`，旧版产物不可能常驻；需要旧版只能从 `d297318` 之前的 git 历史（Flutter 源码）重建。
-4. `CHANGELOG.md` 顶部仍为 `[0.6.0] - 2026-11-15`，`frontend/package.json` 仍是 `0.6.0`；**v4.1 + B7 尚无版本 tag**（CHANGELOG 已补 `[Unreleased]`），发布前必须升版本 + 打 tag，再走 `scripts/verify-version.sh`（tag / CHANGELOG / package.json 三处一致）。
-5. 真机双端联调（浏览器 A/B 同时在线、离线多设备端到端）与批 5 离线链路真机冒烟尚未完整确认；**五视图 iOS 14.8 冒烟清单的 I/J 两章 109 项未勾**，ECharts 触摸专项属硬门槛。
-6. **B7 已交付但仍需单独上线**：它破的是 append-only 承诺，出事要能单独回滚 —— 放量顺序「后端+迁移先上、前端不暴露入口 → curl 验证六个码与幂等 → 再上前端」；迁移 017 纯加法，回滚不必删表（数据留作事后审计），**已物理删除的数据只能靠备份还原**（还原会让已删数据复活，数据安全页已写明）。
-7. **回收站页从未接入隐私遮罩**（B7 之前既有问题，非本批引入）：`TrashView.vue` 无 `usePrivacyStore`，`sumPostings` 与审计 `amount_note` 都是明文 —— 开了「隐藏金额」回收站仍明码标价，B7 把金额又搬进页脚审计，暴露面变大。**待另立 issue**。
-8. **61 个提交未 push**（`develop` ahead `origin/develop`）：CI `web-verify`（966/99 双下限）、Dockerfile Node 构建、`check:bundle` 体积门禁都还没在 GitHub runner 上首跑，别把本地全绿当成已验。**注意 B7 要求单独上线**：push 后先把前端 commit 留在本地或回退入口露出，别让 B1~B6 与 B7 混发。
-9. 下期（M4+）：OFX/CSV 自动导入、Beancount 子集外通用语法（cost 注解 / 价格指令等）、价格 CRUD、规则引擎、Postgres 横向扩展。0.6.0 的遗留实现细节与开放项以交付包内产品文档的留档为准（N-12）。
+3. 真机双端联调（浏览器 A/B 同时在线、离线多设备端到端）与批 5 离线链路真机冒烟尚未完整确认；**五视图 iOS 14.8 冒烟清单的 I/J 两章 109 项未勾**，ECharts 触摸专项属硬门槛。
+4. **B7 已交付但仍需单独上线**：它破的是 append-only 承诺，出事要能单独回滚 —— 放量顺序「后端+迁移先上、前端不暴露入口 → curl 验证六个码与幂等 → 再上前端」；迁移 017 纯加法，回滚不必删表（数据留作事后审计），**已物理删除的数据只能靠备份还原**（还原会让已删数据复活，数据安全页已写明）。
+5. **回收站页从未接入隐私遮罩**（B7 之前既有问题，非本批引入）：`TrashView.vue` 无 `usePrivacyStore`，`sumPostings` 与审计 `amount_note` 都是明文 —— 开了「隐藏金额」回收站仍明码标价，B7 把金额又搬进页脚审计，暴露面变大。**待另立 issue**。
+6. 下期（M4+）：OFX/CSV 自动导入、Beancount 子集外通用语法（cost 注解 / 价格指令等）、价格 CRUD、规则引擎、Postgres 横向扩展。0.6.0 的遗留实现细节与开放项以交付包内产品文档的留档为准（N-12）。
 
 > 旧版功能在新版**一律 Must，不得降级**：CSV 导出、分类拖拽排序、导出不平告警、注册开关、默认账户管理。
 

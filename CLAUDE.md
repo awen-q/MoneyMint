@@ -2,11 +2,12 @@
 
 > 给 Claude 系工具的项目速查。**权威技术上下文在 [`AGENTS.md`](AGENTS.md)**；本文只记「怎么干活」与「不要做什么」，不重复全文。
 
-## 先读这三件事
+## 先读这四件事
 
 1. **M7 全量重构已 cutover 收官（批 0~6，2026-11-12）**：**Vue 3 + Vite SPA 是唯一前端**（`frontend/src/` → `frontend/dist`，由 `LEDGER_WEB_ROOT` 托管）。Flutter Web 源码与构建链已 `git rm`（commit `d297318`，需时从 git 历史找回），`/legacy/` 回滚通道已废弃（无静态托管、无产物目录、无校验脚本）。
-2. **别把方案当现状，也别把旧文档当现状**：批 0~6 均已实现——20 页全量覆盖、36 端点、`core/Money`、离线同步内核 `core/sync/`、迁移 013/014、M2 恢复/导入四端点、PWA `public/sw.js`、CI `web-verify` job、Dockerfile Node 构建、工具链钉版。判断「有没有」**以代码为准**。
+2. **别把方案当现状，也别把旧文档当现状**：批 0~6 均已实现——页面全量覆盖、端点（**以代码 / [`AGENTS.md`](AGENTS.md) §7 为准**）、`core/Money`、离线同步内核 `core/sync/`、M2 恢复/导入、PWA `public/sw.js`、CI `web-verify` job、Dockerfile Node 构建、工具链钉版。判断「有没有」**以代码为准**。
 3. **账芯不可动**：复式借贷平衡、append-only 不可变交易、导出必须过 `bean-check`、定点十进制金额。改的是前端，不是全栈。
+4. **文档治理（铁律）**：已完成项与状态快照（未 push 提交数、版本号 / 测试数快照、临时开关状态、某次交付的过程数字）**不写入长期文档，完成后即删**；长期文档只保留**特性、不变约束、真实待办**。状态性事实写「以 X 为准」（如「以 CI 实测为准」「以 GitHub Actions 运行记录为准」），**禁止硬编码会过期的数字**。引用 [`AGENTS.md`](AGENTS.md) / 本文任何「当前 / 尚未 / 遗留 / N 个提交 / 下限 / 版本 / 迁移号」前，先跑源头命令核实，跑不了就注明「未验证」。
 
 ## 命令速查
 
@@ -30,11 +31,11 @@
 
 | 关心什么 | 看哪里 |
 |---|---|
-| 后端路由与端点（**41 条路径 / 52 个 path×method**；`AGENTS.md` §7 表 45 行） | `internal/server/router.go`、`AGENTS.md` §7 |
+| 后端路由与端点（**43 条路径 / 54 个 path×method**；[`AGENTS.md`](AGENTS.md) §7 表 47 行） | `internal/server/router.go`、`AGENTS.md` §7 |
 | CORS / CSRF / Cookie 鉴权 | `internal/server/middleware.go`、`internal/config/config.go` |
 | 认证与会话 | `internal/handler/auth.go`、`internal/service/auth.go` |
 | 交易与幂等 | `internal/service/transaction.go`、`internal/repository/transaction.go`、`internal/db/migrate013.go` |
-| 迁移清单（下一个编号 **017**） | `internal/db/migrate.go` 的 `migrations` 数组（当前至 `016_import_batch_manifest`） |
+| 迁移清单（下一个编号 **018**） | `internal/db/migrate.go` 的 `migrations` 数组（当前至 `017_txn_purge_log`） |
 | 库世代 | `internal/db/db_instance.go`、`internal/service/instance.go`、`GET /api/db/instance` |
 | 恢复 / 导入 | `internal/restore/`、`internal/beancount/`、`internal/service/{restore,imports}.go`、`internal/handler/{restore,import}.go` |
 | 同步裁决 | `internal/service/sync.go`（push 稳定码 `account_not_found` / `account_closed`） |
@@ -80,4 +81,4 @@
 5. 涉及前端构建或兼容基线 → iOS 14.8 Safari 真机全主流程冒烟（AC-19）。
 6. 版本号三处一致：`git tag` / `CHANGELOG.md` / `frontend/package.json`（`bash scripts/verify-version.sh`）。
 
-> 文档收口后工作区应干净；**改动前仍先看 `git status`**，不要把 docs 与代码改动混在同一次提交。`v0.5.1` tag 已推送，CI `web-verify` 与 Dockerfile Node 构建的 Linux 实机结果以 GitHub Actions 运行记录为准，别把「配置写了」当成「已经跑过」。
+> 文档收口后工作区应干净；**改动前仍先看 `git status`**，不要把 docs 与代码改动混在同一次提交。当前 tag 为 **`v0.6.1`**（tag / CHANGELOG / `frontend/package.json` 三处一致，以源码为准）；CI `web-verify` 与 Dockerfile Node 构建的 Linux 实机结果以 GitHub Actions 运行记录为准，别把「配置写了」当成「已经跑过」。
