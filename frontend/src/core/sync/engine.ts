@@ -28,6 +28,7 @@ import {
   type ResultDisposition,
 } from './models'
 import { backoffMs, type SyncStore } from './localStore'
+import { getTabId } from './dataChangeChannel'
 
 /** 同步 API 适配层（生产用 `@/api/client` 的 syncApi，测试注入 mock）。 */
 export interface SyncApiClient {
@@ -46,6 +47,38 @@ export interface SyncState {
   deadCount: number
 }
 
+/**
+ * 「数据已变更」事件的触发原因。
+ *
+ * `local-write` 由 UI 写操作经全局脏标记发出；引擎自身只会产生
+ * `pull-changes` / `generation-reset`。跨 tab 转发用 `cross-tab`，
+ * 消费方据此避免再次广播造成回声循环。
+ */
+export type DataChangeReason =
+  | 'local-write'
+  | 'pull-changes'
+  | 'generation-reset'
+  | 'cross-tab'
+
+/** 快照数据源发生真实变更的通知（只读观察，不写同步库）。 */
+export interface DataChangeEvent {
+  ledgerId: number
+  /** 单调 seq，用于同账本内排序 / 重复事件丢弃。 */
+  seq: number
+  /** 触发原因，便于观测与回归断言。 */
+  reason: DataChangeReason
+  /** 发出 tab 的 id；BroadcastChannel 自发自收时据此过滤。 */
+  tabId: string
+  at: number
+}
+
+/** 一轮 pull 的摘要：只有 changes 非空 / 世代重置才是真变更。 */
+export interface PullSummary {
+  changed: boolean
+  generationReset: boolean
+  checkpoint: number
+}
+
 export interface SyncEngineOptions {
   /** 租约 TTL（ms），默认 90s（§6.6.1 #4：30s 心跳 / 90s 过期抢占的收敛值）。 */
   leaseTtlMs?: number
@@ -57,6 +90,8 @@ export interface SyncEngineOptions {
 export class SyncEngine {
   private syncing = false
   private listeners = new Set<(state: SyncState) => void>()
+  private dataChangeListeners = new Set<(event: DataChangeEvent) => void>()
+  private dataChangeSeq = 0
   private statusValue: SyncStatus = 'idle'
   private lastSyncAt = 0
   private readonly leaseTtlMs: number
@@ -78,6 +113,27 @@ export class SyncEngine {
   subscribe(listener: (state: SyncState) => void): () => void {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
+  }
+
+  /** 订阅「pull 到真实变更」（与状态订阅分开，避免无变更的 60s 心跳误触刷新）。 */
+  subscribeDataChange(listener: (event: DataChangeEvent) => void): () => void {
+    this.dataChangeListeners.add(listener)
+    return () => this.dataChangeListeners.delete(listener)
+  }
+
+  /** 只在真实变更后发事件；不写任何同步库状态。 */
+  private emitDataChange(ledgerId: number, reason: DataChangeReason): void {
+    this.dataChangeSeq += 1
+    const event: DataChangeEvent = {
+      ledgerId,
+      seq: this.dataChangeSeq,
+      reason,
+      tabId: getTabId(),
+      at: this.nowFn(),
+    }
+    for (const listener of this.dataChangeListeners) {
+      listener(event)
+    }
   }
 
   private async emit(status: SyncStatus): Promise<void> {
@@ -138,16 +194,23 @@ export class SyncEngine {
       }
 
       // ① pull（增量；库世代不匹配时内部会全量重拉）。
-      await this.pullNow(ledgerId, clientId, false)
+      const first = await this.pullNow(ledgerId, clientId, false)
 
       // ② push 循环（自然键合并重映射，最多 maxPushRounds 轮）。
       await this.pushLoop(ledgerId, clientId)
 
       // ③ 再 pull：合并 push 后服务端事件（含他人删除等）。
-      await this.pullNow(ledgerId, clientId, false)
+      const second = await this.pullNow(ledgerId, clientId, false)
 
       this.lastSyncAt = this.nowFn()
       await this.emit('ok')
+      // 两轮 pull 聚合为**一次**变更事件：空变化（60s 心跳）不通知，
+      // 避免每分钟全设备无谓重拉。世代重置优先于普通 pull 原因。
+      if (first.changed || first.generationReset || second.changed || second.generationReset) {
+        const reason: DataChangeReason =
+          first.generationReset || second.generationReset ? 'generation-reset' : 'pull-changes'
+        this.emitDataChange(ledgerId, reason)
+      }
       return 'ok'
     } catch (err) {
       // 网络 / 5xx：离线退避（不要求 ApiError 实例，容错任意抛出形态）。
@@ -192,7 +255,7 @@ export class SyncEngine {
    * 拉取并应用服务端变更。
    * @param forceFull true 时从 0 重拉（库世代不匹配 / account_not_found 重映射）。
    */
-  private async pullNow(ledgerId: number, clientId: string, forceFull: boolean): Promise<void> {
+  private async pullNow(ledgerId: number, clientId: string, forceFull: boolean): Promise<PullSummary> {
     const lastSeq = forceFull ? 0 : await this.store.getLastSeq(ledgerId)
     const resp = await this.api.pull(lastSeq, clientId)
 
@@ -206,7 +269,11 @@ export class SyncEngine {
         await this.emit(this.statusValue)
         const full = await this.api.pull(0, clientId)
         await this.store.applyPullChanges(ledgerId, full.changes, full.checkpoint)
-        return
+        return {
+          changed: Array.isArray(full.changes) && full.changes.length > 0,
+          generationReset: true,
+          checkpoint: full.checkpoint,
+        }
       }
     }
 
@@ -214,6 +281,11 @@ export class SyncEngine {
     await this.store.applyPullChanges(ledgerId, resp.changes, resp.checkpoint)
     if (forceFull && resp.checkpoint > 0) {
       await this.store.setInstanceId(ledgerId, resp.instance_id ?? storedInstance ?? '')
+    }
+    return {
+      changed: Array.isArray(resp.changes) && resp.changes.length > 0,
+      generationReset: false,
+      checkpoint: resp.checkpoint,
     }
   }
 

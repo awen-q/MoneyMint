@@ -19,6 +19,7 @@ import type { AccountView, OpeningDirection, OpeningView } from '@/api/types'
 import { isClosed } from '@/core/accounts'
 import { validateOpeningForm } from '@/core/opening'
 import { todayString } from '@/core/record'
+import { markDirty } from '@/stores/dataFreshness'
 import { useSessionStore } from '@/stores/session'
 import MoneyText from '@/components/MoneyText.vue'
 
@@ -223,6 +224,8 @@ async function submitOpening(accountUuid: string, commodity: string): Promise<vo
     commodity,
     date: ledgerOpeningDate.value,
   })
+  // 修改期初会由后端生成成对交易：账户快照与交易快照都需要失效。
+  markDirty('local-write')
 }
 
 async function submit(): Promise<void> {
@@ -262,6 +265,7 @@ async function submit(): Promise<void> {
         // 0.6.0 S2：显式空串表示根账户（JSON 键缺失会被后端 400 拒绝）。
         parent_uuid: parent !== null ? parent.uuid : '',
       })
+      markDirty('local-write')
       if (isFundType.value && openingAmount.value.trim() !== '') {
         await submitOpening(created.uuid, resolveCommodity(created as unknown as AccountView))
       } else {

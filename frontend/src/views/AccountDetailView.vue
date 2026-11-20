@@ -25,10 +25,11 @@ import { Money } from '@/core/Money'
 import {
   accountLabel,
   accountRunningBalances,
+  displayKindOf,
   postingAmountForAccount,
   todayString,
-  transactionKind,
 } from '@/core/record'
+import { markDirty } from '@/stores/dataFreshness'
 import { useSessionStore } from '@/stores/session'
 import MoneyText from '@/components/MoneyText.vue'
 import AccountForm from '@/components/AccountForm.vue'
@@ -245,7 +246,9 @@ function openInGlobalTxns(): void {
 }
 
 function kindLabel(txn: TransactionView): string {
-  const kind = transactionKind(txn.postings, accounts.value)
+  // 展示标签走 displayKindOf：还款主体 + 小额优惠的复合交易显示「转账」，
+  // 统计 / postings / 后端 kind 口径均不受影响。
+  const kind = displayKindOf(txn.postings, accounts.value)
   if (kind === 'transfer') {
     return '转账'
   }
@@ -335,6 +338,7 @@ async function confirmBalance(): Promise<void> {
     balanceNotice.value = result.status === 'updated'
       ? `已生成 v${result.version} 校准（旧版本仅标记失效，不删除）`
       : `已生成校准交易（落账日 ${result.date}）`
+    markDirty('local-write')
     await Promise.all([load(), loadBalancePreview()])
   } catch (err) {
     balanceError.value = balanceMessageOf(err)
@@ -383,6 +387,7 @@ async function confirmClose(): Promise<void> {
     await accountApi.close(account.value.uuid)
     showCloseConfirm.value = false
     notice.value = `已关户「${accountLabel(account.value)}」`
+    markDirty('local-write')
     await load()
   } catch (err) {
     closeError.value = err instanceof ApiError ? err.message : '关户失败，请稍后重试'

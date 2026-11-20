@@ -23,6 +23,7 @@ import { Money } from './Money'
 import {
   accountLabel,
   displayEntryOf,
+  displayKindOf,
   transactionKind,
   transferRoute,
   type SummaryAccount,
@@ -323,7 +324,11 @@ export function buildTxnRow(
   variant: TxnRowVariant,
 ): TxnRowView {
   const plan = VARIANT_PLANS[variant] === undefined ? VARIANT_PLANS.bill : VARIANT_PLANS[variant]
-  const kind = transactionKind(txn.postings, accounts)
+  // 展示标签（type meta / 标题 / 符号）走 displayKindOf：还款 + 小额优惠显示「转账」。
+  const kind = displayKindOf(txn.postings, accounts)
+  // 徽章是「原始类型的状态提示」，账单档位对复合交易仍不出徽章（§7.2 冻结口径），
+  // 因此这里用原始 transactionKind，不用展示类型，避免凭空多出一枚「转账」徽章。
+  const rawKind = transactionKind(txn.postings, accounts)
   const entry = displayEntryOf(txn.postings, accounts)
   return {
     id: txn.id,
@@ -333,6 +338,6 @@ export function buildTxnRow(
     signed: kind !== 'transfer',
     title: buildTitle(txn, kind, accounts),
     meta: buildMeta(txn, accounts, kind, plan),
-    badges: buildBadges(txn, kind),
+    badges: buildBadges(txn, rawKind),
   }
 }

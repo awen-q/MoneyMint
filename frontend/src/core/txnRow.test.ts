@@ -279,3 +279,28 @@ describe('buildTxnRow：三档 variant 的 meta', () => {
     expect(row.meta).toHaveLength(3)
   })
 })
+
+describe('buildTxnRow：还款主体 + 小额优惠（Bug2 展示层）', () => {
+  const CARD: SummaryAccount = { id: 6, name: 'Liabilities:Card', type: 'Liabilities' }
+  const ACCOUNTS_WITH_CARD = [...ACCOUNTS, CARD]
+  /** Assets -4997 / Liabilities +5000 / Income -3。 */
+  const compound = makeTxn({
+    description: '还信用卡',
+    postings: [posting(1, '-4997.00'), posting(6, '5000.00'), posting(3, '-3.00')],
+  })
+
+  it('search 档 type meta 为「转账」，金额取转出方绝对值且不带正号', () => {
+    const row = buildTxnRow(compound, ACCOUNTS_WITH_CARD, 'search')
+    expect(row.meta.find((item) => item.kind === 'type')).toEqual({ kind: 'type', text: '转账' })
+    expect(row.signed).toBe(false)
+    expect(row.amount).toBe('4997.00')
+    expect(row.meta.find((item) => item.kind === 'account')).toEqual({
+      kind: 'account',
+      text: '银行卡 → Liabilities:Card',
+    })
+  })
+
+  it('bill 档不新增 income / transfer 徽章（冻结口径：badge 仍为 []）', () => {
+    expect(buildTxnRow(compound, ACCOUNTS_WITH_CARD, 'bill').badges).toEqual([])
+  })
+})

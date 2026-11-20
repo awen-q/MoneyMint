@@ -11,6 +11,7 @@ import {
   buildPostings,
   computeBalanceSummary,
   displayEntryOf,
+  displayKindOf,
   evaluateAmountExpression,
   accountRunningBalances,
   postingsBalanced,
@@ -388,5 +389,76 @@ describe('批 2.5：混合交易回退 / 账户 journal / 高级双录配平', (
       { commodity: 'CNY', diff: '70.00' },
       { commodity: 'USD', diff: '-10.00' },
     ])
+  })
+})
+
+describe('展示类型 displayKindOf：还款主体 + 小额优惠（Bug2）', () => {
+  const kindAccounts: SummaryAccount[] = [
+    { id: 1, name: 'Assets:Bank', type: 'Assets' },
+    { id: 2, name: 'Liabilities:CreditCard', type: 'Liabilities' },
+    { id: 3, name: 'Income:Discount', type: 'Income' },
+    { id: 4, name: 'Expenses:Food', type: 'Expenses' },
+    { id: 5, name: 'Equity:Opening', type: 'Equity' },
+  ]
+  const posting = (account_id: number, amount: string): PostingLike => ({
+    account_id,
+    amount,
+  })
+  /** 还款主体：Assets -4997 / Liabilities +5000 / Income -3。 */
+  const compound = [
+    posting(1, '-4997.00'),
+    posting(2, '5000.00'),
+    posting(3, '-3.00'),
+  ]
+
+  it('复合交易：原始 transactionKind 仍为 income，展示类型降格为 transfer', () => {
+    expect(transactionKind(compound, kindAccounts)).toBe('income')
+    expect(displayKindOf(compound, kindAccounts)).toBe('transfer')
+    // 展示金额复用 transferAmount 口径（取转出方绝对值），但 postings 未被改写。
+    expect(displayEntryOf(compound, kindAccounts)).toEqual({ amount: '4997.00', commodity: '' })
+    expect(compound.map((p) => p.amount)).toEqual(['-4997.00', '5000.00', '-3.00'])
+  })
+
+  it('五类不退化：退款 / 期初 / 纯收入 / 纯支出 / 转账', () => {
+    // 退款：同时含 Expenses + Income（transactionKind 已是 expense）。
+    const refund = [posting(1, '100.00'), posting(4, '-105.00'), posting(3, '5.00')]
+    expect(displayKindOf(refund, kindAccounts)).toBe('expense')
+    // 期初：含 Equity。
+    const opening = [posting(1, '1000.00'), posting(5, '-1000.00')]
+    expect(displayKindOf(opening, kindAccounts)).toBe('opening')
+    // 纯收入 / 纯支出 / 转账。
+    expect(displayKindOf([posting(1, '100.00'), posting(3, '-100.00')], kindAccounts)).toBe('income')
+    expect(displayKindOf([posting(1, '-100.00'), posting(4, '100.00')], kindAccounts)).toBe('expense')
+    expect(displayKindOf([posting(1, '-100.00'), posting(2, '100.00')], kindAccounts)).toBe('transfer')
+  })
+
+  it('五条条件任一不满足就不降格，且金额比较走 Money decimal', () => {
+    // 优惠不小于最小资金分录：主体就是收入。
+    expect(
+      displayKindOf([posting(1, '-3.00'), posting(2, '5000.00'), posting(3, '-3.00')], kindAccounts),
+    ).toBe('income')
+    // Income 为正（真实收入）。
+    expect(
+      displayKindOf([posting(1, '-4997.00'), posting(2, '5000.00'), posting(3, '3.00')], kindAccounts),
+    ).toBe('income')
+    // 两条 Income 分录。
+    expect(
+      displayKindOf(
+        [posting(1, '-4997.00'), posting(2, '5000.00'), posting(3, '-2.00'), posting(3, '-1.00')],
+        kindAccounts,
+      ),
+    ).toBe('income')
+    // 只有一条资金分录（没有一负一正）。
+    expect(
+      displayKindOf([posting(1, '-4997.00'), posting(3, '4997.00')], kindAccounts),
+    ).toBe('income')
+    // 非法金额保守不降格。
+    expect(
+      displayKindOf([posting(1, 'oops'), posting(2, '5000.00'), posting(3, '-3.00')], kindAccounts),
+    ).toBe('income')
+    // 小数精度：0.01 < 0.02 成立（证明未用浮点近似）。
+    expect(
+      displayKindOf([posting(1, '-0.02'), posting(2, '0.03'), posting(3, '-0.01')], kindAccounts),
+    ).toBe('transfer')
   })
 })

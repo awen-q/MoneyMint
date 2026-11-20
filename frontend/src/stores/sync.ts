@@ -10,13 +10,30 @@ import { computed, ref } from 'vue'
 
 import { getLedgerId, syncApi } from '@/api/client'
 import { SyncEngine, type SyncState, type SyncStatus } from '@/core/sync/engine'
+import { subscribeDataChange as subscribeCrossTabChange } from '@/core/sync/dataChangeChannel'
 import { MemorySyncStore, type SyncStore } from '@/core/sync/localStore'
 import { IdbSyncStore } from '@/core/sync/idbStore'
 import type { LocalTxn, PendingChange, PendingEntry } from '@/core/sync/models'
+import { markDirty } from '@/stores/dataFreshness'
 
 let engineInstance: SyncEngine | null = null
 let storeInstance: SyncStore | null = null
 let stopAutoSync: (() => void) | null = null
+/** 同步变更源内部计数：供 SyncBadge / 观测使用；快照层不再订阅它。 */
+const dataEpoch = ref(0)
+
+/**
+ * 跨 tab 广播只做桥接：校验账本后转调全局脏标记。
+ * 模块级注册一次，与 sync store 实例生命周期无关（页面存活期间始终有效）。
+ */
+subscribeCrossTabChange((event) => {
+  const current = getLedgerId()
+  if (current === null || current !== event.ledgerId) {
+    return
+  }
+  dataEpoch.value += 1
+  markDirty('cross-tab', event.ledgerId)
+})
 
 /** 取（或创建）底层存储：优先 IndexedDB，无则内存降级。 */
 async function ensureStore(): Promise<SyncStore> {
@@ -52,6 +69,14 @@ export const useSyncStore = defineStore('sync', () => {
       lastSyncAt.value = state.lastSyncAt
       pendingCount.value = state.pendingCount
       deadCount.value = state.deadCount
+    })
+    // pull 到真实变更 → 转调全局脏标记；只读观察，不改变同步库状态。
+    engine.subscribeDataChange((event) => {
+      dataEpoch.value += 1
+      if (getLedgerId() !== event.ledgerId) {
+        return
+      }
+      markDirty(event.reason, event.ledgerId)
     })
     engineInstance = engine
     return engine
@@ -132,6 +157,7 @@ export const useSyncStore = defineStore('sync', () => {
     deadItems,
     hasBacklog,
     initialized,
+    dataEpoch,
     bootstrap,
     syncNow,
     loadQueues,

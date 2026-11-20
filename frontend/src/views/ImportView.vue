@@ -23,6 +23,7 @@ import {
   mapImportError,
   type ImportSummaryRow,
 } from '@/core/m2'
+import { markDirty } from '@/stores/dataFreshness'
 
 const router = useRouter()
 
@@ -114,6 +115,8 @@ async function runImport(): Promise<void> {
   try {
     result.value = await importApi.execute(text.value, target.value)
     preview.value = null
+    // target=current 会写账户+交易；target=new 只建新账本，置脏也只会多一次无害刷新。
+    markDirty('local-write')
   } catch (err) {
     actionError.value =
       err instanceof ApiError ? mapImportError(err.status, err.message) : mapImportError(0, '')
@@ -130,6 +133,7 @@ async function runUndo(): Promise<void> {
   actionError.value = ''
   try {
     undoResult.value = await importApi.undo(result.value.import_batch_id)
+    markDirty('local-write')
   } catch (err) {
     actionError.value =
       err instanceof ApiError ? mapImportError(err.status, err.message) : mapImportError(0, '')

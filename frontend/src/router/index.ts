@@ -12,6 +12,8 @@ import {
 } from 'vue-router'
 
 import { setApiClientHooks } from '@/api/client'
+import { readLedgerId } from '@/core/storage'
+import { checkAndReload } from '@/stores/dataFreshness'
 import { useSessionStore } from '@/stores/session'
 import AccountsView from '@/views/AccountsView.vue'
 import AccountDetailView from '@/views/AccountDetailView.vue'
@@ -273,6 +275,12 @@ router.beforeEach(async (to) => {
     }
   }
   return true
+})
+
+// 页面激活补偿之一：路由回到消费快照的页面时只读检查脏标记。
+// 对所有路由一视同仁（不做易错的页签名单），已消费即 noop，开销可忽略。
+router.afterEach(() => {
+  checkAndReload(readLedgerId())
 })
 
 export default router

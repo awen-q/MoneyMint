@@ -23,6 +23,7 @@ import {
 import { moveItem, sortBySortOrder } from '@/core/ordering'
 import { accountLabel, todayString } from '@/core/record'
 import { readCategoryOrder, writeCategoryOrder } from '@/core/storage'
+import { markDirty } from '@/stores/dataFreshness'
 import { useSessionStore } from '@/stores/session'
 import MoneyText from '@/components/MoneyText.vue'
 
@@ -233,6 +234,7 @@ async function createCategory(): Promise<void> {
     newName.value = ''
     newParentId.value = null
     notice.value = `分类「${label}」已创建`
+    markDirty('local-write')
     await load()
   } catch (err) {
     notice.value = err instanceof ApiError ? err.message : '创建失败，请稍后重试'
@@ -270,6 +272,7 @@ async function confirmDelete(): Promise<void> {
     await accountApi.close(target.uuid)
     notice.value = `分类「${accountLabel(target)}」已关闭`
     deleteTarget.value = null
+    markDirty('local-write')
     await load()
   } catch (err) {
     notice.value = err instanceof ApiError ? `${err.message}` : '关闭失败，请稍后重试'

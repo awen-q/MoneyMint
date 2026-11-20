@@ -323,3 +323,35 @@ describe('TxnRow：徽章语义（T38 从旧流水页迁移）', () => {
     expect(badges[1].classes()).toContain('txn-row__badge--transfer')
   })
 })
+
+describe('TxnRow：复合交易展示标签（Bug2 回归）', () => {
+  it('core 判为 transfer 的行渲染出「转账」meta，且不自补正号', () => {
+    const accounts: AccountView[] = [
+      { id: 1, name: 'Assets:Bank', uuid: 'u1', type: 'Assets', open_date: '2026-01-01', sort_order: 1 },
+      { id: 3, name: 'Income:Discount', uuid: 'u3', type: 'Income', open_date: '2026-01-01', sort_order: 3 },
+      { id: 6, name: 'Liabilities:Card', uuid: 'u6', type: 'Liabilities', open_date: '2026-01-01', sort_order: 6 },
+    ]
+    const compound: TransactionView = {
+      id: 99,
+      uuid: 'txn-99',
+      date: '2026-11-20',
+      flag: '*',
+      description: '还信用卡',
+      created_by_name: '阿文',
+      postings: [
+        { account_id: 1, account: 'Assets:Bank', commodity: 'CNY', amount: '-4997.00' },
+        { account_id: 6, account: 'Liabilities:Card', commodity: 'CNY', amount: '5000.00' },
+        { account_id: 3, account: 'Income:Discount', commodity: 'CNY', amount: '-3.00' },
+      ],
+    }
+    const built = buildTxnRow(compound, accounts, 'search')
+    const wrapper = mount(TxnRow, {
+      props: { view: built, variant: 'search' },
+      global: { plugins: [createPinia()] },
+    })
+    expect(wrapper.text()).toContain('转账')
+    expect(wrapper.text()).not.toContain('收入')
+    expect(built.signed).toBe(false)
+    expect(built.badges).toEqual([])
+  })
+})

@@ -23,6 +23,7 @@ import { ApiError } from '@/api/errors'
 import type { PurgeLogEntry, PurgeSummary, TrashItemView } from '@/api/types'
 import SelectSheet from '@/components/shell/SelectSheet.vue'
 import { formatMoney } from '@/core/Money'
+import { markDirty } from '@/stores/dataFreshness'
 import { useSessionStore } from '@/stores/session'
 
 const session = useSessionStore()
@@ -157,6 +158,7 @@ async function restore(item: TrashItemView): Promise<void> {
   try {
     await transactionApi.restore(item.uuid)
     notice.value = `已恢复「${item.description}」`
+    markDirty('local-write')
     await load()
   } catch (err) {
     notice.value = err instanceof ApiError ? `恢复失败：${err.message}` : '恢复失败，请稍后重试'
@@ -227,6 +229,7 @@ async function confirmPurgeRow(): Promise<void> {
         : `已永久删除 ${res.count} 笔`
     sheet.value = 'none'
     activeItem.value = null
+    markDirty('local-write')
     await load()
   } catch (err) {
     // 失败时**不关弹层**：用户需要看到原因（如「系统生成的交易不能永久删除」）
@@ -254,6 +257,7 @@ async function confirmPurgeAll(): Promise<void> {
         : `已永久删除 ${res.count} 笔`
     sheet.value = 'none'
     purgeAllInput.value = ''
+    markDirty('local-write')
     await load()
   } catch (err) {
     notice.value = mapPurgeError(err)

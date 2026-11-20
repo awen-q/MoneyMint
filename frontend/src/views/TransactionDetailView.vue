@@ -19,10 +19,11 @@ import { ApiError } from '@/api/errors'
 import type { AccountView, TransactionView } from '@/api/types'
 import {
   displayEntryOf,
-  transactionKind,
+  displayKindOf,
   transferRoute,
   type TransactionKind,
 } from '@/core/record'
+import { markDirty } from '@/stores/dataFreshness'
 import { useRecordSheetStore } from '@/stores/recordSheet'
 import { useSessionStore } from '@/stores/session'
 import ReceiptSlip from '@/components/ReceiptSlip.vue'
@@ -61,7 +62,7 @@ const txn = computed<TransactionView | null>(() => {
 })
 
 const kind = computed(() =>
-  txn.value === null ? 'expense' : transactionKind(txn.value.postings, accounts.value),
+  txn.value === null ? 'expense' : displayKindOf(txn.value.postings, accounts.value),
 )
 const entry = computed(() =>
   txn.value === null
@@ -184,6 +185,9 @@ async function confirmDelete(): Promise<void> {
   try {
     await transactionApi.remove(txn.value.uuid)
     showDeleteConfirm.value = false
+    // 第三处断链：软删改变 transactionApi.list() 的结果但不推进 savedEpoch。
+    // 置脏后页面 visible → 快照立即 reload；随后 push 回列表时 afterEach 再查一次（已消费不重复拉）。
+    markDirty('local-write')
     void router.push({ name: 'transactions' })
   } catch (err) {
     notice.value = err instanceof ApiError ? `删除失败：${err.message}` : '删除失败，请稍后重试'

@@ -11,6 +11,8 @@ import { defineStore } from 'pinia'
 
 import type { TransactionCreateResult } from '@/api/client'
 import type { TransactionView } from '@/api/types'
+import { markDirty } from '@/stores/dataFreshness'
+import { useSessionStore } from '@/stores/session'
 
 export const useRecordSheetStore = defineStore('recordSheet', () => {
   const isOpen = ref(false)
@@ -37,13 +39,16 @@ export const useRecordSheetStore = defineStore('recordSheet', () => {
 
   function notifySaved(result: TransactionCreateResult): void {
     lastSaved.value = result
-    // 纯计数器（非金额运算），供首页 watch 后重新加载数据。
+    // 纯计数器（非金额运算），保留给仍 watch 它的详情编辑等原消费方。
     savedEpoch.value = savedEpoch.value + 1
+    // 快照失效的唯一信号：全局脏标记（账本隔离用当前 session 的 ledgerId）。
+    markDirty('local-write', useSessionStore().ledgerId)
   }
 
-  /** 编辑保存成功：不产生新建结果，仅推进 savedEpoch 让列表/详情刷新。 */
+  /** 编辑保存成功：不产生新建结果，保留 savedEpoch 并置全局脏标记。 */
   function notifyChanged(): void {
     savedEpoch.value = savedEpoch.value + 1
+    markDirty('local-write', useSessionStore().ledgerId)
   }
 
   return {

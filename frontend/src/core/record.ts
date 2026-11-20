@@ -542,6 +542,82 @@ export function transactionKind(
   return 'expense'
 }
 
+/**
+ * 展示类型分类器（Bug2）：只在「还款主体 + 小额优惠」复合交易上把 `income`
+ * 降格为 `transfer`，其余原样返回 `transactionKind`。
+ *
+ * 五条条件必须**全部**满足（顺序与方案 §3.2 一致）：
+ * 1. `transactionKind === 'income'`（不动 expense / opening / transfer）；
+ * 2. 无 Equity、无 Expenses 分录（排除期初与退款/报销：后端明确支持一笔
+ *    同时命中 expense+income，那类交易即使有 Income 也不降格）；
+ * 3. ≥2 条资金分录（Assets/Liabilities），且存在一负一正（还款主体结构）；
+ * 4. 恰有 1 条 Income 分录且金额 < 0（优惠/冲减，fava 收入原值为负）；
+ * 5. `|Income| < min(|资金分录|)`（小额优惠，排除主体就是真实收入）。
+ *
+ * ⚠️ 两套 kind 语义刻意并存：这里是**整笔展示标签**，后端 `kind` 是
+ * **分录级查询命中**。展示为「转账」的交易仍可能被 `kind=income` 筛出，
+ * 这是刻意保留的既有差异；统计与 Beancount 导出只认原始 postings。
+ * 金额一律走 Money decimal，禁用 Math.abs / parseFloat。
+ */
+export function displayKindOf(
+  postings: PostingLike[],
+  accounts: SummaryAccount[],
+): TransactionKind {
+  const kind = transactionKind(postings, accounts)
+  if (kind !== 'income') {
+    return kind
+  }
+
+  let fundCount = 0
+  let hasNegativeFund = false
+  let hasPositiveFund = false
+  let minFundAbs: Money | null = null
+  let incomeCount = 0
+  let incomeAmount: Money | null = null
+
+  try {
+    for (const posting of postings) {
+      const account = findAccount(accounts, posting.account_id)
+      const type = account === undefined ? '' : account.type
+      // 条件 2：期初 / 退款类即使 transactionKind 未来调整也不降格。
+      if (type === 'Equity' || type === 'Expenses') {
+        return kind
+      }
+      const money = Money.from(posting.amount)
+      if (type === 'Assets' || type === 'Liabilities') {
+        fundCount += 1
+        if (money.isNegative()) {
+          hasNegativeFund = true
+        } else if (!money.isZero()) {
+          hasPositiveFund = true
+        }
+        const magnitude = money.abs()
+        if (minFundAbs === null || magnitude.minus(minFundAbs).isNegative()) {
+          minFundAbs = magnitude
+        }
+      } else if (type === 'Income') {
+        incomeCount += 1
+        incomeAmount = money
+      }
+    }
+  } catch {
+    // 非法金额保守不降格：宁可保留原标签，也不能靠猜测改展示口径。
+    return kind
+  }
+
+  if (fundCount < 2 || !hasNegativeFund || !hasPositiveFund) {
+    return kind
+  }
+  if (incomeCount !== 1 || incomeAmount === null || !incomeAmount.isNegative()) {
+    return kind
+  }
+  // 条件 5：严格小于；等于时属于「主体即收入」，不降格。
+  if (minFundAbs === null || !incomeAmount.abs().minus(minFundAbs).isNegative()) {
+    return kind
+  }
+  return 'transfer'
+}
+
 function amountAbs(amount: string): string {
   try {
     return Money.from(amount).abs().toString()
@@ -630,7 +706,7 @@ export function displayEntryOf(
   if (postings.length === 0) {
     return { amount: '0.00', commodity: '' }
   }
-  if (transactionKind(postings, accounts) === 'transfer') {
+  if (displayKindOf(postings, accounts) === 'transfer') {
     for (const posting of postings) {
       const account = findAccount(accounts, posting.account_id)
       const type = account === undefined ? '' : account.type
