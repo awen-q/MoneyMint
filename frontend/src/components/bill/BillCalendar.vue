@@ -6,9 +6,10 @@
  * 1. **判断全在 `core/bill.ts`，本组件只映射到 DOM**。`kind`/`text`/`incomeDot`/`ariaLabel`
  *    都是 `billCells` 的产出；组件里**不判正负、不拼金额、不排序、不 slice**。
  *    一旦在渲染层再判一次，日历格与卡头合计就会各说各话。
- * 2. **`both` 只显示支出侧**（LO-01：格宽放不下两行数字），收入只体现为右上角 4px 圆点，
- *    收入金额只进读屏文案。所以这里不会出现「第二行数字」。
- * 3. **遮挡优先**：`masked` 为真时格子只显示遮挡符，读屏文案换成「N月D日，金额已隐藏」。
+ * 2. **`both` 主数字仍是支出侧**（`text` 口径不动）：同日有收入时第二行另显示
+ *    `incomeText`，右上角 4px 圆点仍作快速扫描标记，精确值照旧进读屏文案。
+ * 3. **遮挡优先**：`masked` 为真时格子只显示遮挡符，读屏文案换成「N月D日，金额已隐藏」；
+ *    收入第二行与收入圆点一起隐藏，遮挡态不泄露「这日有收入」的结构信息。
  *    刻意**不复用** core 的精确文案再打码 —— 那会念成「收入 金额已隐藏，支出 金额已隐藏」，
  *    既啰嗦又额外暴露「这天收支都有」。
  *
@@ -98,6 +99,18 @@ function cellText(cell: CalendarDay): string {
   return props.masked ? PRIVACY_MASK : data.text
 }
 
+/**
+ * 同日双有格的第二行收入数字：仅 `both` 有值；遮挡态一律不显示（连圆点一起隐藏）。
+ * 纯收入日的第一行已经是 `+1.8k`，不重复再摆一行。
+ */
+function incomeCellText(cell: CalendarDay): string {
+  if (cellKind(cell) !== 'both' || props.masked) {
+    return ''
+  }
+  const data = cellOf(cell.day, cell.inMonth)
+  return data === undefined ? '' : (data.incomeText ?? '')
+}
+
 function hasIncomeDot(cell: CalendarDay): boolean {
   const data = cellOf(cell.day, cell.inMonth)
   return data !== undefined && data.incomeDot
@@ -166,15 +179,19 @@ function isSelected(cell: CalendarDay): boolean {
         @click="cell.inMonth ? emit('pick', cell.day) : undefined"
       >
         <span class="cal__day">{{ cell.day }}</span>
-        <span v-if="hasIncomeDot(cell)" class="cal__dot" aria-hidden="true" />
+        <span v-if="!props.masked && hasIncomeDot(cell)" class="cal__dot" aria-hidden="true" />
         <span v-if="cellText(cell) !== ''" class="cal__amount">{{ cellText(cell) }}</span>
+        <span
+          v-if="incomeCellText(cell) !== ''"
+          class="cal__amount cal__amount--income"
+        >{{ incomeCellText(cell) }}</span>
       </component>
     </div>
 
     <!-- 操作说明（B-06 ④ / 设计 `.tap-hint`）：移动端第一次用不知道格子可点 -->
     <p class="bill-cal__hint">
       点击日期：选中该日并弹出当日交易流水（再点同日取消选中）；格内金额为简写：支出（红）/
-      纯收入日（绿），同日有收入时右上角加点
+      纯收入日（绿），同日有收入时第二行显示收入金额，右上角圆点仍作快速扫描标记
     </p>
   </div>
 </template>
@@ -254,14 +271,15 @@ function isSelected(cell: CalendarDay): boolean {
 
 /* 42 格日历格（B-02，设计 `.cal-cell`）：
    **无框 + 透明底 + 日号左对齐** —— 原来每格 1px 实线 + 卡底 + 居中，42 格变成 Excel 表格。
-   46px 格高是 LO-01 实测结论（低于此值简写金额放不下），勿降。 */
+   46px 是单行金额的旧实测下限；同日双有要摆两行金额（15.5 + 11.5×2 + padding 6 + border 2
+   ≈ 46.5），故抬到 52px，勿降到 46 切掉第二行。 */
 .cal__cell {
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   justify-content: flex-start;
-  min-height: 46px;
+  min-height: 52px;
   padding: 3px 4px;
   border: 1px solid transparent;
   border-radius: 8px;
@@ -341,6 +359,22 @@ function isSelected(cell: CalendarDay): boolean {
 .cal__cell--on.cal__cell--expense-only .cal__amount,
 .cal__cell--on.cal__cell--both .cal__amount {
   color: var(--fb-danger-ink);
+}
+
+/* 双有格第二行收入：默认绿。上面的 `.cal__cell--both .cal__amount` 也会命中它，
+   所以显式加一条同特异性选择器，否则第二行会被染成支出红。 */
+.cal__amount--income,
+.cal__cell--both .cal__amount--income {
+  color: var(--fb-green);
+}
+
+/* 镜像上面的 income-only ink 覆盖：today/on 有 soft 填充，绿字要回到 ink 变体过 AA。
+   `both` 格同样命中支出红的 ink 覆盖，故这里两条都列出。 */
+.cal__cell--today.cal__cell--income-only .cal__amount--income,
+.cal__cell--on.cal__cell--income-only .cal__amount--income,
+.cal__cell--today.cal__cell--both .cal__amount--income,
+.cal__cell--on.cal__cell--both .cal__amount--income {
+  color: var(--fb-green-ink);
 }
 
 /* 收入圆点：设计 `.i-dot`（top/right 4px） */

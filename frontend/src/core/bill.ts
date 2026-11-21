@@ -67,8 +67,10 @@ export type BillCellKind = 'both' | 'income-only' | 'expense-only' | 'empty'
 export interface BillCell {
   day: number
   kind: BillCellKind
-  /** 主数字，已带符号；`empty` 时为 `''`。 */
+  /** 主数字，已带符号；`empty` 时为 `''`。`both` 仍只给支出侧。 */
   text: string
+  /** 收入侧简写数字（加法字段）；仅 `both` / `income-only` 有值，其余为 `undefined`。 */
+  incomeText?: string
   /** `kind === 'both'` 时为 true（右上角 4px 收入圆点）。 */
   incomeDot: boolean
   /** 读屏精确值（两位小数，不走 compact）；`empty` 时为「N月D日，无收支」。 */
@@ -278,15 +280,18 @@ function incomeText(income: string): string {
 }
 
 /**
- * 日历格四态（LO-01：格宽 37px 放不下两行数字，故 `both` 只显示支出侧，
- * 收入用右上角 4px 圆点表示；收入金额在读屏文案里给全）。
+ * 日历格四态：`text` 是主数字，`incomeText` 是同日双有时第二行的收入数字。
  *
- * | kind | 条件 | text |
- * |---|---|---|
- * | `both` | expense > 0 且 income > 0 | 支出侧 `-967` |
- * | `expense-only` | expense > 0、income = 0 | `-967` |
- * | `income-only` | expense = 0、income > 0 | `+1.8k` |
- * | `empty` | 皆 0 | `''` |
+ * `both` 的 `text` 仍**只给支出侧**（`-967`，老断言与调用方口径不动）；收入另放
+ * `incomeText`，由渲染层决定第二行是否显示。右上角 4px 圆点保留作快速扫描标记，
+ * 精确两位小数仍由 `ariaLabel` 给全（隐私遮挡时圆点与第二行一起隐藏）。
+ *
+ * | kind | 条件 | text | incomeText |
+ * |---|---|---|---|
+ * | `both` | expense > 0 且 income > 0 | 支出侧 `-967` | 收入侧 `+1.9w` |
+ * | `expense-only` | expense > 0、income = 0 | `-967` | — |
+ * | `income-only` | expense = 0、income > 0 | `+1.8k` | `+1.8k`（incomeText 同值） |
+ * | `empty` | 皆 0 | `''` | — |
  *
  * 「为 0」按**展示精度**判断（`isDisplayZero()`，即两位小数舍入后为 0），
  * 否则 `0.001` 这种舍入后显示 `0` 的日会被判成 `expense-only`、格子里出现
@@ -327,13 +332,18 @@ export function billCells(
     } else if (kind === 'expense-only') {
       ariaLabel = `${dateLabel}，支出 ${point.expense}`
     }
-    cells.push({
+    const cell: BillCell = {
       day: point.day,
       kind,
       text,
       incomeDot: kind === 'both',
       ariaLabel,
-    })
+    }
+    // 加法字段：复用同一个 incomeText() 简写口径，主数字 text 一行未改。
+    if (kind === 'both' || kind === 'income-only') {
+      cell.incomeText = incomeText(point.income)
+    }
+    cells.push(cell)
   }
   return cells
 }

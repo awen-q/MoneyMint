@@ -31,7 +31,14 @@ const TOTALS: BillMonthTotals = {
 const CELLS: BillCell[] = [
   { day: 1, kind: 'empty', text: '', incomeDot: false, ariaLabel: '11月1日，无收支' },
   { day: 2, kind: 'expense-only', text: '-967', incomeDot: false, ariaLabel: '11月2日，支出 967.00' },
-  { day: 3, kind: 'both', text: '-100', incomeDot: true, ariaLabel: '11月3日，收入 19000.00，支出 100.00' },
+  {
+    day: 3,
+    kind: 'both',
+    text: '-100',
+    incomeText: '+1.9w',
+    incomeDot: true,
+    ariaLabel: '11月3日，收入 19000.00，支出 100.00',
+  },
   { day: 4, kind: 'income-only', text: '+500', incomeDot: false, ariaLabel: '11月4日，收入 500.00' },
 ]
 
@@ -119,6 +126,24 @@ describe('BillCalendar：网格与四态', () => {
     expect(cells[2].find('.cal__dot').exists()).toBe(true)
     expect(cells[3].classes()).toContain('cal__cell--income-only')
     expect(cells[3].find('.cal__amount').text()).toBe('+500')
+  })
+
+  it('同日双有：支出在第一行，收入在第二行并带 --income 修饰', () => {
+    const cells = mountCalendar().findAll('button.cal__cell')
+    const amounts = cells[2].findAll('.cal__amount')
+    expect(amounts).toHaveLength(2)
+    expect(amounts[0].text()).toBe('-100')
+    expect(amounts[1].text()).toBe('+1.9w')
+    expect(amounts[1].classes()).toContain('cal__amount--income')
+    // 纯收入日只有一行，不重复显示第二行
+    expect(cells[3].findAll('.cal__amount')).toHaveLength(1)
+  })
+
+  it('遮挡态：收入第二行与收入圆点都不渲染', () => {
+    const cells = mountCalendar({ masked: true }).findAll('button.cal__cell')
+    expect(cells[2].findAll('.cal__amount')).toHaveLength(1)
+    expect(cells[2].find('.cal__amount--income').exists()).toBe(false)
+    expect(cells[2].find('.cal__dot').exists()).toBe(false)
   })
 
   it('未遮挡时读屏文案用 core 的 ariaLabel（含金额）', () => {

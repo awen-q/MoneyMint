@@ -274,6 +274,10 @@ describe('BillsView：日历', () => {
     expect(day3.find('.cal__dot').exists()).toBe(true)
     expect(day3.find('.cal__amount').text()).toBe('-967')
     expect(day3.attributes('aria-label')).toContain('收入')
+    const amounts = day3.findAll('.cal__amount')
+    expect(amounts).toHaveLength(2)
+    expect(amounts[1].text()).toBe('+1.9w')
+    expect(amounts[1].classes()).toContain('cal__amount--income')
   })
 
   it('纯收入日显示 + 号，纯支出日显示 - 号', () => {
@@ -362,6 +366,10 @@ describe('BillsView：数据一致性', () => {
     // 日历格的读屏文案也不得含真值
     const day3 = wrapper.findAll('button.cal__cell')[2]
     expect(day3.attributes('aria-label')).toBe('11月3日，金额已隐藏')
+    // 双有日：收入第二行与「有收入」圆点都不得泄露
+    expect(day3.findAll('.cal__amount')).toHaveLength(1)
+    expect(day3.find('.cal__amount--income').exists()).toBe(false)
+    expect(day3.find('.cal__dot').exists()).toBe(false)
   })
 
   it('折线在遮挡态收到 masked=true', async () => {

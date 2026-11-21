@@ -234,6 +234,8 @@ function goChangePassword(): void {
     overflow-y: auto;
     overscroll-behavior: contain;
     padding: 26px 28px;
+    /* 顶栏压到一行后收回上方空白；横向 28px 与底部 24px 不动 */
+    padding-top: 16px;
     padding-bottom: 24px;
   }
 

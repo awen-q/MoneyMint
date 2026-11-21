@@ -207,6 +207,8 @@ describe('billCells：四态与主数字', () => {
     expect(cell.kind).toBe('both')
     expect(cell.text).toBe('-967')
     expect(cell.text.charAt(0)).toBe('-')
+    // 收入是加法字段：18500 → formatCompact 的 1.9w 档，主数字仍只有支出
+    expect(cell.incomeText).toBe('+1.9w')
     expect(cell.incomeDot).toBe(true)
     // 读屏文案给全两位小数精确值，且不带 compact 后缀
     expect(cell.ariaLabel).toBe('11月10日，收入 18500.00，支出 967.00')
@@ -217,6 +219,7 @@ describe('billCells：四态与主数字', () => {
     const cells = billCells([expenseTxn(1, '2026-11-05', '3.81')], 2026, 11, 'CNY')
     expect(cells[4].kind).toBe('expense-only')
     expect(cells[4].text).toBe('-4') // 3.81 四舍五入到整数元
+    expect(cells[4].incomeText).toBeUndefined()
     expect(cells[4].incomeDot).toBe(false)
     expect(cells[4].ariaLabel).toBe('11月5日，支出 3.81')
   })
@@ -225,6 +228,8 @@ describe('billCells：四态与主数字', () => {
     const cells = billCells([incomeTxn(1, '2026-11-03', '1800.00')], 2026, 11, 'CNY')
     expect(cells[2].kind).toBe('income-only')
     expect(cells[2].text).toBe('+1.8k')
+    // income-only 的 incomeText 与主数字同值（渲染层只摆第一行，不重复）
+    expect(cells[2].incomeText).toBe('+1.8k')
     expect(cells[2].incomeDot).toBe(false)
     expect(cells[2].ariaLabel).toBe('11月3日，收入 1800.00')
   })
@@ -235,6 +240,7 @@ describe('billCells：四态与主数字', () => {
     for (const cell of cells) {
       expect(cell.kind).toBe('empty')
       expect(cell.text).toBe('')
+      expect(cell.incomeText).toBeUndefined()
       expect(cell.incomeDot).toBe(false)
     }
     expect(cells[0].ariaLabel).toBe('11月1日，无收支')

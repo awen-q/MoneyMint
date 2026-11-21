@@ -148,12 +148,19 @@ function togglePrivacy(): void {
   white-space: nowrap;
 }
 
-/* ≥900：侧栏已承担品牌与导航，顶栏退化为浅色窄条，只留账本行与三小件 */
+/* ≥900：侧栏已承担品牌与导航，顶栏退化为浅色窄条，只留账本行与三小件。
+   `.hd` 自己变 flex 行容器，账本用 order:-1 视觉左移，DOM 不动；
+   padding-top 显式重声明，钉死基础 safe-area padding 的覆盖，避免空白带回归。 */
 @media (min-width: 900px) {
   .hd {
     position: static;
-    min-height: 60px;
-    padding: 8px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 44px;
+    padding: 6px 24px;
+    padding-top: 6px;
     background: var(--fb-card);
     color: var(--fb-ink);
     box-shadow: none;
@@ -164,14 +171,27 @@ function togglePrivacy(): void {
     display: none;
   }
 
-  /* 品牌已由侧栏承担，PC 顶栏只留「账本行 + 三小件」，避免同一品牌出现两次 */
+  /* 父级 space-between 已把三小件推到右侧，这里不再自己 margin-left:auto */
   .hd__tools {
-    margin-left: auto;
+    margin-left: 0;
   }
 
+  .hd__row {
+    min-height: 0;
+  }
+
+  /* DOM 仍是「三小件在前、账本在后」，视觉上合成一行：账本左、三小件右 */
   .hd__ledger {
-    margin-top: 2px;
+    order: -1;
+    margin: 0;
     color: var(--fb-sub);
+  }
+
+  /* PC 只有鼠标目标，缩到 32×32；移动端 44×44 触控区不受影响 */
+  .hd__icon {
+    width: 32px;
+    height: 32px;
+    padding: 1px;
   }
 
   .hd__icon-box {
