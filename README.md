@@ -1,5 +1,15 @@
 # FamBean 家庭协作记账
 
+![GitHub stars](https://img.shields.io/github/stars/quewen08/MoneyMint?style=social)
+[![License](https://img.shields.io/github/license/quewen08/MoneyMint)](./LICENSE)
+[![GitHub contributors](https://img.shields.io/github/contributors/quewen08/MoneyMint)](https://github.com/quewen08/MoneyMint/graphs/contributors)
+[![Man hours](https://manhours.aiursoft.com/r/github.com/quewen08/MoneyMint.svg)](https://manhours.aiursoft.com/r/github.com/quewen08/MoneyMint.html)
+![docker pulls](https://img.shields.io/docker/pulls/quewen08/money-mint)
+![GitHub last commit](https://img.shields.io/github/last-commit/quewen08/MoneyMint)
+![GitHub commit activity](https://img.shields.io/github/commit-activity/m/quewen08/MoneyMint)
+![GitHub repo size](https://img.shields.io/github/repo-size/quewen08/MoneyMint)
+![GitHub repo language](https://img.shields.io/github/languages/top/quewen08/MoneyMint)
+
 跑在 NAS 个人云上的**家庭协作复式记账**应用，数据模型对标 [Beancount](https://beancount.github.io/)。
 后端为 Go + SQLite（可平滑切换 Postgres），前端与 API 由同一个 Go 进程在单端口托管。
 
