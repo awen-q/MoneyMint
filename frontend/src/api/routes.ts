@@ -1,6 +1,6 @@
 /**
- * 后端端点路径常量（批 0 起，**现为 43 条**：批 4 扩至 36 条后，B3 搜索分页、
- * B5 资产页、B6 资产时序、B7 永久删除两条陆续补齐；数量由
+ * 后端端点路径常量（批 0 起，**现为 44 条**：批 4 扩至 36 条后，B3 搜索分页、
+ * B5 资产页、B6 资产时序、B7 永久删除两条、P0 分类排序批量提交陆续补齐；数量由
  * `api/client.contract.test.ts` 硬断言）
  *
  * 与 `internal/server/router.go` 的 `mux.HandleFunc("/api/...")` 一一对应；
@@ -36,6 +36,8 @@ export const API_ROUTES = {
    * JSON 键缺失由后端返回 400；不新增常量，前端两处创建调用点均已显式上送。
    */
   accounts: '/api/accounts',
+  /** PATCH /api/accounts/sort-order（P0 分类拖拽：按 type 整组提交 uuid+sort_order） */
+  accountSortOrder: '/api/accounts/sort-order',
   /** GET /api/accounts/{uuid}/opening · POST /api/accounts/{uuid}/opening */
   accountOpening: '/api/accounts/{uuid}/opening',
   /** GET /api/accounts/{uuid}/balance · POST /api/accounts/{uuid}/balance（0.6.0 S4 余额校准） */

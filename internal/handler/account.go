@@ -7,6 +7,7 @@ import (
 
 	"familyledger/internal/auth"
 	"familyledger/internal/domain"
+	"familyledger/internal/service"
 )
 
 // HandleListAccounts 列出账户及其余额。`?include_closed` 的**取值**语义见
@@ -24,6 +25,31 @@ func (h *Handler) HandleListAccounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"accounts": accounts})
+}
+
+// HandleUpdateAccountSortOrder 批量提交分类拖拽后的排序（P0）。
+// Body: {"orders":[{"uuid":"...","sort_order":0}, ...]}。
+// 同一事务全成全败；每条更新写 sync_log(op=update)，供其他端 pull 重排。
+// viewer 只读由 authMiddleware 统一拦截（非 GET 一律 403），handler 不重复判定。
+func (h *Handler) HandleUpdateAccountSortOrder(w http.ResponseWriter, r *http.Request) {
+	ledgerID, ok := auth.LedgerID(r.Context())
+	if !ok {
+		writeError(w, domain.ErrForbidden)
+		return
+	}
+	var req struct {
+		Orders []service.AccountSortOrderItem `json:"orders"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, err)
+		return
+	}
+	updated, err := h.svc.UpdateAccountSortOrders(ledgerID, req.Orders)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "updated": updated})
 }
 
 // includeClosedFromQuery 按**取值**解析 `?include_closed`（不是「参数存在即生效」）。

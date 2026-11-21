@@ -259,7 +259,7 @@ const MIDDLEWARE_EXEMPT: readonly string[] = [
 ]
 
 describe('契约 B：X-Ledger-Id 断言与 middleware 豁免端点矩阵（AC-25 / E-08）', () => {
-  it('43 条端点逐路径与 middleware 豁免集合完全一致', () => {
+  it('44 条端点逐路径与 middleware 豁免集合完全一致', () => {
     const routeNames = Object.keys(API_ROUTES) as Array<keyof typeof API_ROUTES>
     // 覆盖完整性自检：路由常量确实全部纳入判定。
     // 0.6.0 S2 新增 commodities / commodityByUuid，S4 新增 accountBalance，
@@ -267,7 +267,8 @@ describe('契约 B：X-Ledger-Id 断言与 middleware 豁免端点矩阵（AC-25
     // （均为业务端点，不在 MIDDLEWARE_EXEMPT 中，必须携带 X-Ledger-Id）。
     // B7 新增 transactionsTrashPurge / transactionPurge 两条**业务端点**
     // （永久删除必须带 X-Ledger-Id），同样不进豁免清单。
-    expect(routeNames.length).toBe(43)
+    // P0 新增 accountSortOrder（分类排序批量提交）也是业务端点，不进豁免清单。
+    expect(routeNames.length).toBe(44)
 
     for (const name of routeNames) {
       const expected = MIDDLEWARE_EXEMPT.indexOf(name) >= 0

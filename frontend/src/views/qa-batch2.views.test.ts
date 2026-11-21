@@ -135,9 +135,9 @@ describe('批2-H：分类排序合并（新增落末尾 / 删除无幽灵项）'
     return names
   }
 
-  it('本地 order [2,1] 时按本地序渲染（覆盖服务端 sort_order）', async () => {
+  it('本地 order [u2,u1] 时按本地序渲染（覆盖服务端 sort_order）', async () => {
     h.list.mockResolvedValue(accountsFor([1, 2, 3]))
-    writeCategoryOrder(7, { Expenses: [2, 1] })
+    writeCategoryOrder(7, { Expenses: ['u2', 'u1'] })
     const wrapper = mount(CategoriesView)
     await flushPromises()
     const names = expensesOrder(wrapper)
@@ -147,7 +147,7 @@ describe('批2-H：分类排序合并（新增落末尾 / 删除无幽灵项）'
 
   it('新增分类（本地 order 无记录）追加到该组末尾', async () => {
     h.list.mockResolvedValue(accountsFor([1, 2, 4, 3]))
-    writeCategoryOrder(7, { Expenses: [2, 1] })
+    writeCategoryOrder(7, { Expenses: ['u2', 'u1'] })
     const wrapper = mount(CategoriesView)
     await flushPromises()
     const names = expensesOrder(wrapper)
@@ -155,9 +155,9 @@ describe('批2-H：分类排序合并（新增落末尾 / 删除无幽灵项）'
     wrapper.unmount()
   })
 
-  it('删除分类后残留 id 不产生幽灵项，剩余项保持本地相对顺序', async () => {
+  it('删除分类后残留 uuid 不产生幽灵项，剩余项保持本地相对顺序', async () => {
     h.list.mockResolvedValue(accountsFor([1, 3])) // id=2 已删除
-    writeCategoryOrder(7, { Expenses: [2, 1] })
+    writeCategoryOrder(7, { Expenses: ['u2', 'u1'] })
     const wrapper = mount(CategoriesView)
     await flushPromises()
     const names = expensesOrder(wrapper)

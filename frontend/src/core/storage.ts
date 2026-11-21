@@ -130,7 +130,7 @@ export function clearDraft(ledgerId: number): void {
   removeKey(draftKey(ledgerId))
 }
 
-/** 分类拖拽顺序键前缀（按账本命名空间），值为 `{ Expenses: [id…], Income: [id…] }`。 */
+/** 分类拖拽顺序键前缀（按账本命名空间），值为 `{ Expenses: [uuid…], Income: [uuid…] }`（P0 起）。 */
 export const CATEGORY_ORDER_KEY_PREFIX = 'fambean.category_order.'
 
 export function categoryOrderKey(ledgerId: number): string {
@@ -138,11 +138,15 @@ export function categoryOrderKey(ledgerId: number): string {
 }
 
 /**
- * 读取分类拖拽顺序（§14.5 #2：顺序写回本地并随下次数据加载合并校准）。
- * 损坏 JSON / 非法 id 一律容错为空对象，绝不抛错。
+ * 读取分类拖拽顺序（P0 起存 uuid；仅作本地草稿，真相源是服务端 sort_order）。
+ *
+ * 旧格式是 `Record<string, number[]>`（账户 id）。若继续读进来，`indexOf(uuid)`
+ * 会全为 -1，排序静默失效且 UI 看起来「保存成功但没生效」——因此整组丢弃并清理
+ * 存储，回落到服务端 sort_order。损坏 JSON / 非对象形状同样容错为空对象。
  */
-export function readCategoryOrder(ledgerId: number): Record<string, number[]> {
-  const raw = readString(categoryOrderKey(ledgerId))
+export function readCategoryOrder(ledgerId: number): Record<string, string[]> {
+  const key = categoryOrderKey(ledgerId)
+  const raw = readString(key)
   if (raw === null || raw === '') {
     return {}
   }
@@ -151,20 +155,38 @@ export function readCategoryOrder(ledgerId: number): Record<string, number[]> {
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
       return {}
     }
-    const out: Record<string, number[]> = {}
+    const out: Record<string, string[]> = {}
     const record = parsed as Record<string, unknown>
-    for (const key of Object.keys(record)) {
-      const list = record[key]
+    let dropped = false
+    for (const group of Object.keys(record)) {
+      const list = record[group]
       if (!Array.isArray(list)) {
+        dropped = true
         continue
       }
-      const ids: number[] = []
+      const uuids: string[] = []
+      let legacy = false
       for (const item of list) {
-        if (typeof item === 'number' && Number.isSafeInteger(item) && item > 0) {
-          ids.push(item)
+        if (typeof item === 'string' && item.trim() !== '') {
+          uuids.push(item)
+        } else {
+          // number[] 旧格式或混合脏数据：整组丢弃，绝不把数字当 uuid。
+          legacy = true
         }
       }
-      out[key] = ids
+      if (legacy) {
+        dropped = true
+        continue
+      }
+      out[group] = uuids
+    }
+    if (dropped) {
+      // 就地清理脏数据，避免每次读都重复降级。
+      if (Object.keys(out).length === 0) {
+        removeKey(key)
+      } else {
+        writeString(key, JSON.stringify(out))
+      }
     }
     return out
   } catch {
@@ -172,10 +194,10 @@ export function readCategoryOrder(ledgerId: number): Record<string, number[]> {
   }
 }
 
-/** 写回分类拖拽顺序（按账本命名空间；只存账户 id 序列，不含任何凭据）。 */
+/** 写回分类拖拽顺序草稿（按账本命名空间；只存 uuid 序列，不含任何凭据）。 */
 export function writeCategoryOrder(
   ledgerId: number,
-  order: Record<string, number[]>,
+  order: Record<string, string[]>,
 ): void {
   writeString(categoryOrderKey(ledgerId), JSON.stringify(order))
 }

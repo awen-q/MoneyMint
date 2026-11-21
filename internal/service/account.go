@@ -7,9 +7,15 @@ import (
 	"unicode"
 
 	"familyledger/internal/domain"
+	"familyledger/internal/repository"
 
 	"github.com/google/uuid"
 )
+
+// AccountSortOrderItem 是批量排序提交的单项（跨端一律用 uuid 互引，§8）。
+// 直接复用 repository 的载体，避免两层重复定义与字段漂移。
+type AccountSortOrderItem = repository.AccountSortOrderItem
+
 
 // AccountView 是账户列表项的返回视图（含按币种余额）。
 type AccountView struct {
@@ -137,6 +143,32 @@ func (s *Service) ListAccounts(ledgerID int64, includeClosed bool) ([]AccountVie
 		})
 	}
 	return out, nil
+}
+
+// UpdateAccountSortOrders 校验并批量落库账户排序（P0 分类拖拽排序）。
+//
+// 校验约定与 ValidateAccountName 一致：ErrInvalid + 中文原因（→HTTP 400）：
+// 空列表 / 空 uuid / 负 sort_order / 同一批内 uuid 重复。
+// 「非本账本 uuid」由 repository 的 UPDATE 守卫判定，同样返回 ErrInvalid。
+// 校验不通过时不落库、不写 sync_log。
+func (s *Service) UpdateAccountSortOrders(ledgerID int64, orders []AccountSortOrderItem) (int64, error) {
+	if len(orders) == 0 {
+		return 0, domain.Invalidf("排序项不能为空")
+	}
+	seen := make(map[string]bool, len(orders))
+	for _, item := range orders {
+		if item.UUID == "" {
+			return 0, domain.Invalidf("排序项的账户 uuid 不能为空")
+		}
+		if item.SortOrder < 0 {
+			return 0, domain.Invalidf("排序序号不能为负数：账户 %s 的 sort_order=%d", item.UUID, item.SortOrder)
+		}
+		if seen[item.UUID] {
+			return 0, domain.Invalidf("同一批次内账户 uuid 重复：%s", item.UUID)
+		}
+		seen[item.UUID] = true
+	}
+	return s.repo.UpdateAccountSortOrders(ledgerID, orders)
 }
 
 // CreateAccount 创建账户（含币种限制时自动补建币种）。

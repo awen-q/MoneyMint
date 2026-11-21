@@ -3,7 +3,7 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { moveItem, sortBySortOrder } from './ordering'
+import { buildSortOrders, moveItem, sortBySortOrder } from './ordering'
 import type { SummaryAccount } from './record'
 
 const items = ['a', 'b', 'c', 'd']
@@ -48,5 +48,37 @@ describe('sortBySortOrder', () => {
   it('不修改原数组', () => {
     sortBySortOrder(accounts, (account) => account.sort_order ?? 0)
     expect(accounts.map((a) => a.id)).toEqual([3, 1, 4, 2])
+  })
+})
+
+describe('buildSortOrders', () => {
+  it('按 uuid 顺序生成 0-based 连续 sort_order', () => {
+    const ordered = [
+      { name: 'C', uuid: 'u-c' },
+      { name: 'A', uuid: 'u-a' },
+      { name: 'B', uuid: 'u-b' },
+    ]
+    expect(buildSortOrders(ordered, (item) => item.uuid)).toEqual([
+      { uuid: 'u-c', sort_order: 0 },
+      { uuid: 'u-a', sort_order: 1 },
+      { uuid: 'u-b', sort_order: 2 },
+    ])
+  })
+
+  it('空 uuid / 重复 uuid 跳过，序号仍连续', () => {
+    const ordered = [
+      { uuid: 'u-a' },
+      { uuid: '' },
+      { uuid: 'u-a' },
+      { uuid: 'u-b' },
+    ]
+    expect(buildSortOrders(ordered, (item) => item.uuid)).toEqual([
+      { uuid: 'u-a', sort_order: 0 },
+      { uuid: 'u-b', sort_order: 1 },
+    ])
+  })
+
+  it('空列表返回空数组', () => {
+    expect(buildSortOrders([], (item: { uuid: string }) => item.uuid)).toEqual([])
   })
 })

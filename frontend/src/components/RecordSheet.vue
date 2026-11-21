@@ -224,7 +224,13 @@ const fundAccounts = computed(() => recordFundAccounts(accounts.value))
 const categoryOptions = computed(() =>
   form.kind === 'income' ? incomeAccounts.value : expenseAccounts.value,
 )
-/** 九宫格只取前 9 个（不足按实际数量渲染并给空态）。 */
+/**
+ * 九宫格只取前 9 个（不足按实际数量渲染并给空态）。
+ *
+ * P0：顺序来自 `accountApi.list()` 的 sort_order（后端 `ListAccounts` 按
+ * `type, sort_order, open_date, name` 排序），分类页拖拽整组提交后落库 + 写
+ * sync_log，因此其他端刷新本页即可按同一顺序置顶；本批不引入 recent 逻辑。
+ */
 const categoryGrid = computed(() => categoryOptions.value.slice(0, 9))
 
 const selectedCategory = computed(() =>

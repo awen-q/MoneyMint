@@ -19,6 +19,8 @@ import type {
   AccountCreated,
   AccountListResponse,
   AssetSeriesResponse,
+  BatchSortRequest,
+  BatchSortResponse,
   AddMemberRequest,
   AddMemberResponse,
   AuthResult,
@@ -552,6 +554,14 @@ export const accountApi = {
   },
   create(body: CreateAccountRequest): Promise<AccountCreated> {
     return api.post<AccountCreated>(API_ROUTES.accounts, body)
+  },
+  /**
+   * 批量提交分类排序（P0）。Body 按 type 分组整组提交 uuid + 0-based sort_order；
+   * 后端单事务全成全败，每条写 sync_log(op=update) 供其他端 pull 重排。
+   * 需 X-Ledger-Id（本路径不在豁免清单，request 统一注入并断言）。
+   */
+  updateSortOrders(body: BatchSortRequest): Promise<BatchSortResponse> {
+    return api.patch<BatchSortResponse>(API_ROUTES.accountSortOrder, body)
   },
   /** 关闭账户（Beancount close 语义；余额非 0 时 409 + balances 差额明细）。 */
   close(accountUuid: string): Promise<OkResponse> {

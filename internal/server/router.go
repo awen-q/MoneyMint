@@ -65,6 +65,12 @@ func newRouter(h *handler.Handler, svc *service.Service, webRoot string, corsCfg
 		http.MethodGet:  h.HandleListAccounts,
 		http.MethodPost: h.HandleCreateAccount,
 	}))
+	// 分类拖拽排序批量提交（P0）：字面量路径比 `/api/accounts/{uuid}` 更具体，
+	// Go 1.22 ServeMux 优先命中本条；PATCH /api/accounts/{uuid} 本身未注册，
+	// 不会被本条吞掉（详见 accounts_sort_order_http_test.go 的路由回归）。
+	mux.HandleFunc("/api/accounts/sort-order", methodSwitch(map[string]http.HandlerFunc{
+		http.MethodPatch: h.HandleUpdateAccountSortOrder,
+	}))
 	mux.HandleFunc("/api/accounts/{uuid}/opening", methodSwitch(map[string]http.HandlerFunc{
 		http.MethodGet:  h.HandleGetOpening,
 		http.MethodPost: h.HandleSetOpening,
@@ -103,7 +109,7 @@ func newRouter(h *handler.Handler, svc *service.Service, webRoot string, corsCfg
 	mux.HandleFunc("/api/transactions/trash", methodSwitch(map[string]http.HandlerFunc{
 		http.MethodGet: h.HandleListTrash,
 	}))
-	// B7 永久删除（路径 41→43 条）。
+	// B7 永久删除（当时路径 41→43 条；P0 分类排序端点顺延为第 44 条）。
 	// 模式优先级：`/api/transactions/trash/purge` 是字面量，比 `/api/transactions/{uuid}/purge`
 	// 更具体，Go 1.22+ ServeMux 选更具体者（注册顺序无关，也不会 panic）；
 	// 因此 `DELETE /api/transactions/trash/purge` 会命中字面量模式 → 405，

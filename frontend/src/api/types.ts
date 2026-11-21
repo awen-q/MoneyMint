@@ -232,6 +232,23 @@ export interface AccountListResponse {
   accounts: AccountView[]
 }
 
+/** PATCH /api/accounts/sort-order 单项：跨端用 uuid 互引，sort_order 为 0-based 连续序号。 */
+export interface AccountSortOrderItem {
+  uuid: string
+  sort_order: number
+}
+
+/** PATCH /api/accounts/sort-order 请求体（按 type 分组整组提交）。 */
+export interface BatchSortRequest {
+  orders: AccountSortOrderItem[]
+}
+
+/** PATCH /api/accounts/sort-order 响应体（updated = 本事务实际更新条数）。 */
+export interface BatchSortResponse {
+  ok: boolean
+  updated: number
+}
+
 /** POST /api/accounts 请求体。 */
 export interface CreateAccountRequest {
   name: string

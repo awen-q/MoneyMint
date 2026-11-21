@@ -114,9 +114,9 @@ jobs:
         env:
           # 两个下限都必填：用例下限防「静默少收集」，文件下限防「删一个文件」。
           # 只增不减；每次加测试后按实测值上调（验收时统一抬）。
-          # 2026-11-20 实测：105 文件 / 1026 用例 / 0 skip / 0 失败（全局脏标记刷新 + 还款展示分类器落地后）
-          TEST_FLOOR: '1026'       # 有效用例数（已扣除 skip/todo）；下限 == 实测值时，少一条即红
-          TEST_FILE_FLOOR: '105'   # 测试文件数；用例下限对「删一个文件」几乎无感，靠这条兜
+          # 分类排序落库（P0 批次一）落地后实测：106 文件 / 1034 用例 / 0 skip / 0 失败
+          TEST_FLOOR: '1034'       # 有效用例数（已扣除 skip/todo）；下限 == 实测值时，少一条即红
+          TEST_FILE_FLOOR: '106'   # 测试文件数；用例下限对「删一个文件」几乎无感，靠这条兜
         run: |
           npx vitest run --reporter=default --reporter=json --outputFile=vitest-report.json
           node ../scripts/check-test-floor.mjs vitest-report.json "$TEST_FLOOR" "$TEST_FILE_FLOOR"

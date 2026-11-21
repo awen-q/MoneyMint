@@ -5,8 +5,9 @@
  * - 分类 = 类型账户（三层 `Expenses:食品饮料:食品`），创建走 POST /api/accounts，
  *   删除走 DELETE（Beancount close，余额非 0 时 409 + balances 差额明细）；
  * - 拖拽用原生 HTML5 draggable（§14.5 #2 Must，禁止引库），排序逻辑层在
- *   core/ordering.ts；⚠️ 后端 `UpdateAccountSortOrder` 尚未暴露 REST 端点，
- *   本期排序为会话内生效（不持久化），见交付说明的已知遗留。
+ *   core/ordering.ts；P0 起拖动后按 type 整组提交 PATCH /api/accounts/sort-order，
+ *   uuid + 0-based sort_order 落库并写 sync_log，其他端 pull 后顺序一致；
+ * - localStorage 只存 uuid 草稿（离线即时反馈），真相源是服务端 sort_order。
  */
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 
@@ -20,7 +21,7 @@ import {
   groupAccountsByType,
   isClosed,
 } from '@/core/accounts'
-import { moveItem, sortBySortOrder } from '@/core/ordering'
+import { buildSortOrders, moveItem, sortBySortOrder } from '@/core/ordering'
 import { accountLabel, todayString } from '@/core/record'
 import { readCategoryOrder, writeCategoryOrder } from '@/core/storage'
 import { markDirty } from '@/stores/dataFreshness'
@@ -37,7 +38,9 @@ const busyUuid = ref<string | null>(null)
 
 const dragIndex = ref<number | null>(null)
 const dragGroup = ref('')
-const dragOrders = reactive<{ [type: string]: number[] }>({})
+/** 本地草稿：按 type 存 uuid 序列（旧 number[] 由 storage 层降级清理）。 */
+const dragOrders = reactive<{ [type: string]: string[] }>({})
+const sorting = ref(false)
 
 const newType = ref<'Expenses' | 'Income'>('Expenses')
 const newName = ref('')
@@ -55,7 +58,7 @@ const groups = computed(() =>
     let sorted = sortBySortOrder(group.items, (account) => account.sort_order)
     if (order !== undefined) {
       sorted = sortBySortOrder(sorted, (account) => {
-        const index = order.indexOf(account.id)
+        const index = order.indexOf(account.uuid)
         return index === -1 ? order.length + account.id : index
       })
     }
@@ -63,8 +66,8 @@ const groups = computed(() =>
       order === undefined
         ? undefined
         : (a: AccountView, b: AccountView) => {
-            const indexA = order.indexOf(a.id)
-            const indexB = order.indexOf(b.id)
+            const indexA = order.indexOf(a.uuid)
+            const indexB = order.indexOf(b.uuid)
             if (indexA === -1 && indexB === -1) {
               return (a.sort_order ?? 0) - (b.sort_order ?? 0)
             }
@@ -99,7 +102,8 @@ function rowSubtotalText(row: {
 function onDragStart(groupType: string, index: number, event: DragEvent): void {
   dragGroup.value = groupType
   dragIndex.value = index
-  if (event.dataTransfer !== null) {
+  // jsdom / 部分浏览器拖放事件可能没有 dataTransfer；缺失时跳过而非抛错。
+  if (event.dataTransfer !== null && event.dataTransfer !== undefined) {
     event.dataTransfer.effectAllowed = 'move'
   }
 }
@@ -108,14 +112,20 @@ function onDragOver(event: DragEvent): void {
   event.preventDefault()
 }
 
-function onDrop(groupType: string, index: number): void {
-  if (dragGroup.value !== groupType || dragIndex.value === null) {
+/**
+ * 拖放落位：本地草稿先即时生效，再按 type 整组提交服务端（P0）。
+ * 服务端全成全败 + 每条写 sync_log；提交成功用响应覆盖本地 sort_order，
+ * 失败保留草稿并在 notice 说明（下次拖动 / 刷新仍可恢复为服务端真相）。
+ */
+async function onDrop(groupType: string, index: number): Promise<void> {
+  if (session.isViewer) {
+    notice.value = '只读成员不能调整排序'
+    return
+  }
+  if (sorting.value || dragGroup.value !== groupType || dragIndex.value === null) {
     return
   }
   const from = dragIndex.value
-  if (from === null) {
-    return
-  }
   const group = groups.value.find((g) => g.type === groupType)
   if (group === undefined) {
     return
@@ -125,22 +135,66 @@ function onDrop(groupType: string, index: number): void {
     from,
     index,
   )
-  const ids: number[] = []
+  // 整组 uuid 顺序 = 该 type 下全部账户（含列表里已关闭项）的新顺序。
+  const uuids: string[] = []
   for (const item of next) {
-    ids.push(item.id)
+    uuids.push(item.uuid)
   }
-  dragOrders[groupType] = ids
+  dragOrders[groupType] = uuids
   dragIndex.value = null
   dragGroup.value = ''
-  // §14.5 #2：顺序写回本地（按账本命名空间），刷新后保持。
-  const orderSnapshot: Record<string, number[]> = {}
+
+  // 草稿先落本地（按账本命名空间），离线 / 同步失败时 UI 仍按拖动结果展示。
+  const orderSnapshot: Record<string, string[]> = {}
   for (const key of Object.keys(dragOrders)) {
     orderSnapshot[key] = dragOrders[key].slice()
   }
   if (session.ledgerId !== null) {
     writeCategoryOrder(session.ledgerId, orderSnapshot)
   }
-  notice.value = '排序已保存（本设备生效；后端排序端点开放后可与多端同步）'
+
+  const orders = buildSortOrders(next, (account) => account.uuid)
+  if (orders.length === 0) {
+    return
+  }
+  sorting.value = true
+  notice.value = '正在保存排序…'
+  try {
+    const res = await accountApi.updateSortOrders({ orders })
+    if (res.updated === orders.length) {
+      // 响应确认条数后覆盖本地 sort_order，使九宫格 / 列表与服务端同源。
+      const applied = new Map<string, number>()
+      for (const item of orders) {
+        applied.set(item.uuid, item.sort_order)
+      }
+      for (const account of accounts.value) {
+        const order = applied.get(account.uuid)
+        if (account.type === groupType && order !== undefined) {
+          account.sort_order = order
+        }
+      }
+      // 已确认的组不再需要草稿：否则本端旧草稿会盖掉其他端后续推送的顺序。
+      delete dragOrders[groupType]
+      const remaining: Record<string, string[]> = {}
+      for (const key of Object.keys(dragOrders)) {
+        remaining[key] = dragOrders[key].slice()
+      }
+      if (session.ledgerId !== null) {
+        writeCategoryOrder(session.ledgerId, remaining)
+      }
+      notice.value = `排序已保存（${res.updated} 项，其他端刷新后同步）`
+      markDirty('local-write')
+    } else {
+      notice.value = `排序仅更新 ${res.updated}/${orders.length} 项，请刷新后核对`
+    }
+  } catch (err) {
+    notice.value =
+      err instanceof ApiError
+        ? `排序草稿已存本设备，但同步失败：${err.message}`
+        : '排序草稿已存本设备，但同步失败，请稍后重试'
+  } finally {
+    sorting.value = false
+  }
 }
 
 /** 0.6.0 S2：新建分类的可选上级（未关闭的 Expenses / Income 账户）。 */
@@ -364,7 +418,7 @@ onMounted(() => {
         </div>
         <p class="cats__hint">
           只填中文显示名，系统自动生成 Beancount 合法的英文全名；选中上级会通过
-          parent_uuid 建立显式父子关系，刷新 / 换端后层级不退化。拖拽行可排序（会话内生效）。
+          parent_uuid 建立显式父子关系，刷新 / 换端后层级不退化。拖拽行排序会自动保存并同步到其他端。
         </p>
       </div>
 

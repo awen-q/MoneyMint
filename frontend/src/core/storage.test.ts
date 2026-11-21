@@ -28,19 +28,22 @@ afterEach(() => {
 })
 
 describe('分类顺序持久化（localStorage，按账本命名空间）', () => {
-  it('写 / 读往返：分组 id 序列完整还原', () => {
-    writeCategoryOrder(7, { Expenses: [12, 11, 13], Income: [21] })
-    expect(readCategoryOrder(7)).toEqual({ Expenses: [12, 11, 13], Income: [21] })
+  it('写 / 读往返：分组 uuid 序列完整还原', () => {
+    writeCategoryOrder(7, { Expenses: ['u-12', 'u-11', 'u-13'], Income: ['u-21'] })
+    expect(readCategoryOrder(7)).toEqual({
+      Expenses: ['u-12', 'u-11', 'u-13'],
+      Income: ['u-21'],
+    })
     // 键按账本命名空间隔离。
     expect(categoryOrderKey(7)).toBe('fambean.category_order.7')
     expect(store.has('fambean.category_order.7')).toBe(true)
   })
 
   it('不同账本互不干扰', () => {
-    writeCategoryOrder(1, { Expenses: [1] })
-    writeCategoryOrder(2, { Expenses: [2] })
-    expect(readCategoryOrder(1).Expenses).toEqual([1])
-    expect(readCategoryOrder(2).Expenses).toEqual([2])
+    writeCategoryOrder(1, { Expenses: ['u-1'] })
+    writeCategoryOrder(2, { Expenses: ['u-2'] })
+    expect(readCategoryOrder(1).Expenses).toEqual(['u-1'])
+    expect(readCategoryOrder(2).Expenses).toEqual(['u-2'])
   })
 
   it('损坏 JSON 容错为空对象，不抛错', () => {
@@ -55,12 +58,28 @@ describe('分类顺序持久化（localStorage，按账本命名空间）', () =
     expect(readCategoryOrder(7)).toEqual({})
   })
 
-  it('非法 id（负数 / 小数 / 非数字）被过滤，合法项保留', () => {
+  it('旧格式 number[] 整组丢弃并清理，不污染 uuid 排序', () => {
     store.set(
       categoryOrderKey(7),
-      JSON.stringify({ Expenses: [3, -1, 2.5, 'x', 5, 0] }),
+      JSON.stringify({ Expenses: [3, 11, 13], Income: ['u-21'] }),
     )
-    expect(readCategoryOrder(7)).toEqual({ Expenses: [3, 5] })
+    expect(readCategoryOrder(7)).toEqual({ Income: ['u-21'] })
+    // 脏数据已就地清理，不做「每次读都降级」的隐性负担。
+    expect(store.get(categoryOrderKey(7))).toBe(JSON.stringify({ Income: ['u-21'] }))
+  })
+
+  it('旧格式 number[] 是唯一分组时清键，回落服务端 sort_order', () => {
+    store.set(categoryOrderKey(7), JSON.stringify({ Expenses: [3, 11, 13] }))
+    expect(readCategoryOrder(7)).toEqual({})
+    expect(store.has(categoryOrderKey(7))).toBe(false)
+  })
+
+  it('非法项（空串 / 数字 / null）整组丢弃，合法 uuid 组保留', () => {
+    store.set(
+      categoryOrderKey(7),
+      JSON.stringify({ Expenses: ['u-3', '', 5, null], Income: ['u-21'] }),
+    )
+    expect(readCategoryOrder(7)).toEqual({ Income: ['u-21'] })
   })
 
   it('无数据返回空对象（不写 localStorage）', () => {

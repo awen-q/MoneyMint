@@ -149,6 +149,38 @@ func (s *Store) AccountByID(ledgerID, id int64) (domain.Account, error) {
 	return a, nil
 }
 
+// AccountSortOrderItem 是批量排序的单项：跨端一律用 uuid 互引（§8），
+// sort_order 为 0-based 连续序号。
+type AccountSortOrderItem struct {
+	UUID      string `json:"uuid"`
+	SortOrder int64  `json:"sort_order"`
+}
+
+// updateAccountSortOrderOn 在给定事务内更新一条账户排序并追加 sync_log(op=update)。
+// 返回实际 UPDATE 行数；0 行表示账户不存在 / 属于别的账本 / 已软删，调用方决定
+// 是幂等忽略（单条）还是整批拒绝（批量）。
+func updateAccountSortOrderOn(tx *sql.Tx, ledgerID int64, uuid string, order int64) (int64, error) {
+	res, err := tx.Exec(
+		`UPDATE accounts SET sort_order=?, updated_at=datetime('now')
+		 WHERE ledger_id=? AND uuid=? AND deleted_at IS NULL`,
+		order, ledgerID, uuid,
+	)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if n == 0 {
+		return 0, nil
+	}
+	if _, err := appendSyncLogOn(tx, ledgerID, domain.EntityAccount, uuid, domain.OpUpdate); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 // UpdateAccountSortOrder 更新账户自定义排序序号（0.4-C 分类拖拽排序）。
 // op=update 写入 sync_log，使其他端经 pull 收到更新事件并重排。
 // 账户不存在或无变动时不写 sync_log（幂等）。
@@ -161,22 +193,40 @@ func (s *Store) UpdateAccountSortOrder(ledgerID int64, uuid string, order int64)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	res, err := tx.Exec(
-		`UPDATE accounts SET sort_order=?, updated_at=datetime('now')
-		 WHERE ledger_id=? AND uuid=? AND deleted_at IS NULL`,
-		order, ledgerID, uuid,
-	)
-	if err != nil {
-		return err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return nil
-	}
-	if _, err := appendSyncLogOn(tx, ledgerID, domain.EntityAccount, uuid, domain.OpUpdate); err != nil {
+	if _, err := updateAccountSortOrderOn(tx, ledgerID, uuid, order); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// UpdateAccountSortOrders 按给定顺序批量落库账户 sort_order（P0 分类排序）。
+//
+// 单事务循环复用 updateAccountSortOrderOn：每条 UPDATE 紧随一条 sync_log(op=update)，
+// 任一失败（含 uuid 不属于本账本 / 已软删）整批回滚，全成全败；返回实际更新条数。
+// 校验放在事务内由 UPDATE 的 ledger_id 守卫完成，不做「先查再改」的竞态判断。
+func (s *Store) UpdateAccountSortOrders(ledgerID int64, orders []AccountSortOrderItem) (int64, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var updated int64
+	for _, item := range orders {
+		n, err := updateAccountSortOrderOn(tx, ledgerID, item.UUID, item.SortOrder)
+		if err != nil {
+			return 0, err
+		}
+		if n == 0 {
+			// 0 行 = uuid 不存在 / 属于其他账本 / 已软删，统一按 400 校验失败返回。
+			return 0, domain.Invalidf("账户 %s 不属于当前账本、不存在或已被删除", item.UUID)
+		}
+		updated += n
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return updated, nil
 }
 
 // AccountIDByUUID 按 uuid 查询未关闭账户的 id（用于记账引用，已关闭账户不可记账）。
