@@ -491,7 +491,7 @@ function applyDefaultAccounts(): void {
   let invalid = false
 
   const applyField = (
-    field: 'categoryAccountId' | 'transferFromAccountId' | 'transferToAccountId',
+    field: 'categoryAccountId' | 'transferFromAccountId' | 'transferToAccountId' | 'fundAccountId',
     uuid: string | undefined,
     allowed: number[],
   ): void => {
@@ -507,6 +507,7 @@ function applyDefaultAccounts(): void {
   }
 
   applyField('categoryAccountId', form.kind === 'income' ? defaults.income : defaults.expense, categoryIds)
+  applyField('fundAccountId', defaults.fund, fundIds)
   applyField('transferFromAccountId', defaults.transferOut, fundIds)
   applyField('transferToAccountId', defaults.transferIn, fundIds)
   if (invalid) {
@@ -519,6 +520,10 @@ function rememberDefaults(): void {
   if (id === null) {
     return
   }
+  // 资金账户记忆不按 kind / 分类拆分：支出与收入共用同一个 fund 位；
+  // uuidOf 找不到（null / 账户被并发删除）返回空串，setDefaultAccount 自动跳过。
+  // 调用点只在线 / 离线保存成功处，均在编辑态 return 之后，编辑态不污染记忆。
+  setDefaultAccount(id, 'fund', uuidOf(form.fundAccountId))
   if (form.kind === 'transfer') {
     setDefaultAccount(id, 'transferOut', uuidOf(form.transferFromAccountId))
     setDefaultAccount(id, 'transferIn', uuidOf(form.transferToAccountId))
@@ -639,6 +644,42 @@ function switchKind(kind: RecordKind): void {
     form.categoryAccountId = allowed && preferred !== null ? preferred : options.length > 0 ? options[0].id : null
   }
   submitError.value = ''
+  notice.value = ''
+}
+
+/**
+ * 账本期初日期：与 CategoriesView.ledgerOpening 同口径，按当前 ledgerId
+ * 从 session.ledgers 派生；取不到时兜底今天——保守拒绝所有过去日期。
+ * 这是快捷日期 chip 的唯一守门（原生 date input 仍可自由录入）。
+ */
+function ledgerOpening(): string {
+  for (const ledger of session.ledgers) {
+    if (ledger.id === session.ledgerId && ledger.opening_date !== '') {
+      return ledger.opening_date
+    }
+  }
+  return todayString()
+}
+
+/** 本地时区日期（禁用 UTC 序列化 / 毫秒算术 / 新版补零 API，兼容 iOS14）。 */
+function quickDate(daysAgo: number): string {
+  const base = new Date()
+  base.setDate(base.getDate() - daysAgo)
+  return `${base.getFullYear()}-${pad2(base.getMonth() + 1)}-${pad2(base.getDate())}`
+}
+
+/**
+ * 快捷日期只写 form.date 一处：页头、Bean 片段、小票 Bean 均由它派生。
+ * 早于账本期初时拒绝且不改表单，避免「保存成功但 bean-check 才炸」。
+ */
+function applyQuickDate(daysAgo: number): void {
+  const candidate = quickDate(daysAgo)
+  const opening = ledgerOpening()
+  if (candidate < opening) {
+    notice.value = `日期不能早于账本期初 ${opening}`
+    return
+  }
+  form.date = candidate
   notice.value = ''
 }
 
@@ -1352,6 +1393,11 @@ watch(
                 <div class="fld">
                   <label class="fld-label">日期</label>
                   <input class="inp-text" type="date" data-field="date" v-model="form.date" aria-label="交易日期" />
+                  <div class="date-chips" role="group" aria-label="快捷日期">
+                    <button type="button" data-act="date-today" :class="{ on: form.date === quickDate(0) }" @click="applyQuickDate(0)">今天</button>
+                    <button type="button" data-act="date-yesterday" :class="{ on: form.date === quickDate(1) }" @click="applyQuickDate(1)">昨天</button>
+                    <button type="button" data-act="date-day-before" :class="{ on: form.date === quickDate(2) }" @click="applyQuickDate(2)">前天</button>
+                  </div>
                 </div>
                 <div class="fld">
                   <label class="fld-label">flag</label>
@@ -1505,6 +1551,11 @@ watch(
                 <div class="fld">
                   <label class="fld-label">日期</label>
                   <input class="inp-text" type="date" data-field="date" v-model="form.date" aria-label="交易日期" />
+                  <div class="date-chips" role="group" aria-label="快捷日期">
+                    <button type="button" data-act="date-today" :class="{ on: form.date === quickDate(0) }" @click="applyQuickDate(0)">今天</button>
+                    <button type="button" data-act="date-yesterday" :class="{ on: form.date === quickDate(1) }" @click="applyQuickDate(1)">昨天</button>
+                    <button type="button" data-act="date-day-before" :class="{ on: form.date === quickDate(2) }" @click="applyQuickDate(2)">前天</button>
+                  </div>
                 </div>
                 <div class="fld">
                   <label class="fld-label">flag</label>
@@ -2238,6 +2289,32 @@ watch(
 
 .inp-text::placeholder {
   color: var(--fb-sub);
+}
+
+.date-chips {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.date-chips button {
+  flex: 1;
+  min-height: 44px;
+  padding: 0 6px;
+  border: 1px solid var(--fb-line);
+  border-radius: var(--fb-radius-input);
+  background: var(--fb-card);
+  color: var(--fb-sub);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.date-chips button.on {
+  border-color: var(--fb-seal);
+  background: var(--fb-seal-soft);
+  color: var(--fb-seal);
+  font-weight: 700;
 }
 
 .transfer-mid {

@@ -204,14 +204,18 @@ export function writeCategoryOrder(
 
 // ---------- 默认账户记忆（§14.5 #5，批 3） ----------
 
-/** 记一笔的四类「上次选择」，与旧版 local_store.dart 的 kind 完全一致。 */
-export type DefaultAccountKind = 'expense' | 'income' | 'transferOut' | 'transferIn'
+/**
+ * 记一笔的「上次选择」：四类与旧版 local_store.dart 同款，
+ * P0 起追加 `fund`（支出 / 收入共用的资金账户位，不按分类拆分）。
+ */
+export type DefaultAccountKind = 'expense' | 'income' | 'transferOut' | 'transferIn' | 'fund'
 
 export const DEFAULT_ACCOUNT_KINDS: readonly DefaultAccountKind[] = [
   'expense',
   'income',
   'transferOut',
   'transferIn',
+  'fund',
 ]
 
 export const DEFAULT_ACCOUNT_LABELS: Record<DefaultAccountKind, string> = {
@@ -219,6 +223,7 @@ export const DEFAULT_ACCOUNT_LABELS: Record<DefaultAccountKind, string> = {
   income: '默认收入分类',
   transferOut: '默认转账来源',
   transferIn: '默认转账目标',
+  fund: '默认资金账户',
 }
 
 const DEFAULT_ACCOUNT_KEY_PREFIX = 'fambean.default_accounts.'

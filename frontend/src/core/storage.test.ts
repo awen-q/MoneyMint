@@ -5,8 +5,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   categoryOrderKey,
+  clearDefaultAccounts,
+  DEFAULT_ACCOUNT_KINDS,
+  DEFAULT_ACCOUNT_LABELS,
+  defaultAccountKey,
   readCategoryOrder,
+  readDefaultAccounts,
+  setDefaultAccount,
   writeCategoryOrder,
+  writeDefaultAccounts,
 } from './storage'
 
 let store: Map<string, string>
@@ -85,5 +92,33 @@ describe('分类顺序持久化（localStorage，按账本命名空间）', () =
   it('无数据返回空对象（不写 localStorage）', () => {
     expect(readCategoryOrder(9)).toEqual({})
     expect(store.size).toBe(0)
+  })
+})
+
+describe('默认账户记忆（含 P0 fund 位）', () => {
+  it('fund 在白名单里，读写回完整保留', () => {
+    expect(DEFAULT_ACCOUNT_KINDS).toContain('fund')
+    expect(DEFAULT_ACCOUNT_LABELS.fund).toBe('默认资金账户')
+
+    writeDefaultAccounts(7, { fund: 'u-card', expense: 'u-food' })
+    expect(readDefaultAccounts(7)).toEqual({ fund: 'u-card', expense: 'u-food' })
+    expect(store.has(defaultAccountKey(7))).toBe(true)
+  })
+
+  it('损坏 JSON 夹带非法 kind 时只保留白名单项', () => {
+    store.set(
+      defaultAccountKey(7),
+      JSON.stringify({ fund: 'u-card', expense: 'u-food', bogus: 'u-x', transferOut: 3 }),
+    )
+    expect(readDefaultAccounts(7)).toEqual({ fund: 'u-card', expense: 'u-food' })
+  })
+
+  it('setDefaultAccount 可写 fund，clearDefaultAccounts 按账本整键清除', () => {
+    setDefaultAccount(7, 'fund', 'u-card')
+    setDefaultAccount(7, 'fund', '')
+    // 空 uuid 不覆盖既有记忆。
+    expect(readDefaultAccounts(7).fund).toBe('u-card')
+    clearDefaultAccounts(7)
+    expect(readDefaultAccounts(7)).toEqual({})
   })
 })
