@@ -6,6 +6,24 @@
 > 版本号单一事实源：git tag（`vX.Y.Z`）。发布前 `scripts/verify-version.sh` 会校验
 > tag / 本文件顶部版本 / `frontend/package.json` 三处一致，不一致则构建失败。
 
+## [0.6.2-pre] - 2026-11-21
+
+预发布版（版本号待老板确认后转正式 0.6.2）。分类/账户配置与使用专项，账芯（复式平衡 / append-only / `bean-check`）、离线同步协议不变；迁移仍 017。
+
+### Added
+
+- **分类排序真正落库 + 跨端同步**：新增 `PATCH /api/accounts/sort-order`（按 type 整组提交 uuid + 0-based sort_order，单事务全成全败、写 sync_log OpUpdate，协议零改动）；拖拽顺序落库、全家设备同步，记账九宫格按 sort_order 置顶。前端 `dragOrders` 由 number[] 改 uuid[] 并降级清理旧数据。端点表 43→44 路径 / 54→55 path×method。
+- **可选 ASCII 英文账号（owner）**：新建账户/分类可填英文账号（如 `Food`）拼进 name，留空仍自动生成 ItemN；合法性仍由服务端 `ValidateAccountName` 守门（400 account_name_invalid）；name 创建时一次定死、不提供 rename。`session.isOwner` 按账本 role 派生。
+
+### Changed
+
+- **记账页默认资金账户记忆**：记住上次使用的资金账户（fund 记忆位），失效回退首个可用并提示；不按分类绑定、不拆收支两套；编辑态不被记忆覆盖。
+- **快捷日期条**：日期输入旁加「今天/昨天/前天」chip，写 form.date 并校验收期（前端唯一防线，后端不校验）；保留原生 input，不引日期库。
+
+### 版本号治理
+
+- `verify-version.sh` 与 CI Resolve version 的正则扩展为支持 SemVer 预发布号（如 `0.6.2-pre`），以兼容本预发布版；tag `v0.6.2-pre` 为正式发布前的临时锚点，确认后转 `v0.6.2`。
+
 ## [0.6.1] - 2026-11-19
 
 报表重设计 v4.1（B1~B6，前端五视图重构）+ B7 回收站永久删除 + **四页视觉对齐 v4.1 设计稿**。账芯（复式平衡 / append-only / `bean-check`）、后端、端点表（43 条路径）、迁移（017）全部不变；本版是**纯前端样式与模板层**改动。

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # 版本号一致性校验：git tag / CHANGELOG.md / frontend/package.json 三处必须一致。
+# 支持 SemVer 预发布号（如 0.6.2-pre）：x.y.z[-prerelease] 三段均按字符串全等比对。
 #
 # 用途：
 #   - CI 发布前校验（传 tag 参数，最严格）
@@ -13,6 +14,8 @@
 #
 # 历史：批 6 cutover 前读 frontend/pubspec.yaml；Flutter 清退后改读
 #   frontend/package.json（该 version 同时经 __APP_VERSION__ 注入前端展示）。
+# 预发布号：三处均允许可选预发布后缀（如 0.6.2-pre），正则统一为
+#   x.y.z(-[0-9A-Za-z.-]+)?；后缀是正式发布前的临时锚点，转正式版时三处同步去掉。
 
 set -euo pipefail
 
@@ -29,15 +32,15 @@ if [[ -z "$TAG" ]]; then
 fi
 TAG_VER=""
 if [[ -n "$TAG" ]]; then
-  TAG_VER="${TAG#v}"   # 允许 v0.5.0 或 0.5.0 两种写法
+  TAG_VER="${TAG#v}"   # 允许 v0.5.0 / 0.5.0 / v0.6.2-pre 三种写法，后缀原样保留
 fi
 
-# ---- 2) 取 CHANGELOG 顶部版本（首个 ## [x.y.z]）----
-CHANGELOG_VER="$(grep -oE '^## \[[0-9]+\.[0-9]+\.[0-9]+\]' "$CHANGELOG_FILE" 2>/dev/null \
-  | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)"
+# ---- 2) 取 CHANGELOG 顶部版本（首个 ## [x.y.z[-prerelease]]）----
+CHANGELOG_VER="$(grep -oE '^## \[[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?\]' "$CHANGELOG_FILE" 2>/dev/null \
+  | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?' || true)"
 
-# ---- 3) 取 package.json version（必须是 x.y.z 形态）----
-PKG_VER="$(node -e "const p=require('./$PACKAGE_FILE'); if(typeof p.version!=='string'||!/^[0-9]+\.[0-9]+\.[0-9]+$/.test(p.version)){process.exit(1)} process.stdout.write(p.version)" 2>/dev/null || true)"
+# ---- 3) 取 package.json version（必须是 x.y.z[-prerelease] 形态）----
+PKG_VER="$(node -e "const p=require('./$PACKAGE_FILE'); if(typeof p.version!=='string'||!/^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$/.test(p.version)){process.exit(1)} process.stdout.write(p.version)" 2>/dev/null || true)"
 
 echo "版本号校验"
 echo "  git tag       = ${TAG_VER:-（无 tag）}"
@@ -47,11 +50,11 @@ echo "  package.json  = ${PKG_VER:-（未找到）}"
 FAIL=0
 
 if [[ -z "$CHANGELOG_VER" ]]; then
-  echo "  ❌ 无法从 $CHANGELOG_FILE 解析出版本号（应形如 '## [0.5.0] - 2026-11-03'）" >&2
+  echo "  ❌ 无法从 $CHANGELOG_FILE 解析出版本号（应形如 '## [0.5.0] - 2026-11-03'，可带预发布后缀如 0.6.2-pre）" >&2
   FAIL=1
 fi
 if [[ -z "$PKG_VER" ]]; then
-  echo "  ❌ 无法从 $PACKAGE_FILE 解析出版本号（应形如 \"version\": \"0.5.0\"）" >&2
+  echo "  ❌ 无法从 $PACKAGE_FILE 解析出版本号（应形如 \"version\": \"0.5.0\"，可带预发布后缀如 0.6.2-pre）" >&2
   FAIL=1
 fi
 

@@ -72,7 +72,7 @@ jobs:
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             V="${GITHUB_REF_NAME#v}"
           else
-            V="$(grep -oE '^## \[[0-9]+\.[0-9]+\.[0-9]+\]' CHANGELOG.md | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+            V="$(grep -oE '^## \[[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?\]' CHANGELOG.md | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?')"
           fi
           echo "version=${V}" >> "$GITHUB_OUTPUT"
           echo "解析出版本：${V}"
