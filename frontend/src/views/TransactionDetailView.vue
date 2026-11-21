@@ -26,12 +26,17 @@ import {
 import { markDirty } from '@/stores/dataFreshness'
 import { useRecordSheetStore } from '@/stores/recordSheet'
 import { useSessionStore } from '@/stores/session'
+import ReceiptShareSheet from '@/components/ReceiptShareSheet.vue'
 import ReceiptSlip from '@/components/ReceiptSlip.vue'
+import { buildShareReceipt } from '@/core/shareReceiptData'
+import type { ShareReceiptData, ShareReceiptDetails } from '@/core/receiptImage'
+import { usePrivacyStore } from '@/stores/privacy'
 
 const route = useRoute()
 const router = useRouter()
 const session = useSessionStore()
 const sheet = useRecordSheetStore()
+const privacy = usePrivacyStore()
 
 const accounts = ref<AccountView[]>([])
 const transactions = ref<TransactionView[]>([])
@@ -142,6 +147,34 @@ const footLines = computed<string[]>(() => {
   }
   return [`TXN ${shortCode(t.uuid)}`, `ID #${String(t.id).padStart(6, '0')}`]
 })
+
+/** 分享图：与成功页共用组装口径；详情页无 bean / 精确时间源，对应选项内容为空。 */
+const shareOpen = ref(false)
+const shareData = ref<ShareReceiptData | null>(null)
+const shareDetails = ref<ShareReceiptDetails>({
+  accountLines: [], tagLine: '', beanLines: [], preciseTime: '',
+})
+
+function openShare(): void {
+  const t = txn.value
+  if (t === null) {
+    return
+  }
+  const built = buildShareReceipt({
+    amount: entry.value.amount,
+    commodity: entry.value.commodity,
+    kindLabel: KIND_LABELS[kind.value],
+    date: t.date,
+    payee: t.description !== '' ? t.description : KIND_LABELS[kind.value],
+    bean: '',
+    tags: t.tags ?? [],
+    accounts: postingRows.value.map((posting) => posting.account),
+    preciseTime: '',
+  }, privacy.enabled)
+  shareData.value = built.data
+  shareDetails.value = built.details
+  shareOpen.value = true
+}
 
 async function load(): Promise<void> {
   if (txnId.value === null) {
@@ -310,6 +343,7 @@ watch(
         <button type="button" class="detail__edit" :disabled="editDisabled" @click="onEdit">
           修改这笔交易
         </button>
+        <button type="button" class="detail__share" @click="openShare">生成分享图</button>
         <button
           type="button"
           class="detail__delete"
@@ -317,6 +351,13 @@ watch(
           @click="onDelete"
         >删除这笔交易</button>
       </div>
+
+      <ReceiptShareSheet
+        v-if="shareOpen && shareData !== null"
+        :data="shareData"
+        :details="shareDetails"
+        @close="shareOpen = false"
+      />
       <p class="detail__hint" :class="{ 'detail__hint--warn': editDisabled }">{{ editHint }}</p>
       <p v-if="notice" class="detail__notice" role="status">{{ notice }}</p>
 
@@ -363,11 +404,25 @@ watch(
 
 .detail__actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   width: 100%;
   max-width: 340px;
   margin: 18px auto 0;
+}
+
+.detail__share {
+  flex: 1 0 100%;
+  height: 46px;
+  border: 1px solid var(--fb-blue-line);
+  border-radius: var(--fb-radius-input);
+  background: var(--fb-card);
+  color: var(--fb-blue);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
 }
 
 /* 0.6.0 S6：编辑按钮与禁用文案（修改 = 冲正 + 新建）。 */

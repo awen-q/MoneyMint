@@ -58,7 +58,10 @@ import { useSessionStore } from '@/stores/session'
 import { useSyncStore } from '@/stores/sync'
 import AdvancedPostings from '@/components/AdvancedPostings.vue'
 import PostingPreview from '@/components/PostingPreview.vue'
+import ReceiptShareSheet from '@/components/ReceiptShareSheet.vue'
 import ReceiptSlip from '@/components/ReceiptSlip.vue'
+import { buildShareReceipt } from '@/core/shareReceiptData'
+import type { ShareReceiptData, ShareReceiptDetails } from '@/core/receiptImage'
 
 const props = withDefaults(
   defineProps<{
@@ -111,6 +114,43 @@ interface ReceiptSnapshot {
 }
 
 const receipt = ref<ReceiptSnapshot | null>(null)
+
+/** 分享面板：数据从票面快照组装，金额按隐私开关算成显示串，敏感内容默认全关。 */
+const shareOpen = ref(false)
+const shareData = ref<ShareReceiptData | null>(null)
+const shareDetails = ref<ShareReceiptDetails>({
+  accountLines: [], tagLine: '', beanLines: [], preciseTime: '',
+})
+
+function openShare(): void {
+  const r = receipt.value
+  if (r === null) {
+    return
+  }
+  // 分类展示名：备注优先（用户可见），没有备注时用类型标签，绝不取完整科目名。
+  const descRow = r.rows.find((row) => row.label === '备注')
+  const payee = descRow?.value !== undefined && descRow.value !== '' ? descRow.value : r.kindLabel
+  const tagRow = r.rows.find((row) => row.label === '标签')
+  /**
+   * 精确时间从票尾第一行提取（形如「2026-11-21 18:30:00 · 家庭账本」），
+   * 只取到秒的时间串，不能把账本名一起塞进分享图。
+   */
+  const timeMatch = r.footLines[0]?.match(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/)
+  const built = buildShareReceipt({
+    amount: r.amount,
+    commodity: r.commodity,
+    kindLabel: r.kindLabel,
+    date: r.rows.find((row) => row.label === '日期')?.value ?? '',
+    payee,
+    bean: r.bean,
+    tags: tagRow?.tags ?? [],
+    accounts: r.postings.map((posting) => posting.account),
+    preciseTime: timeMatch?.[1] ?? '',
+  }, privacy.enabled)
+  shareData.value = built.data
+  shareDetails.value = built.details
+  shareOpen.value = true
+}
 
 const KIND_LABELS: Record<RecordKind, string> = {
   expense: '支出 EXPENSE',
@@ -1295,12 +1335,20 @@ watch(
         <div class="rs-receipt__actions">
           <template v-if="!isEditing">
             <button type="button" class="rs-rcpt-btn rs-rcpt-btn--text" @click="close">返回</button>
+            <button type="button" class="rs-rcpt-btn rs-rcpt-btn--ghost" @click="openShare">分享图</button>
             <button type="button" class="rs-rcpt-btn rs-rcpt-btn--ghost" @click="copyLast">复制上一笔</button>
             <button type="button" class="rs-rcpt-btn rs-rcpt-btn--primary" @click="again">再记一笔</button>
           </template>
           <button v-else type="button" class="rs-rcpt-btn rs-rcpt-btn--primary" @click="close">完成</button>
         </div>
       </div>
+
+      <ReceiptShareSheet
+        v-if="shareOpen && shareData !== null"
+        :data="shareData"
+        :details="shareDetails"
+        @close="shareOpen = false"
+      />
 
       <template v-else>
         <header class="rs-head">
