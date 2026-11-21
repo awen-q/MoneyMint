@@ -23,6 +23,7 @@
 ### 版本号治理
 
 - `verify-version.sh` 与 CI Resolve version 的正则扩展为支持 SemVer 预发布号（如 `0.6.2-pre`），以兼容本预发布版；tag `v0.6.2-pre` 为正式发布前的临时锚点，确认后转 `v0.6.2`。
+- **正式发版收尾步骤（确认前 tag 不动、不 push）**：① 删旧 tag —— 本地 `git tag -d v0.6.2-pre`、远程 `git push --delete origin v0.6.2-pre`；② 三处版本号去掉 `-pre` 转正式 `0.6.2` —— 本文件顶部标题、`frontend/package.json` 的 `version`（git tag 在 ④ 重建）；③ 提交改动；④ 打 `git tag v0.6.2`；⑤ `git push` 提交与 tag，触发 CI 构建并推镜像。
 
 ## [0.6.1] - 2026-11-19
 
