@@ -58,6 +58,11 @@ docker run -d --name famben -p 8080:8080 \
 # 4. 浏览器打开 http://<主机IP>:8080 ，用预设的 owner 账号登录
 ```
 
+> 本地直接跑 `docker build` 时，Docker 上下文不含 `.git`，设置页的「构建号」会显示 `unknown`。
+> 用 `make image`（或 `bash scripts/local.sh image`）构建即可自动注入；等价的手写命令是在
+> `docker build` 后追加 `--build-arg BUILD_HASH=$(git rev-parse --short HEAD) --build-arg BUILD_DATE=$(date -u +%Y-%m-%d)`。
+> CI 发布的镜像已由 workflow 自动传入这两个值，无需额外操作。
+
 仓库内附带 [`docker-compose.yml`](docker-compose.yml)（含健康检查 / 备份保留 / 可选第二块盘异地备份），
 配合 [`.env.example`](.env.example) 使用更方便。
 

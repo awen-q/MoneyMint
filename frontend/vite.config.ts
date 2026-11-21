@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
+import process from 'node:process'
 import { fileURLToPath, URL } from 'node:url'
 
 import legacy from '@vitejs/plugin-legacy'
@@ -16,9 +17,16 @@ const pkg = JSON.parse(
 /**
  * 构建元数据（短提交号 + 构建日期）：只用于报 bug 时定位构建，
  * 不是版本事实源——版本号三处一致性仍由 scripts/verify-version.sh 守门。
- * Docker 构建上下文排除了 .git，取不到时降级为 unknown，不影响构建。
+ *
+ * 优先级：Docker / CI 显式传入的环境变量 > 本地 git > unknown。
+ * 之前只读 git，而 Docker 构建上下文排除了 .git，导致容器里产出的前端
+ * 一律显示 unknown（CI 明明已经把 BUILD_HASH 传给了 Go 阶段）。
  */
 function buildHash(): string {
+  const fromEnv = process.env.FAMBEAN_BUILD_HASH?.trim()
+  if (fromEnv !== undefined && fromEnv !== '') {
+    return fromEnv
+  }
   try {
     return execFileSync('git', ['rev-parse', '--short=7', 'HEAD'], {
       cwd: FRONTEND_ROOT,
@@ -30,7 +38,14 @@ function buildHash(): string {
   }
 }
 
-const buildDate = new Date().toISOString().slice(0, 10)
+function buildDate(): string {
+  const fromEnv = process.env.FAMBEAN_BUILD_DATE?.trim()
+  if (fromEnv !== undefined && fromEnv !== '') {
+    // CI 传的是完整 ISO 时间戳，票面按「构建日期」展示到日即可。
+    return fromEnv.slice(0, 10)
+  }
+  return new Date().toISOString().slice(0, 10)
+}
 
 // Vite 配置：入口为 frontend/index.html，产物输出到 frontend/dist。
 // base 用相对路径，方便反代到任意子路径；legacy 兜底 Safari 14。
@@ -53,7 +68,7 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
     __APP_BUILD_HASH__: JSON.stringify(buildHash()),
-    __APP_BUILD_DATE__: JSON.stringify(buildDate),
+    __APP_BUILD_DATE__: JSON.stringify(buildDate()),
   },
   build: {
     // 注意：不能输出到 ../web（那是 Flutter 源目录），统一落在 frontend/dist。

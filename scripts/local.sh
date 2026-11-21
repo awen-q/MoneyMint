@@ -18,6 +18,7 @@
 #   version       版本号三处一致性校验
 #   smoke         端到端冒烟
 #   rehearse      迁移 012 副本库预演（VACUUM INTO 快照 + 两次迁移 + bean-check）
+#   image         本地构建 Docker 镜像（自动注入构建号/日期，设置页可见）
 #
 # cutover（批 6）后仓库只有一套前端；Flutter 源码与构建链已清退（git 历史可查）。
 # `/legacy/` 回滚通道已废弃（无静态托管、无产物目录、无校验脚本）；需要旧版只能从
@@ -103,6 +104,15 @@ case "$cmd" in
 
   rehearse)
     bash scripts/rehearsal.sh
+    ;;
+
+  image)
+    echo "构建 Docker 镜像（注入 BUILD_HASH / BUILD_DATE）…"
+    docker build \
+      --build-arg BUILD_HASH="$(git rev-parse --short HEAD)" \
+      --build-arg BUILD_DATE="$(date -u +%Y-%m-%d)" \
+      --build-arg GIT_VERSION="$(git describe --tags --abbrev=0 2>/dev/null || echo unknown)" \
+      -t famben:dev .
     ;;
 
   help|*)

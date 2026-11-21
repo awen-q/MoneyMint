@@ -12,7 +12,8 @@
 #
 # 构建：
 #   docker build -t famben:dev .
-#   docker build --build-arg GIT_VERSION=0.5.1 --build-arg BUILD_HASH=$(git rev-parse --short HEAD) -t famben:0.5.1 .
+#   docker build --build-arg GIT_VERSION=0.5.1 --build-arg BUILD_HASH=$(git rev-parse --short HEAD) \
+#     --build-arg BUILD_DATE=$(date -u +%Y-%m-%d) -t famben:0.5.1 .
 #
 # 运行：
 #   docker run -d -p 8080:8080 -v $(pwd)/data:/app/data famben:dev
@@ -28,6 +29,14 @@ ARG RUNTIME_IMAGE=alpine:3.20
 
 # ---------- Stage 1：构建 Vue Web ----------
 FROM ${NODE_IMAGE} AS web-builder
+
+# 前端设置页要显示构建号/构建日期；本阶段没有 .git（构建上下文已排除），
+# 必须由外部 build-arg 注入，否则 Vite 只能降级成 unknown。
+# CI 的 Build info 步骤和 Makefile image 目标都会传这两个值。
+ARG BUILD_HASH=unknown
+ARG BUILD_DATE=unknown
+ENV FAMBEAN_BUILD_HASH=${BUILD_HASH} \
+    FAMBEAN_BUILD_DATE=${BUILD_DATE}
 
 WORKDIR /src/frontend
 

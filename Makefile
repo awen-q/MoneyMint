@@ -70,7 +70,11 @@ rehearse:
 	bash scripts/rehearsal.sh
 
 image:
-	docker build -t famben:dev .
+	docker build \
+	  --build-arg BUILD_HASH=$$(git rev-parse --short HEAD) \
+	  --build-arg BUILD_DATE=$$(date -u +%Y-%m-%d) \
+	  --build-arg GIT_VERSION=$$(git describe --tags --abbrev=0 2>/dev/null || echo unknown) \
+	  -t famben:dev .
 
 clean:
 	rm -rf dist data/smoke
