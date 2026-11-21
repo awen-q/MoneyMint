@@ -2784,7 +2784,7 @@ body.kbd-open .rs-body {
 @media (min-width: 900px) {
   .rs-mask--auto {
     align-items: center;
-    padding-left: var(--fb-sidebar-w, 232px);
+    padding-left: var(--fb-sidebar-w);
   }
   .rs-mask--auto .rs-panel,
   .rs-mask--dialog .rs-panel {

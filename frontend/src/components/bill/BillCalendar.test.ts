@@ -159,6 +159,55 @@ describe('BillCalendar：网格与四态', () => {
     // 空日仍然只有日号
     expect(cells[0].find('.cal__amount').exists()).toBe(false)
   })
+
+  it('遮挡态：当月格类名统一降级为 masked，不再泄露真实四态', () => {
+    const wrapper = mountCalendar({ masked: true })
+    const realKinds = [
+      'cal__cell--both',
+      'cal__cell--income-only',
+      'cal__cell--expense-only',
+      'cal__cell--empty',
+    ]
+    const cells = wrapper.findAll('button.cal__cell')
+    expect(cells).toHaveLength(30)
+    for (const cell of cells) {
+      const classes = cell.classes()
+      expect(classes).toContain('cal__cell--masked')
+      for (const kind of realKinds) {
+        expect(classes).not.toContain(kind)
+      }
+    }
+    // 补位格仍保持 padding，不受遮挡态影响
+    for (const padding of wrapper.findAll('div.cal__cell')) {
+      expect(padding.classes()).toContain('cal__cell--padding')
+      expect(padding.classes()).not.toContain('cal__cell--masked')
+    }
+  })
+
+  it('遮挡态：masked 与 today / selected 高亮修饰类共存', () => {
+    const now = new Date()
+    const year = now.getFullYear()
+    const month = now.getMonth() + 1
+    const wrapper = mount(BillCalendar, {
+      global: { plugins: [createPinia()] },
+      props: {
+        year,
+        month,
+        grid: makeFullMonthGrid(year, month),
+        cells: CELLS,
+        totals: TOTALS,
+        commodity: 'CNY',
+        activeDays: 3,
+        selectedDay: now.getDate(),
+        masked: true,
+      },
+    })
+    const todayCell = wrapper.findAll('button.cal__cell')[now.getDate() - 1]
+    const classes = todayCell.classes()
+    expect(classes).toContain('cal__cell--masked')
+    expect(classes).toContain('cal__cell--today')
+    expect(classes).toContain('cal__cell--on')
+  })
 })
 
 describe('BillCalendar：交互与摘要', () => {

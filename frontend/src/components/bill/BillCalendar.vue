@@ -90,6 +90,19 @@ function cellKind(cell: CalendarDay): string {
   return data === undefined ? 'empty' : data.kind
 }
 
+/**
+ * 格子的渲染态类名：补位格仍是 `padding`，遮挡态所有当月格统一降级为 `masked`。
+ *
+ * 遮挡时 DOM 不再出现 `both`/`income-only`/`expense-only`/`empty` 这些真实 kind，
+ * 避免有人从类名（或四态配色）反推当天有无收入。这里**只作用于渲染层**：
+ * `core/bill.ts` 的 `BillCell.kind` 与四态判断逻辑一律不动，卡头摘要也照旧。
+ */
+function cellClass(cell: CalendarDay): string {
+  if (!cell.inMonth) return 'padding'
+  if (props.masked) return 'masked'
+  return cellKind(cell)
+}
+
 /** 格子主数字：`empty` 不显示；遮挡态统一显示遮挡符（绝不露 `-1.2k`）。 */
 function cellText(cell: CalendarDay): string {
   const data = cellOf(cell.day, cell.inMonth)
@@ -169,7 +182,7 @@ function isSelected(cell: CalendarDay): boolean {
         :key="cell.key"
         class="cal__cell"
         :class="[
-          `cal__cell--${cell.inMonth ? cellKind(cell) : 'padding'}`,
+          `cal__cell--${cellClass(cell)}`,
           { 'cal__cell--today': isToday(cell), 'cal__cell--on': isSelected(cell) },
         ]"
         :type="cell.inMonth ? 'button' : undefined"
@@ -375,6 +388,16 @@ function isSelected(cell: CalendarDay): boolean {
 .cal__cell--today.cal__cell--both .cal__amount--income,
 .cal__cell--on.cal__cell--both .cal__amount--income {
   color: var(--fb-green-ink);
+}
+
+/* 遮挡态：格子已无四态类名，上面的四态配色与 today/on ink 覆盖全不命中，
+   统一回落到中性 `--fb-sub`（与 `MoneyText` 的遮挡口径一致）。只用现有 token。 */
+.cal__cell--masked .cal__amount {
+  color: var(--fb-sub);
+}
+
+.cal__cell--masked .cal__amount--income {
+  color: var(--fb-sub);
 }
 
 /* 收入圆点：设计 `.i-dot`（top/right 4px） */
