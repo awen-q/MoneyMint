@@ -9,6 +9,8 @@
  *   opening_key 幂等生成「冲正 + 新建」成对交易，前端容忍重试）；
  * - 0.6.0 S2：支持 `parent` 传入「＋ 增加下级」的父账户，父项预填、
  *   类型继承且置灰，提交时 `parent_uuid` 必传（根账户显式传空串）。
+ * - P0 可选 ASCII 英文账号：仅 owner 可见的自定义段，留空仍走 ItemN；
+ *   前置提示只提醒不拦截，合法性由服务端 ValidateAccountName 守门（400）。
  * - 409 / 校验错误集中展示，带 `balances` 差额明细表（AC-28 关户守门同款）。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
@@ -52,6 +54,8 @@ const initialType = props.parent !== null && props.parent !== undefined
   : 'Assets'
 const accountType = ref<'Assets' | 'Liabilities' | 'Expenses' | 'Income' | 'Equity'>(initialType)
 const displayName = ref('')
+/** owner 可选的 ASCII 账号段；留空维持 ItemN 自动生成。 */
+const customAscii = ref('')
 const openDate = ref(todayString())
 
 // 批 2.5 修 2c / 0.6.0 S2：父账户选择（create 模式，可选）。
@@ -108,11 +112,16 @@ function resolveParent(): AccountView | null {
 
 /**
  * 按 seed 命名约定生成 Beancount 合法的 ASCII 全名（C-03 / AC-2.3）。
- * 界面只收中文 display_name，name 用 `父全名:ItemN` / `类型:ItemN` 并避开
- * 已有账户名，避免「落库成功、导出时才报 Invalid account name」。
+ * 界面主要收中文 display_name；owner 可显式给最后一段 ASCII 名，
+ * 留空仍用 `父全名:ItemN` / `类型:ItemN` 并避开已有账户名。
+ * 自定义值不在此做合法性裁决——服务端 ValidateAccountName 是权威。
  */
-function makeAsciiName(parent: AccountView | null, type: string): string {
+function makeAsciiName(parent: AccountView | null, type: string, customAscii: string = ''): string {
   const base = parent !== null ? parent.name : type
+  const custom = customAscii.trim()
+  if (custom !== '') {
+    return `${base}:${custom}`
+  }
   const used = new Set<string>()
   for (const account of knownAccounts.value) {
     used.add(account.name)
@@ -125,6 +134,25 @@ function makeAsciiName(parent: AccountView | null, type: string): string {
   }
   return candidate
 }
+
+/**
+ * 自定义 ASCII 段的前置提示（只提示不阻断提交）：与服务端同口径——
+ * 段内不能有冒号/空白，第二段须以大写字母或数字开头。填了不合规则仍会
+ * 提交，由服务端返回 400 account_name_invalid + 中文原因。
+ */
+const customAsciiHint = computed(() => {
+  const value = customAscii.value.trim()
+  if (value === '') {
+    return ''
+  }
+  if (value.indexOf(':') >= 0 || /\s/.test(value)) {
+    return '英文账号不能包含冒号或空格，例如 Food'
+  }
+  if (!/^[A-Z0-9]/.test(value)) {
+    return '英文账号需以大写字母或数字开头，例如 Food（中文请填显示名）'
+  }
+  return ''
+})
 
 function onParentChange(event: Event): void {
   const raw = (event.target as HTMLSelectElement).value
@@ -256,7 +284,7 @@ async function submit(): Promise<void> {
         return
       }
       const parent = resolveParent()
-      const fullName = makeAsciiName(parent, accountType.value)
+      const fullName = makeAsciiName(parent, accountType.value, customAscii.value)
       const created = await accountApi.create({
         name: fullName,
         display_name: label,
@@ -352,6 +380,11 @@ onMounted(() => {
             <input class="fb-input" v-model="displayName" placeholder="如：招商储蓄 / 早餐" />
           </label>
           <p class="af-hint">系统自动生成 Beancount 合法的英文账户全名，中文只作为显示名；无需手工拼冒号层级。</p>
+          <label v-if="session.isOwner" class="af-field">
+            <span>英文账号（可选，留空自动生成）</span>
+            <input class="fb-input af-ascii" v-model="customAscii" placeholder="如 Food / Cash（留空自动生成）" />
+          </label>
+          <p v-if="session.isOwner && customAsciiHint" class="af-hint af-hint--warn" role="status">{{ customAsciiHint }}</p>
           <label class="af-field">
             <span>父账户{{ parentFixed ? '（已预填，不可修改）' : '（可选）' }}</span>
             <select
@@ -523,6 +556,10 @@ onMounted(() => {
   font-size: 11px;
   line-height: 1.7;
   color: var(--fb-sub);
+}
+
+.af-hint--warn {
+  color: var(--fb-danger);
 }
 
 .af-alert {

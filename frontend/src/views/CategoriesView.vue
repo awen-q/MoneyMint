@@ -44,6 +44,8 @@ const sorting = ref(false)
 
 const newType = ref<'Expenses' | 'Income'>('Expenses')
 const newName = ref('')
+/** owner 可选的 ASCII 账号段；留空维持 ItemN 自动生成。 */
+const customAscii = ref('')
 const creating = ref(false)
 const deleteTarget = ref<AccountView | null>(null)
 
@@ -239,11 +241,20 @@ function resolveNewParent(): AccountView | null {
 }
 
 /**
- * 0.6.0 S2：界面只收中文显示名，name 按 seed 规则生成 ASCII 合法全名，
- * 避免落库后才报 Invalid account name（C-03）。
+ * 0.6.0 S2：界面主要收中文显示名，name 按 seed 规则生成 ASCII 合法全名；
+ * P0 起 owner 可显式给最后一段 ASCII 名，留空仍走 ItemN。
+ * 合法性由服务端 ValidateAccountName 守门，这里不自行裁决。
  */
-function makeAsciiCategoryName(parent: AccountView | null, type: string): string {
+function makeAsciiCategoryName(
+  parent: AccountView | null,
+  type: string,
+  customAscii: string = '',
+): string {
   const base = parent !== null ? parent.name : type
+  const custom = customAscii.trim()
+  if (custom !== '') {
+    return `${base}:${custom}`
+  }
   const used = new Set<string>()
   for (const account of accounts.value) {
     used.add(account.name)
@@ -256,6 +267,25 @@ function makeAsciiCategoryName(parent: AccountView | null, type: string): string
   }
   return candidate
 }
+
+/**
+ * 自定义 ASCII 段的前置提示（只提示不阻断提交）：与服务端同口径——
+ * 段内不能有冒号/空白，须以大写字母或数字开头；不合法仍会提交，
+ * 由服务端返回 400 account_name_invalid + 中文原因。
+ */
+const customAsciiHint = computed(() => {
+  const value = customAscii.value.trim()
+  if (value === '') {
+    return ''
+  }
+  if (value.indexOf(':') >= 0 || /\s/.test(value)) {
+    return '英文账号不能包含冒号或空格，例如 Food'
+  }
+  if (!/^[A-Z0-9]/.test(value)) {
+    return '英文账号需以大写字母或数字开头，例如 Food（中文请填显示名）'
+  }
+  return ''
+})
 
 /** 创建分类：同样传 parent_uuid（与 AccountForm 统一，AC-2.5）。 */
 async function createCategory(): Promise<void> {
@@ -279,7 +309,7 @@ async function createCategory(): Promise<void> {
   try {
     const ledgerOpeningDate = ledgerOpening()
     await accountApi.create({
-      name: makeAsciiCategoryName(parent, type),
+      name: makeAsciiCategoryName(parent, type, customAscii.value),
       display_name: label.split(':').join(' · '),
       type,
       open_date: ledgerOpeningDate < todayString() ? ledgerOpeningDate : todayString(),
@@ -287,6 +317,7 @@ async function createCategory(): Promise<void> {
     })
     newName.value = ''
     newParentId.value = null
+    customAscii.value = ''
     notice.value = `分类「${label}」已创建`
     markDirty('local-write')
     await load()
@@ -412,14 +443,21 @@ onMounted(() => {
             placeholder="中文显示名，如：早餐"
             @change="onNewNameChange"
           />
+          <input
+            v-if="session.isOwner"
+            class="fb-input cats__ascii"
+            v-model="customAscii"
+            placeholder="英文账号（可选），如 Food"
+          />
           <button type="button" class="fb-btn-primary cats__submit" :disabled="creating || session.isViewer" @click="createCategory">
             {{ creating ? '创建中…' : '创建' }}
           </button>
         </div>
         <p class="cats__hint">
-          只填中文显示名，系统自动生成 Beancount 合法的英文全名；选中上级会通过
-          parent_uuid 建立显式父子关系，刷新 / 换端后层级不退化。拖拽行排序会自动保存并同步到其他端。
+          只填中文显示名即可，系统自动生成 Beancount 合法的英文全名；owner 可另填可选英文账号（留空仍自动生成）。
+          选中上级会通过 parent_uuid 建立显式父子关系，刷新 / 换端后层级不退化。拖拽行排序会自动保存并同步到其他端。
         </p>
+        <p v-if="session.isOwner && customAsciiHint" class="cats__hint cats__hint--warn" role="status">{{ customAsciiHint }}</p>
       </div>
 
       <div v-for="group in groups" :key="group.type" class="fb-card cats__card">
@@ -519,6 +557,11 @@ onMounted(() => {
   min-width: 0;
 }
 
+.cats__ascii {
+  flex: 0 0 132px;
+  min-width: 0;
+}
+
 .cats__submit {
   flex: 0 0 auto;
 }
@@ -528,6 +571,10 @@ onMounted(() => {
   font-size: 11px;
   color: var(--fb-sub);
   line-height: 1.7;
+}
+
+.cats__hint--warn {
+  color: var(--fb-danger);
 }
 
 .cats__row {

@@ -12,6 +12,7 @@ import AccountForm from '@/components/AccountForm.vue'
 const h = vi.hoisted(() => ({
   create: vi.fn(),
   list: vi.fn(),
+  isOwner: true,
 }))
 
 vi.mock('@/api/client', () => ({
@@ -23,6 +24,7 @@ vi.mock('@/stores/session', () => ({
   useSessionStore: () => ({
     ledgerId: 7,
     isViewer: false,
+    isOwner: h.isOwner,
     defaultCommodity: 'CNY',
     ledgers: [{ id: 7, name: '测试账本', opening_date: '2026-01-01', role: 'owner' }],
   }),
@@ -56,6 +58,7 @@ async function submitWithName(wrapper: ReturnType<typeof mount>, label: string):
 }
 
 beforeEach(() => {
+  h.isOwner = true
   h.create.mockReset()
   h.list.mockReset()
   h.list.mockResolvedValue({ accounts: [] })
@@ -122,6 +125,68 @@ describe('中文展示名 → ASCII 合法全名（C-03 / AC-2.3）', () => {
 
     const body = h.create.mock.calls[0][0] as { name: string }
     expect(body.name).toBe('Expenses:Food:Item2')
+    wrapper.unmount()
+  })
+})
+
+describe('P0 可选 ASCII 英文账号（owner 可见，服务端守门）', () => {
+  async function submitAscii(
+    wrapper: ReturnType<typeof mount>,
+    label: string,
+    ascii: string,
+  ): Promise<void> {
+    const display = wrapper.findAll('input').find((i) => (i.element as HTMLInputElement).type === 'text')
+    expect(display).toBeDefined()
+    await display?.setValue(label)
+    const asciiInput = wrapper.find('input.af-ascii')
+    expect(asciiInput.exists()).toBe(true)
+    await asciiInput.setValue(ascii)
+    const save = wrapper.findAll('button').find((b) => b.text() === '保存')
+    await save?.trigger('click')
+    await flushPromises()
+  }
+
+  it('owner 填 Food：落库 name = Expenses:Food', async () => {
+    const wrapper = mount(AccountForm, { props: { mode: 'create' } })
+    await flushPromises()
+    await wrapper.findAll('select')[0].setValue('Expenses')
+    await submitAscii(wrapper, '餐饮', 'Food')
+
+    expect(h.create).toHaveBeenCalledTimes(1)
+    const body = h.create.mock.calls[0][0] as { name: string; display_name: string }
+    expect(body.name).toBe('Expenses:Food')
+    expect(body.display_name).toBe('餐饮')
+    wrapper.unmount()
+  })
+
+  it('有上级填 Drinks：落库 name = 父全名:Drinks', async () => {
+    const wrapper = mount(AccountForm, { props: { mode: 'create', parent: PARENT } })
+    await flushPromises()
+    await submitAscii(wrapper, '饮品', 'Drinks')
+
+    const body = h.create.mock.calls[0][0] as { name: string }
+    expect(body.name).toBe('Expenses:Food:Drinks')
+    wrapper.unmount()
+  })
+
+  it('非法值只给中文前置提示，不阻断提交（400 由服务端裁决）', async () => {
+    const wrapper = mount(AccountForm, { props: { mode: 'create' } })
+    await flushPromises()
+    await submitAscii(wrapper, '餐饮', 'food')
+
+    expect(wrapper.text()).toContain('大写字母或数字开头')
+    expect(h.create).toHaveBeenCalledTimes(1)
+    expect((h.create.mock.calls[0][0] as { name: string }).name).toBe('Assets:food')
+    wrapper.unmount()
+  })
+
+  it('非 owner 不渲染输入框，仍走 ItemN', async () => {
+    h.isOwner = false
+    const wrapper = mount(AccountForm, { props: { mode: 'create' } })
+    await flushPromises()
+    expect(wrapper.find('input.af-ascii').exists()).toBe(false)
+    await submitWithName(wrapper, '招商储蓄')
+    expect((h.create.mock.calls[0][0] as { name: string }).name).toMatch(/^Assets:Item\d+$/)
     wrapper.unmount()
   })
 })

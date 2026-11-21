@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
   list: vi.fn(),
   create: vi.fn(),
   close: vi.fn(),
+  isOwner: true,
 }))
 
 vi.mock('@/api/client', () => ({
@@ -25,6 +26,7 @@ vi.mock('@/stores/session', () => ({
   useSessionStore: () => ({
     ledgerId: 7,
     isViewer: false,
+    isOwner: h.isOwner,
     defaultCommodity: 'CNY',
     ledgers: [{ id: 7, name: '测试账本', opening_date: '2026-01-01', role: 'owner' }],
     needsInvite: false,
@@ -58,6 +60,7 @@ const FOOD: AccountView = {
 }
 
 beforeEach(() => {
+  h.isOwner = true
   h.list.mockReset()
   h.create.mockReset()
   h.close.mockReset()
@@ -117,6 +120,64 @@ describe('分类页新建传 parent_uuid（AC-2.5）', () => {
     expect(body.parent_uuid).toBe('u-food')
     expect(body.name).toMatch(/^Expenses:Food:Item\d+$/)
     expect(body.type).toBe('Expenses')
+    wrapper.unmount()
+  })
+})
+
+describe('P0 可选 ASCII 英文账号（分类页，owner 可见）', () => {
+  async function submitAscii(
+    wrapper: ReturnType<typeof mount>,
+    label: string,
+    ascii: string,
+  ): Promise<void> {
+    await wrapper.find('input.cats__name').setValue(label)
+    const asciiInput = wrapper.find('input.cats__ascii')
+    expect(asciiInput.exists()).toBe(true)
+    await asciiInput.setValue(ascii)
+    const button = wrapper.findAll('button').find((b) => b.text() === '创建')
+    await button?.trigger('click')
+    await flushPromises()
+  }
+
+  it('owner 填 Food：落库 name = Expenses:Food', async () => {
+    const wrapper = mount(CategoriesView)
+    await flushPromises()
+    await submitAscii(wrapper, '餐饮', 'Food')
+    expect((h.create.mock.calls[0][0] as { name: string }).name).toBe('Expenses:Food')
+    wrapper.unmount()
+  })
+
+  it('有上级填 Drinks：落库 name = <父名>:Drinks', async () => {
+    const wrapper = mount(CategoriesView)
+    await flushPromises()
+    await wrapper.findAll('select')[1].setValue('1')
+    await submitAscii(wrapper, '饮品', 'Drinks')
+    expect((h.create.mock.calls[0][0] as { name: string }).name).toBe('Expenses:Food:Drinks')
+    wrapper.unmount()
+  })
+
+  it('非法值只提示不阻断，服务端 400 才是权威', async () => {
+    const wrapper = mount(CategoriesView)
+    await flushPromises()
+    await wrapper.find('input.cats__name').setValue('餐饮')
+    await wrapper.find('input.cats__ascii').setValue('food')
+    // 提交前给出提示，但不禁用按钮、不拦截请求；成功后服务端返回 400 才是权威。
+    expect(wrapper.text()).toContain('大写字母或数字开头')
+    const button = wrapper.findAll('button').find((b) => b.text() === '创建')
+    await button?.trigger('click')
+    await flushPromises()
+    expect(h.create).toHaveBeenCalledTimes(1)
+    expect((h.create.mock.calls[0][0] as { name: string }).name).toBe('Expenses:food')
+    wrapper.unmount()
+  })
+
+  it('非 owner 不渲染英文账号输入框', async () => {
+    h.isOwner = false
+    const wrapper = mount(CategoriesView)
+    await flushPromises()
+    expect(wrapper.find('input.cats__ascii').exists()).toBe(false)
+    await submitNew(wrapper, '早餐')
+    expect((h.create.mock.calls[0][0] as { name: string }).name).toMatch(/^Expenses:Item\d+$/)
     wrapper.unmount()
   })
 })

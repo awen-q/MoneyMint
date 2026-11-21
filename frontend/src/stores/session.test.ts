@@ -99,6 +99,31 @@ describe('D-14：isViewer 从当前账本角色派生', () => {
   })
 })
 
+describe('P0：isOwner 从当前账本角色派生（与 isViewer 同源）', () => {
+  it('user.role 恒空时切账本：owner → editor → viewer，isOwner 仅 owner 为真', async () => {
+    h.me.mockResolvedValue({ user: makeUser('') })
+    h.list.mockResolvedValue({
+      ledgers: [makeLedger(1, 'owner'), makeLedger(2, 'editor'), makeLedger(3, 'viewer')],
+    })
+    const session = useSessionStore()
+    await session.bootstrap()
+
+    expect(session.isOwner).toBe(true)
+    session.selectLedger(2)
+    expect(session.isOwner).toBe(false)
+    session.selectLedger(3)
+    expect(session.isOwner).toBe(false)
+    expect(session.isViewer).toBe(true)
+    session.selectLedger(1)
+    expect(session.isOwner).toBe(true)
+  })
+
+  it('未登录 / 未选择账本时 isOwner 恒为 false', () => {
+    const session = useSessionStore()
+    expect(session.isOwner).toBe(false)
+  })
+})
+
 describe('AC-1.4 / R3：refreshLedgers 兜底到最小有效账本', () => {
   it('清单乱序时仍选最小 id（不依赖服务端排序）', async () => {
     h.me.mockResolvedValue({ user: makeUser('') })

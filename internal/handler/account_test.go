@@ -18,6 +18,7 @@ import (
 
 	"familyledger/internal/auth"
 	"familyledger/internal/db"
+	"familyledger/internal/domain"
 	"familyledger/internal/repository"
 	"familyledger/internal/service"
 )
@@ -137,5 +138,60 @@ func TestHandleUpdateAccountSortOrderInvalid(t *testing.T) {
 				t.Fatalf("校验失败不得写 sync_log，实际 %d", n)
 			}
 		})
+	}
+}
+
+// TestHandleCreateAccountCustomAsciiName P0 英文账号的 HTTP 契约：
+// owner 自定义的全名原样透传给既有 ValidateAccountName；合法 201、非法
+// 400 account_name_invalid + 中文原因，且零落库。服务层校验逻辑零改动。
+func TestHandleCreateAccountCustomAsciiName(t *testing.T) {
+	e := newSortOrderHandlerEnv(t)
+	create := func(name string) *httptest.ResponseRecorder {
+		payload, err := json.Marshal(map[string]any{
+			"name": name, "display_name": "餐饮", "type": "Expenses",
+			"open_date": "2026-01-01", "parent_uuid": "",
+		})
+		if err != nil {
+			t.Fatalf("marshal body: %v", err)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/api/accounts", bytes.NewReader(payload))
+		req.Header.Set("Content-Type", "application/json")
+		req = req.WithContext(auth.WithLedger(req.Context(), 1, domainRoleOwner))
+		rec := httptest.NewRecorder()
+		e.h.HandleCreateAccount(rec, req)
+		return rec
+	}
+
+	for _, name := range []string{"Expenses:food", "Expenses: Foo", "Expenses", "Expenses:餐饮"} {
+		rec := create(name)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%q 应 400，实际 %d: %s", name, rec.Code, rec.Body.String())
+		}
+		var body map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("解析响应: %v", err)
+		}
+		if body["code"] != domain.CodeAccountNameInvalid {
+			t.Fatalf("%q 错误码应为 account_name_invalid，实际 %s", name, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "账户名") {
+			t.Fatalf("%q 应给可操作的中文原因，实际 %s", name, rec.Body.String())
+		}
+		var n int
+		if err := e.conn.QueryRow(`SELECT count(*) FROM accounts WHERE name=?`, name).Scan(&n); err != nil {
+			t.Fatalf("查库: %v", err)
+		}
+		if n != 0 {
+			t.Fatalf("非法名 %q 不得落库", name)
+		}
+	}
+
+	rec := create("Expenses:Food")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("Expenses:Food 应 201，实际 %d: %s", rec.Code, rec.Body.String())
+	}
+	var n int
+	if err := e.conn.QueryRow(`SELECT count(*) FROM accounts WHERE name='Expenses:Food'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("合法自定义名应原样落库：%v / %d", err, n)
 	}
 }

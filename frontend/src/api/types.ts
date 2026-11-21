@@ -251,6 +251,7 @@ export interface BatchSortResponse {
 
 /** POST /api/accounts 请求体。 */
 export interface CreateAccountRequest {
+  /** Beancount 合法全名（可为 owner 自定义 ASCII 全名，如 Expenses:Food；合法性由服务端守门）。 */
   name: string
   display_name?: string
   type: AccountType

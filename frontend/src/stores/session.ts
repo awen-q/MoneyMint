@@ -57,6 +57,21 @@ export const useSessionStore = defineStore('session', () => {
     }
     return false
   })
+  // 可选 ASCII 英文账号输入框只对 owner 显隐（UI 约定，非服务端权限）。
+  // 与 isViewer 同源：role 只能从当前账本的 ledgers[].role 派生，D-14 的
+  // user.role 恒空串不能作数；服务端 CreateAccount 的 ValidateAccountName
+  // 仍是合法性权威，这里不额外做 owner-only 强校验。
+  const isOwner = computed(() => {
+    if (user.value === null || ledgerId.value === null) {
+      return false
+    }
+    for (const ledger of ledgers.value) {
+      if (ledger.id === ledgerId.value) {
+        return ledger.role === 'owner'
+      }
+    }
+    return false
+  })
   const ledgerName = computed(() => {
     if (ledgerId.value === null) {
       return '未选择账本'
@@ -227,6 +242,7 @@ export const useSessionStore = defineStore('session', () => {
     mustChangePassword,
     needsInvite,
     isViewer,
+    isOwner,
     ledgerName,
     defaultCommodity,
     setUser,
