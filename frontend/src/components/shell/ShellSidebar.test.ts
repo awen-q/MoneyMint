@@ -10,6 +10,7 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 
+import { APP_VERSION, isPrerelease } from '@/core/appVersion'
 import { NAV_MAIN } from './navItems'
 import ShellSidebar from './ShellSidebar.vue'
 
@@ -39,6 +40,13 @@ describe('ShellSidebar：结构', () => {
     const wrapper = mount(ShellSidebar)
     expect(wrapper.find('details.sb__group').exists()).toBe(true)
     expect(wrapper.find('details.sb__group > summary.sb__summary').exists()).toBe(true)
+  })
+
+  it('底部常驻版本号，预览版只打角标不弹窗', () => {
+    const wrapper = mount(ShellSidebar)
+    expect(wrapper.find('.sb__version').text()).toMatch(/^v\d+\.\d+\.\d+/)
+    expect(wrapper.find('.sb__preview').exists()).toBe(isPrerelease(APP_VERSION.version))
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
   })
 })
 

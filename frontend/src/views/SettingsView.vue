@@ -11,6 +11,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { accountApi, settingsApi } from '@/api/client'
+import AppVersionCard from '@/components/AppVersionCard.vue'
 import { isNight, toggleTheme } from '@/composables/useTheme'
 import { ApiError } from '@/api/errors'
 import type { AccountView } from '@/api/types'
@@ -252,6 +253,11 @@ onMounted(() => {
         <i :class="{ on: registrationEnabled === true }" />
         <span>{{ registrationBusy ? '切换中…' : registrationEnabled === null ? '…' : registrationEnabled ? '开放' : '关闭' }}</span>
       </button>
+    </div>
+
+    <!-- 关于：版本 / 构建号 / 日期 + 一键复制，报 bug 用（PM 版本展示方案） -->
+    <div class="fb-card set__card">
+      <AppVersionCard />
     </div>
 
     <div class="fb-card set__card">

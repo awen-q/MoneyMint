@@ -11,6 +11,7 @@
  * 3. **组件不自己跳转**：只 `emit('select', item)`，由 `AppLayout` 统一判
  *    `ready`（不可点就出提示）再 `router.push`。这样「哪里判定入口可用」只有一处。
  */
+import { APP_VERSION, isPrerelease, shortVersion } from '@/core/appVersion'
 import { NAV_MAIN, NAV_MANAGE, isItemActive, type NavItem } from './navItems'
 
 withDefaults(
@@ -76,6 +77,12 @@ const emit = defineEmits<{
     </nav>
 
     <button type="button" class="sb__cta" @click="emit('record')">＋ 记一笔</button>
+
+    <!-- 版本弱常驻：家人报 bug 截图自带版本；仅版本号，完整信息在设置页「关于」卡片 -->
+    <div class="sb__foot">
+      <span class="sb__version">{{ shortVersion(APP_VERSION) }}</span>
+      <em v-if="isPrerelease(APP_VERSION.version)" class="sb__preview">预览版</em>
+    </div>
   </aside>
 </template>
 
@@ -183,7 +190,7 @@ const emit = defineEmits<{
 }
 
 .sb__cta {
-  margin: 12px 16px 18px;
+  margin: 12px 16px 8px;
   min-height: 44px;
   border: none;
   border-radius: var(--fb-radius-input);
@@ -198,6 +205,29 @@ const emit = defineEmits<{
 .sb__cta:focus-visible {
   outline: 2px solid var(--fb-white);
   outline-offset: 2px;
+}
+
+.sb__foot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 16px 14px;
+}
+
+.sb__version {
+  color: var(--fb-side-head);
+  font-size: 11px;
+  font-variant-numeric: var(--fb-font-numeric);
+}
+
+.sb__preview {
+  padding: 1px 6px;
+  border-radius: var(--fb-radius-pill);
+  background: var(--fb-warn);
+  color: var(--fb-sidebar);
+  font-size: 10px;
+  font-style: normal;
 }
 
 /* 断点 900（LO-04：由 1024 下调，消除 769–1023 的「无侧栏 + 有底栏」空白带） */

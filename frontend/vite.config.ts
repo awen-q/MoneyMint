@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath, URL } from 'node:url'
 
@@ -5,10 +6,31 @@ import legacy from '@vitejs/plugin-legacy'
 import vue from '@vitejs/plugin-vue'
 import { defineConfig } from 'vitest/config'
 
+const FRONTEND_ROOT = fileURLToPath(new URL('.', import.meta.url))
+
 // 从 package.json 读取版本号并注入到前端（顶部版本标识用）。
 const pkg = JSON.parse(
   readFileSync(new URL('./package.json', import.meta.url), 'utf-8'),
 ) as { version: string }
+
+/**
+ * 构建元数据（短提交号 + 构建日期）：只用于报 bug 时定位构建，
+ * 不是版本事实源——版本号三处一致性仍由 scripts/verify-version.sh 守门。
+ * Docker 构建上下文排除了 .git，取不到时降级为 unknown，不影响构建。
+ */
+function buildHash(): string {
+  try {
+    return execFileSync('git', ['rev-parse', '--short=7', 'HEAD'], {
+      cwd: FRONTEND_ROOT,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
+  } catch {
+    return 'unknown'
+  }
+}
+
+const buildDate = new Date().toISOString().slice(0, 10)
 
 // Vite 配置：入口为 frontend/index.html，产物输出到 frontend/dist。
 // base 用相对路径，方便反代到任意子路径；legacy 兜底 Safari 14。
@@ -30,6 +52,8 @@ export default defineConfig({
   },
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
+    __APP_BUILD_HASH__: JSON.stringify(buildHash()),
+    __APP_BUILD_DATE__: JSON.stringify(buildDate),
   },
   build: {
     // 注意：不能输出到 ../web（那是 Flutter 源目录），统一落在 frontend/dist。

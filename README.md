@@ -42,7 +42,7 @@
 
 ```bash
 # 1. 构建（或使用 CI 发布的镜像）
-docker build -t yourname/money-mint:0.6.1 .
+docker build -t quewen08/money-mint:latest -f Dockerfile .
 
 # 2. 准备数据目录
 mkdir -p ./data
@@ -53,7 +53,7 @@ docker run -d --name famben -p 8080:8080 \
   -e LEDGER_OWNER_USER=awen \
   -e LEDGER_OWNER_PASSWORD=你的密码 \
   -v $(pwd)/data:/app/data \
-  yourname/money-mint:0.6.1
+  quewen08/money-mint:latest
 
 # 4. 浏览器打开 http://<主机IP>:8080 ，用预设的 owner 账号登录
 ```
@@ -255,4 +255,4 @@ HTTPS / 换端口 / 域名均无需改代码：Vue 产物用相对 `/api` 与 `b
 
 ## 许可证
 
-License 暂未指定。
+本项目采用 [GNU GPL v3.0](LICENSE) 开源许可证。
