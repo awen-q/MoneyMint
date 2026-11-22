@@ -2572,6 +2572,20 @@ watch(
   border-radius: 0;
 }
 
+/* 安卓真机：--vvh 取 visualViewport.height，地址栏收起/展开或浏览器自带底部
+   工具栏时它小于 layout 视口，面板高度 < inset:0 的遮罩高度 → 底部露出一截
+   页面内容（半透明遮罩下透出账单列表；TabBar 已由 AppLayout v-show 隐藏）。
+   系统键盘未弹出（body 无 kbd-open）时让面板铺满遮罩，缝隙归零；
+   系统键盘弹出时仍回落 --vvh 收缩，保证面板整体在键盘上方可见。
+   max-width 作用域避开 PC（≥900 已有 height:auto + max-height:720 的弹窗口径）。 */
+@media (max-width: 899.98px) {
+  body:not(.kbd-open) .rs-mask--auto .rs-panel,
+  body:not(.kbd-open) .rs-mask--fullscreen .rs-panel {
+    height: auto;
+    min-height: 100%;
+  }
+}
+
 /* 头部 */
 .rs-head {
   flex: 0 0 auto;

@@ -238,39 +238,41 @@ onMounted(() => {
       <div class="fb-card cmd__card">
         <h3 class="cmd__title">币种清单（{{ commodities.length }}）</h3>
         <p v-if="commodities.length === 0" class="cmd__empty">账本里还没有登记币种。</p>
-        <table v-else class="cmd__table">
-          <thead>
-            <tr>
-              <th>代码</th>
-              <th>名称</th>
-              <th>精度</th>
-              <th>状态</th>
-              <th v-if="canWrite">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in commodities" :key="row.uuid">
-              <td>
-                {{ row.symbol }}
-                <span v-if="row.is_default === true" class="cmd__main">默认</span>
-              </td>
-              <td>{{ row.name }}</td>
-              <td>{{ row.precision }}</td>
-              <td>
-                <span v-if="row.used === true" class="cmd__used">被引用</span>
-                <span v-else class="cmd__free">可删除</span>
-              </td>
-              <td v-if="canWrite">
-                <button
-                  class="fb-btn-ghost cmd__del"
-                  type="button"
-                  :disabled="busy"
-                  @click="remove(row)"
-                >删除</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <div v-else class="cmd__tbl-wrap">
+          <table class="cmd__table">
+            <thead>
+              <tr>
+                <th>代码</th>
+                <th>名称</th>
+                <th>精度</th>
+                <th>状态</th>
+                <th v-if="canWrite">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in commodities" :key="row.uuid">
+                <td>
+                  {{ row.symbol }}
+                  <span v-if="row.is_default === true" class="cmd__main">默认</span>
+                </td>
+                <td>{{ row.name }}</td>
+                <td>{{ row.precision }}</td>
+                <td>
+                  <span v-if="row.used === true" class="cmd__used">被引用</span>
+                  <span v-else class="cmd__free">可删除</span>
+                </td>
+                <td v-if="canWrite">
+                  <button
+                    class="fb-btn-ghost cmd__del"
+                    type="button"
+                    :disabled="busy"
+                    @click="remove(row)"
+                  >删除</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div v-if="canWrite" class="fb-card cmd__card">

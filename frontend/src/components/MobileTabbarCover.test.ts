@@ -32,3 +32,20 @@ describe('记账弹窗打开期间隐藏移动底栏（安卓 vvh 缝隙漏底�
     expect(recordSheet).toContain('visualViewport')
   })
 })
+
+describe('面板铺满遮罩（安卓 --vvh 缝隙漏出页面内容）', () => {
+  const recordSheet = readFileSync(fileURLToPath(new URL('./RecordSheet.vue', import.meta.url)), 'utf8')
+
+  it('移动端（<900）系统键盘未弹出时，全屏态面板 min-height:100% 铺满遮罩', () => {
+    const block = recordSheet.indexOf('@media (max-width: 899.98px)')
+    expect(block).toBeGreaterThan(0)
+    const scope = recordSheet.slice(block, block + 400)
+    expect(scope).toContain('body:not(.kbd-open)')
+    expect(scope).toContain('.rs-mask--auto .rs-panel')
+    expect(scope).toContain('min-height: 100%')
+  })
+
+  it('PC 弹窗口径不受影响：≥900 仍是 height:auto + max-height:720', () => {
+    expect(recordSheet).toContain('max-height: min(720px')
+  })
+})
