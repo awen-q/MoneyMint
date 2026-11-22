@@ -90,6 +90,11 @@ describe('iOS 按钮 appearance 回归：清除原生外观 + 显式行高', () 
     '.add-row',
     '.auto-row',
     '.g-link',
+    // v2.1 行浮层 / 行内 chip 新增按钮同样清掉 iOS 原生外观。
+    '.acc-chip',
+    '.cur-chip',
+    '.adv-pop-close',
+    '.adv-option',
   ]
 
   it('全部按钮规则都含 appearance:none（含 -webkit- 前缀）与 line-height', () => {

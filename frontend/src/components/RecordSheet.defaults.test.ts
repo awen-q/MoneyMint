@@ -124,7 +124,7 @@ describe('批3-K：默认账户预选（§14.5 #5）', () => {
 
 describe('P0：资金账户记忆（fund 位，支出/收入共用）', () => {
   function selectedFund(wrapper: ReturnType<typeof mount>): string {
-    const select = wrapper.find('[data-field="fund"]')
+    const select = wrapper.find('select[data-field="fund"]')
     return (select.element as HTMLSelectElement).value
   }
 
@@ -153,7 +153,7 @@ describe('P0：资金账户记忆（fund 位，支出/收入共用）', () => {
       const button = wrapper.findAll('.rs-key').find((b) => b.text() === key)
       await button?.trigger('click')
     }
-    await wrapper.find('[data-field="fund"]').setValue('5')
+    await wrapper.find('select[data-field="fund"]').setValue('5')
     const save = wrapper.findAll('.rs-key').find((b) => b.text() === '保存')
     await save?.trigger('click')
     await flushPromises()
@@ -188,7 +188,7 @@ describe('P0：资金账户记忆（fund 位，支出/收入共用）', () => {
     // fund 下拉只在支出/收入态渲染（转账态换成转出/转入两行）。
     // 先在支出态选中 u-card；switchKind 不碰 fundAccountId，
     // 切到转账后保存仍应无条件写 fund 记忆。
-    await wrapper.find('[data-field="fund"]').setValue('5')
+    await wrapper.find('select[data-field="fund"]').setValue('5')
     const tab = wrapper.findAll('[data-act="tab"]').find((b) => b.text() === '转账')
     await tab?.trigger('click')
     await wrapper.find('[data-act="amount"]').trigger('click')

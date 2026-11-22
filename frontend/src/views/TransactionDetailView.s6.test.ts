@@ -42,6 +42,7 @@ vi.mock('@/api/client', () => ({
 }))
 
 vi.mock('vue-router', () => ({
+  routerKey: Symbol.for('router'),
   useRoute: () => ({ params: {}, query: { id: '11' } }),
   useRouter: () => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }),
 }))

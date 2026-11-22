@@ -80,8 +80,8 @@ async function openKeypad(wrapper: VueWrapper): Promise<void> {
 }
 
 /**
- * 挂载后默认展开键盘，沿用既有用例的按键输入路径；
- * 验证收起态的用例显式传 { keypad: false }。
+ * 简化态新建默认展开键盘（规格 §5-K）；
+ * 验证收起态的用例显式传 { keypad: false }，由本 helper 点真实收起键。
  */
 async function mountSheet(
   props: Record<string, unknown> = {},
@@ -89,8 +89,11 @@ async function mountSheet(
 ): Promise<VueWrapper> {
   const wrapper = mount(RecordSheet, { props })
   await flushPromises()
-  if (options.keypad !== false) {
-    await openKeypad(wrapper)
+  if (options.keypad === false) {
+    const hide = wrapper.find('[data-act="hide-keypad"]')
+    if (hide.exists()) {
+      await hide.trigger('click')
+    }
   }
   return wrapper
 }
@@ -143,7 +146,7 @@ describe('容器形态与主操作唯一', () => {
   it('variant 显式覆盖生效；高级态无键盘、仅底部一条全宽保存条', async () => {
     const wrapper = await mountSheet({ variant: 'dialog' })
     expect(wrapper.find('.rs-mask').classes()).toContain('rs-mask--dialog')
-    const toggle = wrapper.findAll('button').find((button) => button.text().includes('高级模式'))
+    const toggle = wrapper.findAll('button').find((button) => button.text().includes('高级双录'))
     await toggle!.trigger('click')
     await flushPromises()
     expect(wrapper.find('.rs-keyboard').exists()).toBe(false)
@@ -152,37 +155,50 @@ describe('容器形态与主操作唯一', () => {
     wrapper.unmount()
   })
 
-  it('键位顺序严格为 7 8 9 ⌫ / 4 5 6 ＋ / 1 2 3 － / . 0 再记 保存', async () => {
+  it('键位严格为 4×5+动作条：7 8 9 ⌫ / 4 5 6 × / 1 2 3 ÷ / . 0 = − / + 再记 高级双录 保存', async () => {
     const wrapper = await mountSheet()
     const keys = wrapper.findAll('.rs-key').map((button) => button.text())
-    expect(keys).toEqual(['7', '8', '9', '⌫', '4', '5', '6', '＋', '1', '2', '3', '－', '.', '0', '再记', '保存'])
+    expect(keys).toEqual([
+      '7', '8', '9', '⌫',
+      '4', '5', '6', '×',
+      '1', '2', '3', '÷',
+      '.', '0', '=', '−',
+      '+', '再记', '高级双录', '保存',
+    ])
     wrapper.unmount()
   })
 })
 
-describe('自定义数字键盘按需展开（手机端首屏不拥挤）', () => {
-  it('进入简化态默认收起键盘，表单区可用且不冒出第二个保存', async () => {
-    const wrapper = await mountSheet({}, { keypad: false })
-    expect(wrapper.find('.rs-keyboard').exists()).toBe(false)
+describe('自定义数字键盘：新建态默认展开，收起 / 展开入口保留', () => {
+  it('简化态新建默认展开键盘，且始终只有一个保存入口', async () => {
+    const wrapper = await mountSheet()
+    expect(wrapper.find('.rs-keyboard').exists()).toBe(true)
     expect(wrapper.find('.rs-foot').exists()).toBe(false)
     expect(wrapper.find('.rs-body').exists()).toBe(true)
-    expect(wrapper.find('[data-act="show-keypad"]').exists()).toBe(true)
-    expect(wrapper.findAll('button').filter((button) => button.text() === '保存')).toHaveLength(0)
+    expect(wrapper.find('[data-act="hide-keypad"]').exists()).toBe(true)
+    expect(wrapper.findAll('button').filter((button) => button.text() === '保存')).toHaveLength(1)
     wrapper.unmount()
   })
 
-  it('点金额区展开键盘，16 个键位顺序保持不变', async () => {
-    const wrapper = await mountSheet({}, { keypad: false })
+  it('点金额区保持展开，20 个键位顺序保持不变', async () => {
+    const wrapper = await mountSheet()
     await wrapper.find('[data-act="amount"]').trigger('click')
     await flushPromises()
     expect(wrapper.find('.rs-keyboard').exists()).toBe(true)
     const keys = wrapper.findAll('.rs-key').map((button) => button.text())
-    expect(keys).toEqual(['7', '8', '9', '⌫', '4', '5', '6', '＋', '1', '2', '3', '－', '.', '0', '再记', '保存'])
+    expect(keys).toEqual([
+      '7', '8', '9', '⌫',
+      '4', '5', '6', '×',
+      '1', '2', '3', '÷',
+      '.', '0', '=', '−',
+      '+', '再记', '高级双录', '保存',
+    ])
     wrapper.unmount()
   })
 
   it('收起态提示条可展开，展开态「收起」按钮可收回', async () => {
     const wrapper = await mountSheet({}, { keypad: false })
+    expect(wrapper.find('[data-act="show-keypad"]').exists()).toBe(true)
     await wrapper.find('[data-act="show-keypad"]').trigger('click')
     await flushPromises()
     expect(wrapper.find('.rs-keyboard').exists()).toBe(true)
@@ -213,7 +229,7 @@ describe('自定义数字键盘按需展开（手机端首屏不拥挤）', () =
     await openKeypad(wrapper)
     expect(wrapper.find('.rs-keyboard').exists()).toBe(true)
 
-    const tags = wrapper.find('[data-field="tags"]')
+    const tags = wrapper.find('input[data-field="tags"]')
     tags.element.dispatchEvent(new Event('focusin', { bubbles: true }))
     await flushPromises() // keypadOpen 走响应式渲染，focusin 后需等 DOM 更新
     expect(wrapper.find('.rs-keyboard').exists()).toBe(false)
@@ -226,8 +242,10 @@ describe('自定义数字键盘按需展开（手机端首屏不拥挤）', () =
 
   it('高级态与编辑态不受 keypadOpen 影响，仍只有 .rs-foot 保存条', async () => {
     const wrapper = await mountSheet({}, { keypad: false })
-    const toggle = wrapper.findAll('button').find((button) => button.text().includes('高级模式'))
-    await toggle!.trigger('click')
+    // 键盘收起时走预览条上的高级入口；展开时走键盘「高级双录」键。
+    const toggle = wrapper.find('[data-act="advanced"]')
+    expect(toggle.exists()).toBe(true)
+    await toggle.trigger('click')
     await flushPromises()
     await wrapper.find('[data-act="amount"]').trigger('click')
     await flushPromises()
@@ -263,7 +281,7 @@ describe('真实账户源与 bean 预览', () => {
     expect(cats.length).toBeGreaterThan(0)
     expect(cats[0].text()).toContain('食品饮料')
     expect(cats[0].classes()).toContain('on')
-    expect(wrapper.find('.rs-select option[value="2"]').text()).toContain('Expenses:Food')
+    expect(wrapper.find('select[data-field="category"] option[value="2"]').text()).toContain('Expenses:Food')
 
     await enterAmount(wrapper, '100')
     const bean = wrapper.find('.js-bean').text()
@@ -276,7 +294,7 @@ describe('真实账户源与 bean 预览', () => {
   it('标签兼容空格与中英文逗号，导出统一单空格的 tags 元数据行', async () => {
     const wrapper = await mountSheet()
     await enterAmount(wrapper, '100')
-    const tagsInput = wrapper.find('[data-field="tags"]')
+    const tagsInput = wrapper.find('input[data-field="tags"]')
     await tagsInput.setValue('日常，孩子 通勤')
     await flushPromises()
     const bean = wrapper.find('.js-bean').text()
@@ -298,7 +316,7 @@ describe('flag 透传与草稿快照', () => {
   it('flag 切到 ! 后写入 create 载荷；预览首行同步变化', async () => {
     const wrapper = await mountSheet()
     await enterAmount(wrapper, '100')
-    await wrapper.find('[data-field="flag"]').setValue('!')
+    await wrapper.find('select[data-field="flag"]').setValue('!')
     await flushPromises()
     expect(wrapper.find('.js-bean').text()).toMatch(/^2026-\d\d-\d\d ! "/m)
 
@@ -311,7 +329,7 @@ describe('flag 透传与草稿快照', () => {
 
   it('草稿快照包含 flag，刷新恢复后控件回显', async () => {
     const wrapper = await mountSheet()
-    await wrapper.find('[data-field="flag"]').setValue('!')
+    await wrapper.find('select[data-field="flag"]').setValue('!')
     await flushPromises()
     const last = h.writeDraft.mock.calls[h.writeDraft.mock.calls.length - 1]
     expect(last).toBeDefined()
@@ -319,7 +337,7 @@ describe('flag 透传与草稿快照', () => {
 
     h.readDraft.mockReturnValue({ flag: '!', amountExpression: '88', kind: 'expense' })
     const restored = await mountSheet()
-    expect((restored.find('[data-field="flag"]').element as HTMLSelectElement).value).toBe('!')
+    expect((restored.find('select[data-field="flag"]').element as HTMLSelectElement).value).toBe('!')
     restored.unmount()
     wrapper.unmount()
   })
@@ -328,7 +346,7 @@ describe('flag 透传与草稿快照', () => {
 describe('配平守门与禁用态', () => {
   it('高级态不平衡时保存 disabled，原生派发点击也不发请求', async () => {
     const wrapper = await mountSheet()
-    const toggle = wrapper.findAll('button').find((button) => button.text().includes('高级模式'))
+    const toggle = wrapper.findAll('button').find((button) => button.text().includes('高级双录'))
     await toggle!.trigger('click')
     await flushPromises()
 
@@ -350,7 +368,7 @@ describe('配平守门与禁用态', () => {
 
   it('auto-balance 补行账户留空 → 保存保持 disabled', async () => {
     const wrapper = await mountSheet()
-    const toggle = wrapper.findAll('button').find((button) => button.text().includes('高级模式'))
+    const toggle = wrapper.findAll('button').find((button) => button.text().includes('高级双录'))
     await toggle!.trigger('click')
     await flushPromises()
     const rows = wrapper.findAll('.rs-adv-row')
@@ -376,7 +394,7 @@ describe('形态与键盘避让的副作用清理', () => {
     const vv = document.documentElement.style.getPropertyValue('--vvh')
     expect(vv).toMatch(/^\d+px$/)
 
-    const tags = wrapper.find('[data-field="tags"]')
+    const tags = wrapper.find('input[data-field="tags"]')
     expect(tags.element.matches('input.inp-text')).toBe(true)
     tags.element.dispatchEvent(new Event('focusin', { bubbles: true }))
     expect(document.body.classList.contains('kbd-open')).toBe(true)
@@ -402,8 +420,8 @@ describe('形态与键盘避让的副作用清理', () => {
     // focusin 监听挂在 document 上，VTU 默认游离节点无法冒泡，必须 attachTo。
     const wrapper = mount(RecordSheet, { attachTo: document.body })
     await flushPromises()
-    const toggle = wrapper.findAll('button').find((button) => button.text().includes('高级模式'))
-    expect(toggle, '高级模式切换按钮不存在').toBeDefined()
+    const toggle = wrapper.findAll('button').find((button) => button.text().includes('高级双录'))
+    expect(toggle, '高级双录切换按钮不存在').toBeDefined()
     await toggle!.trigger('click')
     await flushPromises()
 

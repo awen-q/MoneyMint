@@ -210,6 +210,39 @@ export class Money {
   }
 
   /**
+   * 定点乘法（金额运算入口）：只接受 Money，结果按两位小数 HALF_UP 收敛到「分」。
+   *
+   * 与下方 `div(number)` 的「仅供展示、禁止回写交易金额」约束不同，本方法专供
+   * 键盘表达式（§5-E）等**可回写金额**的场景；两侧都是 Money，杜绝裸数字混算。
+   */
+  times(other: Money): Money {
+    return new Money(
+      this.amount.times(other.amount).toDecimalPlaces(2, Decimal.ROUND_HALF_UP),
+    )
+  }
+
+  /**
+   * 定点除法（金额运算入口）：只接受 Money 作除数，结果按两位小数 HALF_UP 收敛。
+   *
+   * 除数为 0 时抛 RangeError（文案含「除数不能为 0」），绝不静默返回 0 / NaN。
+   * 与 `div(number)` 的展示聚合口径彼此独立：本方法是表达式求值唯一合法的金额
+   * 除法路径，调用方无需（也不得）改用 `div(number)` 绕过约束。
+   */
+  dividedBy(other: Money): Money {
+    if (other.isZero()) {
+      throw new RangeError('除数不能为 0')
+    }
+    return new Money(
+      this.amount.div(other.amount).toDecimalPlaces(2, Decimal.ROUND_HALF_UP),
+    )
+  }
+
+  /** 按两位小数 HALF_UP 量化为「分」口径（顺序求值每步收敛精度用）。 */
+  rounded(): Money {
+    return new Money(this.amount.toDecimalPlaces(2, Decimal.ROUND_HALF_UP))
+  }
+
+  /**
    * 定点除法（**仅供展示聚合使用**：日均、环比占比的分子分母）。
    *
    * 舍入固定两位 HALF_UP（负数按「远离零」进位），与全站金额口径一致。

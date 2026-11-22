@@ -12,7 +12,8 @@
  *   无「取消」按钮，关闭只靠 ✕ + 点遮罩自身。
  * - 幂等 / 离线 / 编辑冲正 / 草稿恢复沿用既有口径，选择器契约保持不变。
  */
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, inject, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { routerKey } from 'vue-router'
 
 import {
   accountApi,
@@ -40,6 +41,7 @@ import {
   buildPostings,
   displayEntryOf,
   evaluateAmountExpression,
+  magnitudeOf,
   resolveAccountCommodity,
   todayString,
   type AdvancedRow,
@@ -81,6 +83,17 @@ const emit = defineEmits<{
 const session = useSessionStore()
 const sheet = useRecordSheetStore()
 const privacy = usePrivacyStore()
+/**
+ * 账本 / 币种 chip 只读，点击即跳管理页。
+ * 走 SPA 路由（hash 历史），不触发整页刷新；测试替身未装 router 时静默忽略。
+ */
+const router = inject(routerKey, null)
+function navigateTo(path: string): void {
+  if (router === null) {
+    return
+  }
+  void router.push(path)
+}
 
 const accounts = ref<AccountView[]>([])
 const commodities = ref<string[]>([])
@@ -93,8 +106,38 @@ const showSuccess = ref(false)
 /** 由 visualViewport 同步的可视高度（px）；仅用于生命周期诊断，CSS 变量写在 documentElement。 */
 const vvh = ref('')
 const kbdOpen = ref(false)
-/** 自定义数字键盘是否展开：默认收起，让简化态表单一屏可见；高级 / 编辑态不受此状态影响。 */
-const keypadOpen = ref(false)
+/** 简化态新建默认展开键盘（规格 §5-K）；高级 / 编辑态仍强制收起。 */
+const keypadOpen = ref(true)
+/**
+ * 高级行内键盘（v2.1 §12-1）：**独立**于 keypadOpen，后者只服务简化态。
+ * activeRowIndex 与 AdvancedPostings 的 activeRow prop 联动，焦点行整行描边。
+ */
+const advancedKeypadOpen = ref(false)
+const activeRowIndex = ref(-1)
+const advancedPostingsRef = ref<InstanceType<typeof AdvancedPostings> | null>(null)
+/** 浮层 portal 的宿主元素引用（脱离 document 挂载时字符串选择器会失效）。 */
+const portalHostEl = ref<HTMLElement | null>(null)
+
+/** 浮层类型：移动底部弹层 / PC chip 锚定下拉共用同一状态。 */
+type PopoverKind = '' | 'date' | 'fund' | 'tags' | 'flag' | 'category'
+const activePopover = ref<PopoverKind>('')
+/** 资金浮层服务哪个字段（简化态资金 chip / 转账转出、转入）。 */
+const fundPopoverTarget = ref<'fund' | 'from' | 'to'>('fund')
+/** 分类完整列表搜索词（匹配 display_name / name）。 */
+const categorySearch = ref('')
+/** 标签浮层里除当前 form.tags 外见过的标签（不新增 API，随草稿 / 编辑回显累积）。 */
+const knownTags = ref<string[]>([])
+const newTagText = ref('')
+/** 表达式小字：非聚焦时显示美化文案，聚焦时切成可输入 `+` 的原始串。 */
+const exprFocused = ref(false)
+const exprInput = ref<HTMLInputElement | null>(null)
+/** `=` 求值后的状态：按数字清空重输、按运算符续算、再按 = 无操作。 */
+const afterEquals = ref(false)
+/** 求值与日期的行内错误（保存守门一并读取）。 */
+const evalError = ref('')
+const dateError = ref('')
+/** 日期浮层日历当前月份 `YYYY-MM`。 */
+const calendarMonth = ref('')
 
 /** 保存成功后的票面快照（与表单解耦，复制/再记不影响展示）。 */
 interface ReceiptSnapshot {
@@ -224,8 +267,16 @@ function prefillFromEditTxn(): void {
     amount: typeof posting.amount === 'string' ? posting.amount : '',
     commodity: posting.commodity === undefined || posting.commodity === '' ? session.defaultCommodity : posting.commodity,
   }))
+  for (const tag of form.tags) {
+    if (knownTags.value.indexOf(tag) < 0) {
+      knownTags.value.push(tag)
+    }
+  }
   advancedMode.value = true
   keypadOpen.value = false
+  advancedKeypadOpen.value = false
+  activeRowIndex.value = -1
+  activePopover.value = ''
 }
 
 // 幂等键生命周期：提交成功 / 表单语义变化后换新键，纯网络重试复用。
@@ -237,12 +288,23 @@ const tabs: Array<{ key: RecordKind; label: string }> = [
   { key: 'income', label: '收入' },
   { key: 'transfer', label: '转账' },
 ]
+/** 4×5 键位：前四行数字 / 运算，第五行动作条（规格 §5-K）。 */
 const keyboardKeys: string[] = [
   '7', '8', '9', '⌫',
-  '4', '5', '6', '＋',
-  '1', '2', '3', '－',
-  '.', '0', '再记', '保存',
+  '4', '5', '6', '×',
+  '1', '2', '3', '÷',
+  '.', '0', '=', '−',
+  '+', '再记', '高级双录', '保存',
 ]
+/** 键盘运算键（内部表达式统一半角 + - * /，键面显示 × ÷ − +）。 */
+const OPERATOR_KEYS: Record<string, string> = {
+  '×': '*',
+  '÷': '/',
+  '−': '-',
+  '+': '+',
+}
+/** 高级行内键盘：复用前四行数字 / 运算键，第五行改为单键「完成」（无保存键）。 */
+const advancedKeypadKeys: string[] = keyboardKeys.slice(0, 16)
 
 const containerClass = computed(() =>
   props.variant === 'auto' ? 'rs-mask--auto' : `rs-mask--${props.variant}`,
@@ -264,14 +326,91 @@ const fundAccounts = computed(() => recordFundAccounts(accounts.value))
 const categoryOptions = computed(() =>
   form.kind === 'income' ? incomeAccounts.value : expenseAccounts.value,
 )
+/** 按 sort_order 升序（缺失按 0），同一顺序用于一级 grid / 二级 chips / 完整列表。 */
+function bySortOrder(left: AccountView, right: AccountView): number {
+  const a = typeof left.sort_order === 'number' ? left.sort_order : 0
+  const b = typeof right.sort_order === 'number' ? right.sort_order : 0
+  return a - b
+}
+
 /**
- * 九宫格只取前 9 个（不足按实际数量渲染并给空态）。
- *
- * P0：顺序来自 `accountApi.list()` 的 sort_order（后端 `ListAccounts` 按
- * `type, sort_order, open_date, name` 排序），分类页拖拽整组提交后落库 + 写
- * sync_log，因此其他端刷新本页即可按同一顺序置顶；本批不引入 recent 逻辑。
+ * 一级分类：accountApi.list() 中 type ∈ {Expenses, Income} 且 parent_uuid 为空的账户。
+ * 数量由账本数据决定，不写死 18 / 9（规格 §4）。
  */
-const categoryGrid = computed(() => categoryOptions.value.slice(0, 9))
+const rootCategories = computed<AccountView[]>(() =>
+  categoryOptions.value
+    .filter((account) => account.parent_uuid === undefined || account.parent_uuid === '')
+    .slice()
+    .sort(bySortOrder),
+)
+
+/** 当前一级：已选 leaf 反查 parent；无记忆则默认高亮第一项但不自动提交。 */
+const activeRootId = computed<number | null>(() => {
+  const selected = accounts.value.find((account) => account.id === form.categoryAccountId)
+  if (selected !== undefined && selected.parent_uuid !== undefined && selected.parent_uuid !== '') {
+    const parent = accounts.value.find((account) => account.uuid === selected.parent_uuid)
+    if (parent !== undefined && rootCategories.value.some((root) => root.id === parent.id)) {
+      return parent.id
+    }
+  }
+  if (selected !== undefined && rootCategories.value.some((root) => root.id === selected.id)) {
+    return selected.id
+  }
+  return rootCategories.value.length > 0 ? rootCategories.value[0].id : null
+})
+
+/** 二级 chips：当前一级的直接子账户；无子分类时调用方整行隐藏。 */
+const subCategories = computed<AccountView[]>(() => {
+  const root = rootCategories.value.find((account) => account.id === activeRootId.value)
+  if (root === undefined || root.uuid === '') {
+    return []
+  }
+  return categoryOptions.value
+    .filter((account) => account.parent_uuid === root.uuid)
+    .slice()
+    .sort(bySortOrder)
+})
+
+/** 完整分类列表：按父账户分组，当前 tab 相关类在前。 */
+interface CategoryGroup {
+  key: string
+  label: string
+  mono: string
+  accounts: AccountView[]
+}
+const categoryGroups = computed<CategoryGroup[]>(() => {
+  const keyword = categorySearch.value.trim().toLowerCase()
+  const matched = categoryOptions.value.filter((account) => {
+    if (keyword === '') {
+      return true
+    }
+    return (
+      accountLabel(account).toLowerCase().indexOf(keyword) >= 0 ||
+      account.name.toLowerCase().indexOf(keyword) >= 0
+    )
+  })
+  const groups: CategoryGroup[] = []
+  const indexByKey: { [key: string]: number } = {}
+  for (const account of matched) {
+    const parent = account.parent_uuid === undefined || account.parent_uuid === ''
+      ? undefined
+      : accounts.value.find((item) => item.uuid === account.parent_uuid)
+    const key = parent === undefined ? `root-${account.id}` : `parent-${parent.uuid}`
+    let index = indexByKey[key]
+    if (index === undefined) {
+      index = groups.length
+      indexByKey[key] = index
+      groups.push({
+        key,
+        label: parent === undefined ? accountLabel(account) : accountLabel(parent),
+        mono: parent === undefined ? account.name : parent.name,
+        accounts: [],
+      })
+    }
+    groups[index].accounts.push(account)
+  }
+  return groups
+})
 
 const selectedCategory = computed(() =>
   categoryOptions.value.find((account) => account.id === form.categoryAccountId),
@@ -295,7 +434,26 @@ const amountMoney = computed<Money>(() => {
     return Money.zero()
   }
 })
-const amountDisplay = computed(() => amountMoney.value.formatAmount())
+/** 求值失败时保留上一次成功落值，绝不把「除数不能为 0」写成 0.00。 */
+const lastValidAmount = ref('0.00')
+const amountDisplay = computed(() =>
+  evalError.value === '' ? amountMoney.value.formatAmount() : lastValidAmount.value,
+)
+watch(() => form.amountExpression, () => {
+  if (evalError.value !== '') {
+    return
+  }
+  if (form.amountExpression === '') {
+    lastValidAmount.value = '0.00'
+    return
+  }
+  try {
+    const parsed = evaluateAmountExpression(form.amountExpression)
+    lastValidAmount.value = parsed.formatAmount()
+  } catch {
+    // 表达式拼到一半（如 `12.` / `9/0`）时保留上一笔有效金额。
+  }
+})
 const currency = computed(() => {
   const symbol = currencySymbol(session.defaultCommodity)
   return symbol !== '' ? symbol : session.defaultCommodity
@@ -401,13 +559,74 @@ const advancedCanSubmit = computed(() => advancedRowsReady(form.advancedPostings
 const canSubmit = computed(
   () =>
     !submitting.value &&
+    evalError.value === '' &&
+    dateError.value === '' &&
     accounts.value.length > 0 &&
     session.ledgerId !== null &&
     !session.isViewer &&
     (advancedMode.value ? advancedCanSubmit.value : preview.value.length > 0),
 )
 
+/** 表达式小字：内部半角运算符映射成图册键面文案。 */
+const expressionDisplay = computed(() =>
+  form.amountExpression
+    .replace(/\*/g, ' × ')
+    .replace(/\//g, ' ÷ ')
+    .replace(/\+/g, ' + ')
+    .replace(/-/g, ' − ')
+    .replace(/\s+/g, ' ')
+    .trim(),
+)
+
+/** 三态预览条：配平 / 按币种差额（正差额显式带 +）。 */
+interface DiffView {
+  commodity: string
+  text: string
+}
+const diffViews = computed<DiffView[]>(() =>
+  balanceDiffByCommodity(
+    activePostings.value.map((posting) => ({
+      commodity: posting.commodity,
+      amount: posting.amount,
+    })),
+  ).map((diff) => {
+    const value = Money.from(diff.diff)
+    return {
+      commodity: diff.commodity,
+      text: value.isNegative() ? value.toString() : `+${value.toString()}`,
+    }
+  }),
+)
+const previewBalanced = computed(
+  () => diffViews.value.length === 0 && activePostings.value.length >= 2,
+)
+
 const tagsText = computed(() => form.tags.join(' '))
+/** chip 文案：今天 / 昨天 / 前天，其余原样 YYYY-MM-DD。 */
+const dateChipLabel = computed(() => {
+  if (form.date === quickDate(0)) {
+    return '今天'
+  }
+  if (form.date === quickDate(1)) {
+    return '昨天'
+  }
+  if (form.date === quickDate(2)) {
+    return '前天'
+  }
+  return form.date
+})
+const fundChipLabel = computed(() => accountNameOf(form.fundAccountId ?? -1))
+const flagChipLabel = computed(() => (form.flag === '!' ? '! 未完成' : '* 已完成'))
+/** 标签浮层选项：已知标签 + 当前选中，去重且保持稳定顺序。 */
+const tagOptions = computed<string[]>(() => {
+  const result: string[] = []
+  for (const tag of knownTags.value.concat(form.tags)) {
+    if (tag !== '' && result.indexOf(tag) < 0) {
+      result.push(tag)
+    }
+  }
+  return result
+})
 const categorySelectValue = computed(() =>
   form.categoryAccountId === null ? '' : String(form.categoryAccountId),
 )
@@ -488,6 +707,11 @@ function restoreDraft(): void {
       }
     }
     form.advancedPostings = rows
+  }
+  for (const tag of form.tags) {
+    if (knownTags.value.indexOf(tag) < 0) {
+      knownTags.value.push(tag)
+    }
   }
   notice.value = '已恢复上次未提交的表单草稿'
 }
@@ -648,6 +872,19 @@ function onFundSelect(event: Event): void {
   form.fundAccountId = selectedId(event)
 }
 
+/** 资金浮层中的契约 select 按当前服务对象回填字段并关闭浮层。 */
+function onFundPopoverSelect(event: Event): void {
+  const id = selectedId(event)
+  if (fundPopoverTarget.value === 'from') {
+    form.transferFromAccountId = id
+  } else if (fundPopoverTarget.value === 'to') {
+    form.transferToAccountId = id
+  } else {
+    form.fundAccountId = id
+  }
+  closePopover()
+}
+
 function onTransferFrom(event: Event): void {
   form.transferFromAccountId = selectedId(event)
 }
@@ -668,10 +905,21 @@ function onTagsChange(event: Event): void {
     }
   }
   form.tags = tags
+  for (const tag of tags) {
+    if (knownTags.value.indexOf(tag) < 0) {
+      knownTags.value.push(tag)
+    }
+  }
+}
+
+function selectFlag(flag: '*' | '!'): void {
+  form.flag = flag
+  closePopover()
 }
 
 function selectCategory(id: number): void {
   form.categoryAccountId = id
+  closePopover()
 }
 
 function switchKind(kind: RecordKind): void {
@@ -693,7 +941,9 @@ function switchKind(kind: RecordKind): void {
  * 这是快捷日期 chip 的唯一守门（原生 date input 仍可自由录入）。
  */
 function ledgerOpening(): string {
-  for (const ledger of session.ledgers) {
+  // 测试替身 / 未加载账本列表时 ledgers 可能缺失；取不到即按兜底今天处理。
+  const ledgers = Array.isArray(session.ledgers) ? session.ledgers : []
+  for (const ledger of ledgers) {
     if (ledger.id === session.ledgerId && ledger.opening_date !== '') {
       return ledger.opening_date
     }
@@ -708,31 +958,236 @@ function quickDate(daysAgo: number): string {
   return `${base.getFullYear()}-${pad2(base.getMonth() + 1)}-${pad2(base.getDate())}`
 }
 
-/**
- * 快捷日期只写 form.date 一处：页头、Bean 片段、小票 Bean 均由它派生。
- * 早于账本期初时拒绝且不改表单，避免「保存成功但 bean-check 才炸」。
- */
+/** 日期可选下限：账本 opening_date，取不到才兜底今天（沿用 ledgerOpening 口径）。 */
+const minDate = computed(() => ledgerOpening())
+/** 未来禁选：上限恒为今天。 */
+const maxDate = computed(() => todayString())
+
+/** 合法且可提交的日期：格式 + 下限 + 上限，原生 input / 日历 / 提交共用。 */
+function isDateAllowed(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) && value >= minDate.value && value <= maxDate.value
+}
+
+/** 原生 date input 的即时守门：越界回退到上一个合法值并给行内提示。 */
+function onDateInput(event: Event): void {
+  const value = (event.target as HTMLInputElement).value
+  if (isDateAllowed(value)) {
+    form.date = value
+    dateError.value = ''
+    notice.value = ''
+    return
+  }
+  dateError.value = value > maxDate.value ? '日期不能晚于今天' : `日期不能早于账本期初 ${minDate.value}`
+  ;(event.target as HTMLInputElement).value = form.date
+}
+
+/** PC 锚定下拉位置（由触发 chip 的 getBoundingClientRect 派生，不另立断点）。 */
+const popoverStyle = ref<Record<string, string>>({})
+function setPopoverAnchor(event: Event): void {
+  const element = event.currentTarget as HTMLElement | null
+  if (element === null || typeof element.getBoundingClientRect !== 'function') {
+    return
+  }
+  const rect = element.getBoundingClientRect()
+  const width = Math.max(250, Math.round(rect.width))
+  // 右缘溢出时改为右对齐，保证下拉完整落在视口内。
+  const viewportWidth = typeof window === 'undefined' ? width + 24 : window.innerWidth
+  const left = Math.min(Math.round(rect.left), Math.max(12, viewportWidth - width - 12))
+  // 下缘溢出时向上翻转（PC 锚定下拉同样不得被视口截断）。
+  const viewportHeight = typeof window === 'undefined' ? 768 : window.innerHeight
+  const estimatedHeight = 360
+  const top = rect.bottom + estimatedHeight + 12 <= viewportHeight
+    ? Math.round(rect.bottom + 6)
+    : Math.max(12, Math.round(rect.top - estimatedHeight - 6))
+  popoverStyle.value = {
+    '--pop-left': `${left}px`,
+    '--pop-top': `${top}px`,
+    '--pop-width': `${width}px`,
+  }
+}
+
+/** 浮层开关：同一时刻只有一个浮层，点当前 chip 即收起。 */
+function togglePopover(kind: Exclude<PopoverKind, ''>, event?: Event): void {
+  if (event !== undefined) {
+    setPopoverAnchor(event)
+  }
+  if (kind === 'date' && activePopover.value !== 'date') {
+    calendarMonth.value = form.date.slice(0, 7)
+  }
+  activePopover.value = activePopover.value === kind ? '' : kind
+}
+
+function closePopover(): void {
+  activePopover.value = ''
+}
+
+/** PC 锚定下拉的 Esc 关闭（移动底部弹层保留遮罩点击）。 */
+function onGlobalKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape' && activePopover.value !== '') {
+    closePopover()
+  }
+}
+
+function openFundPopover(target: 'fund' | 'from' | 'to', event?: Event): void {
+  fundPopoverTarget.value = target
+  togglePopover('fund', event)
+}
+
+/** 资金浮层行选择：回填对应 form 字段并关闭浮层。 */
+function selectFundAccount(id: number): void {
+  if (fundPopoverTarget.value === 'from') {
+    form.transferFromAccountId = id
+  } else if (fundPopoverTarget.value === 'to') {
+    form.transferToAccountId = id
+  } else {
+    form.fundAccountId = id
+  }
+  resetIdempotencyKey()
+  closePopover()
+}
+
+/** 标签浮层多选（即时同步 form.tags，关闭不丢）。 */
+function toggleTag(tag: string): void {
+  const index = form.tags.indexOf(tag)
+  if (index >= 0) {
+    form.tags.splice(index, 1)
+  } else {
+    form.tags.push(tag)
+  }
+  if (knownTags.value.indexOf(tag) < 0) {
+    knownTags.value.push(tag)
+  }
+  resetIdempotencyKey()
+}
+
+/** 虚线「＋ 新标签」行内创建并勾选。 */
+function createTag(): void {
+  const tag = newTagText.value.trim()
+  if (tag === '') {
+    return
+  }
+  if (knownTags.value.indexOf(tag) < 0) {
+    knownTags.value.push(tag)
+  }
+  if (form.tags.indexOf(tag) < 0) {
+    form.tags.push(tag)
+  }
+  newTagText.value = ''
+  resetIdempotencyKey()
+}
+
+/** 快捷日期只写 form.date 一处：页头、Bean 片段、小票 Bean 均由它派生。 */
 function applyQuickDate(daysAgo: number): void {
   const candidate = quickDate(daysAgo)
   const opening = ledgerOpening()
-  if (candidate < opening) {
-    notice.value = `日期不能早于账本期初 ${opening}`
+  if (candidate < opening || candidate > maxDate.value) {
+    notice.value = candidate > maxDate.value ? '日期不能晚于今天' : `日期不能早于账本期初 ${opening}`
     return
   }
   form.date = candidate
+  dateError.value = ''
   notice.value = ''
+  closePopover()
 }
 
+/** 日历单元格：前导空位 + 当月日；越界日禁用，今天描边，选中实心。 */
+interface CalendarCell {
+  key: string
+  day: number | null
+  date: string
+  disabled: boolean
+}
+const calendarCells = computed<CalendarCell[]>(() => {
+  const month = calendarMonth.value === '' ? form.date.slice(0, 7) : calendarMonth.value
+  const year = Number(month.slice(0, 4))
+  const mon = Number(month.slice(5, 7))
+  const base = new Date(year, mon - 1, 1)
+  const cells: CalendarCell[] = []
+  for (let i = 0; i < base.getDay(); i += 1) {
+    cells.push({ key: `blank-${i}`, day: null, date: '', disabled: true })
+  }
+  const daysInMonth = new Date(year, mon, 0).getDate()
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const date = `${month}-${pad2(day)}`
+    cells.push({ key: date, day, date, disabled: !isDateAllowed(date) })
+  }
+  return cells
+})
+
+function shiftCalendarMonth(delta: number): void {
+  const month = calendarMonth.value === '' ? form.date.slice(0, 7) : calendarMonth.value
+  const next = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)) - 1 + delta, 1)
+  calendarMonth.value = `${next.getFullYear()}-${pad2(next.getMonth() + 1)}`
+}
+
+function selectCalendarDate(date: string): void {
+  if (!isDateAllowed(date)) {
+    return
+  }
+  form.date = date
+  dateError.value = ''
+  notice.value = ''
+  closePopover()
+}
+
+/** 当前运算段（最后一位运算符之后），用于小数点去重与两位小数限制。 */
 function currentSegment(expr: string): string {
   let start = 0
   for (let i = expr.length - 1; i >= 0; i -= 1) {
     const ch = expr.charAt(i)
-    if (ch === '+' || ch === '-') {
+    if (ch === '+' || ch === '-' || ch === '*' || ch === '/') {
       start = i + 1
       break
     }
   }
   return expr.slice(start)
+}
+
+function isOperator(char: string): boolean {
+  return char === '+' || char === '-' || char === '*' || char === '/'
+}
+
+/** 点美化表达式切换到输入框，供 4×5 键位缺失的 `+` 走物理键盘。 */
+function focusExpression(): void {
+  exprFocused.value = true
+  if (exprInput.value !== null && typeof exprInput.value.focus === 'function') {
+    exprInput.value.focus()
+  }
+}
+
+/** 表达式小字输入框：仅收合法字符。 */
+function onExpressionInput(event: Event): void {
+  const input = event.target as HTMLInputElement
+  const cleaned = input.value.replace(/[^0-9.+\-*/]/g, '')
+  if (input.value !== cleaned) {
+    input.value = cleaned
+  }
+  markEditing()
+  form.amountExpression = cleaned
+}
+
+/** 任何编辑键都解除 `=` 后的续算态并清掉求值错误。 */
+function markEditing(): void {
+  afterEquals.value = false
+  evalError.value = ''
+}
+
+/**
+ * `=`：调用 core 的定点求值（顺序求值、2 位舍入、结果取绝对值），
+ * 成功写回纯数字串；失败只显示行内错误，不落值、保存禁用。
+ */
+function evaluateNow(): void {
+  if (afterEquals.value || form.amountExpression === '') {
+    return
+  }
+  try {
+    const result = evaluateAmountExpression(form.amountExpression)
+    form.amountExpression = result.toString()
+    evalError.value = ''
+    afterEquals.value = true
+  } catch (err) {
+    evalError.value = err instanceof Error ? err.message : '金额表达式不正确'
+  }
 }
 
 function pressKey(key: string): void {
@@ -744,35 +1199,56 @@ function pressKey(key: string): void {
     void submit(key === '再记')
     return
   }
+  if (key === '高级双录') {
+    toggleAdvanced()
+    return
+  }
+  if (key === '=') {
+    evaluateNow()
+    return
+  }
   if (key === '⌫') {
+    markEditing()
     form.amountExpression = form.amountExpression.slice(0, -1)
     return
   }
-  if (key === '＋' || key === '－') {
-    const last = form.amountExpression.slice(-1)
-    if (last === '+' || last === '-') {
-      form.amountExpression = form.amountExpression.slice(0, -1)
-    }
+  const operator = OPERATOR_KEYS[key]
+  if (operator !== undefined) {
     if (form.amountExpression === '') {
       return
     }
-    form.amountExpression += key === '＋' ? '+' : '-'
-    return
-  }
-  const segment = currentSegment(form.amountExpression)
-  if (key === '.') {
-    if (segment.indexOf('.') >= 0) {
+    markEditing()
+    const last = form.amountExpression.slice(-1)
+    if (isOperator(last)) {
+      form.amountExpression = form.amountExpression.slice(0, -1) + operator
       return
     }
-    form.amountExpression += segment === '' ? '0.' : '.'
+    form.amountExpression += operator
+    return
+  }
+
+  let expression = form.amountExpression
+  if (afterEquals.value) {
+    // 规格 §5-E：`=` 后按数字（含小数点）清空重输；按运算符已在上面续算。
+    expression = ''
+  }
+  markEditing()
+  const segment = currentSegment(expression)
+  if (key === '.') {
+    if (segment.indexOf('.') >= 0) {
+      form.amountExpression = expression
+      return
+    }
+    form.amountExpression = expression + (segment === '' ? '0.' : '.')
     return
   }
   if (/^[0-9]$/.test(key)) {
     const dot = segment.indexOf('.')
     if (dot >= 0 && segment.length - dot - 1 >= 2) {
+      form.amountExpression = expression
       return
     }
-    form.amountExpression += key
+    form.amountExpression = expression + key
   }
 }
 
@@ -787,7 +1263,10 @@ function keyClass(key: string): string {
   if (key === '再记') {
     return 'rs-key rs-key--again'
   }
-  if (key === '⌫' || key === '＋' || key === '－') {
+  if (key === '高级双录') {
+    return 'rs-key rs-key--advanced'
+  }
+  if (key === '⌫' || key === '×' || key === '÷' || key === '−' || key === '+' || key === '=') {
     return 'rs-key rs-key--op'
   }
   return 'rs-key'
@@ -860,6 +1339,8 @@ function defaultAdvancedRows(): AdvancedRow[] {
 function toggleAdvanced(): void {
   advancedError.value = ''
   keypadOpen.value = false
+  closeAdvancedKeypad()
+  activePopover.value = ''
   if (!advancedMode.value) {
     const current = preview.value
     form.advancedPostings = current.length > 0
@@ -876,6 +1357,42 @@ function onAdvancedRows(next: AdvancedRow[]): void {
   form.advancedPostings = rowsWithCommodity(next)
   advancedError.value = ''
   resetIdempotencyKey()
+}
+
+// ─────────── 高级行内键盘（§12-1）：独立状态，PC 端直接物理输入 ───────────
+
+/** PC = dialog / ≥900 断点，沿用容器形态，不另立断点。 */
+function isPcForm(): boolean {
+  if (props.variant === 'dialog') {
+    return true
+  }
+  if (props.variant === 'sheet' || props.variant === 'fullscreen') {
+    return false
+  }
+  return typeof window !== 'undefined' && window.innerWidth >= 900
+}
+
+/** 点行内金额框：移动端开自定义键盘（系统键盘不介入），PC 忽略。 */
+function onAdvancedFocusAmount(index: number, _element: HTMLInputElement): void {
+  if (isPcForm() || isEditing.value) {
+    return
+  }
+  activeRowIndex.value = index
+  advancedKeypadOpen.value = true
+  keypadOpen.value = false
+}
+
+function closeAdvancedKeypad(): void {
+  advancedKeypadOpen.value = false
+  activeRowIndex.value = -1
+}
+
+/** 键盘按键转发给子组件的焦点行；求值与写回都留在 AdvancedPostings。 */
+function pressAdvancedKey(key: string): void {
+  if (!advancedKeypadOpen.value) {
+    return
+  }
+  advancedPostingsRef.value?.pressActiveKey(key)
 }
 
 /** 高级双录分录构造：账户必选 + 金额非空 + 按币种配平；不平返回 null。 */
@@ -1008,6 +1525,12 @@ async function submit(continueAfter: boolean): Promise<void> {
     return
   }
   submitError.value = ''
+  // 提交处再次守门：浮层绕过后也不允许未来 / 早于开账日的日期落库。
+  // 编辑态回填的是历史交易日期，不受「新记一笔」的下限约束（冲正 + 新建口径不变）。
+  if (!isEditing.value && !isDateAllowed(form.date)) {
+    submitError.value = form.date > maxDate.value ? '日期不能晚于今天' : `日期不能早于账本期初 ${minDate.value}`
+    return
+  }
   if (session.isViewer) {
     submitError.value = '只读成员不能记账'
     return
@@ -1164,6 +1687,11 @@ function resetForm(): void {
   receipt.value = null
   submitError.value = ''
   advancedError.value = ''
+  evalError.value = ''
+  dateError.value = ''
+  afterEquals.value = false
+  activePopover.value = ''
+  closeAdvancedKeypad()
   clearDraftIfPossible()
 }
 
@@ -1196,6 +1724,14 @@ function close(): void {
  */
 const SYSTEM_KEYBOARD_TARGET = "input.inp-text, textarea.inp-text, input[data-rf='amt']"
 
+/**
+ * 高级行内键盘展开时，行金额框归自定义键盘管：
+ * 即使因 click / focus 冒泡触发 focusin，也不得切到系统键盘态（§7(b) / §12-1）。
+ */
+function isAdvancedKeypadAmount(target: HTMLElement): boolean {
+  return advancedKeypadOpen.value && target.matches("input[data-rf='amt']")
+}
+
 function syncVv(): void {
   const viewport = typeof window === 'undefined' ? null : window.visualViewport
   const height = viewport !== null && viewport !== undefined ? viewport.height : window.innerHeight
@@ -1206,7 +1742,12 @@ function syncVv(): void {
 
 function onFocusIn(event: Event): void {
   const target = event.target as HTMLElement
-  if (target !== null && typeof target.matches === 'function' && target.matches(SYSTEM_KEYBOARD_TARGET)) {
+  if (
+    target !== null &&
+    typeof target.matches === 'function' &&
+    target.matches(SYSTEM_KEYBOARD_TARGET) &&
+    !isAdvancedKeypadAmount(target)
+  ) {
     // 系统键盘接手时收起自定义键盘，两个键盘不共存。
     keypadOpen.value = false
     kbdOpen.value = true
@@ -1216,7 +1757,12 @@ function onFocusIn(event: Event): void {
 
 function onFocusOut(event: Event): void {
   const target = event.target as HTMLElement
-  if (target !== null && typeof target.matches === 'function' && target.matches(SYSTEM_KEYBOARD_TARGET)) {
+  if (
+    target !== null &&
+    typeof target.matches === 'function' &&
+    target.matches(SYSTEM_KEYBOARD_TARGET) &&
+    !isAdvancedKeypadAmount(target)
+  ) {
     kbdOpen.value = false
     document.body.classList.remove('kbd-open')
   }
@@ -1256,6 +1802,7 @@ onMounted(() => {
   }
   document.addEventListener('focusin', onFocusIn)
   document.addEventListener('focusout', onFocusOut)
+  document.addEventListener('keydown', onGlobalKeydown)
 })
 
 onUnmounted(() => {
@@ -1265,6 +1812,7 @@ onUnmounted(() => {
   }
   document.removeEventListener('focusin', onFocusIn)
   document.removeEventListener('focusout', onFocusOut)
+  document.removeEventListener('keydown', onGlobalKeydown)
   document.body.classList.remove('kbd-open')
   document.documentElement.style.removeProperty('--vvh')
   kbdOpen.value = false
@@ -1396,14 +1944,51 @@ watch(
             @keydown.space.prevent="openKeypad"
           >
             <div class="amt-top">
-              <span class="amt-cap">{{ form.kind === 'income' ? '收入金额' : form.kind === 'transfer' ? '转账金额' : '支出金额' }}</span>
-              <span class="amt-meta"><span class="amt-cur-tag js-amount-cur">{{ commodityCode }}</span></span>
+              <button
+                type="button"
+                class="amt-chip js-ledger-chip"
+                data-act="ledger-chip"
+                aria-label="管理账本"
+                @click.stop="navigateTo('/ledgers')"
+              >▣ {{ session.ledgerName === undefined || session.ledgerName === '' ? '家庭账本' : session.ledgerName }}</button>
+              <button
+                type="button"
+                class="amt-chip js-commodity-chip"
+                data-act="commodity-chip"
+                aria-label="管理币种"
+                @click.stop="navigateTo('/commodities')"
+              >CNY {{ currency }}</button>
             </div>
+            <div class="amt-cap">{{ form.kind === 'income' ? '收入金额' : form.kind === 'transfer' ? '转账金额' : '支出金额' }}</div>
             <div class="amt-line">
               <span class="amt-sym">{{ currency }}</span>
               <span class="amt-val js-amount">{{ amountDisplay }}</span>
               <span class="amt-caret"></span>
             </div>
+            <!-- 4×5 键位没有独立 + 键（图册口径）：展示态用美化文案，聚焦后切输入框。 -->
+            <div
+              v-if="expressionDisplay !== '' && !exprFocused"
+              class="amt-expr js-expr-view"
+              role="button"
+              tabindex="0"
+              @click="focusExpression"
+              @keydown.enter.prevent="focusExpression"
+            >{{ expressionDisplay }}</div>
+            <input
+              v-show="exprFocused || expressionDisplay === ''"
+              ref="exprInput"
+              class="amt-expr js-expr"
+              type="text"
+              :value="form.amountExpression"
+              placeholder="表达式可输入 + - * /"
+              aria-label="金额表达式，可输入加号"
+              autocomplete="off"
+              @click.stop
+              @focus="exprFocused = true; hideKeypad()"
+              @blur="exprFocused = false"
+              @input="onExpressionInput"
+            />
+            <div v-if="evalError" class="amt-error js-eval-error" role="alert">{{ evalError }}</div>
             <div class="amt-sub">
               {{ advancedMode
                 ? '高级模式下分录由下方逐条编辑，上方金额仅作参考；按币种合计为 0 才能保存。'
@@ -1426,13 +2011,18 @@ watch(
         <div class="rs-body">
           <template v-if="advancedMode">
             <AdvancedPostings
+              ref="advancedPostingsRef"
               :rows="form.advancedPostings ?? []"
               :accounts="openAccounts"
               :commodities="commodities"
               :bean="beanText"
               :editing="isEditing"
+              :active-row="activeRowIndex"
+              :keypad-active="advancedKeypadOpen"
               @update:rows="onAdvancedRows"
               @back="toggleAdvanced"
+              @focus-amount="onAdvancedFocusAmount"
+              @keypad-done="closeAdvancedKeypad"
             />
             <!-- 日期 / flag / 标签 / 备注：与简化态共用同一 form 字段 -->
             <section class="grp">
@@ -1492,68 +2082,48 @@ watch(
                 <span class="g-side">先选分类，再选资金账户</span>
               </div>
               <div class="cat-head">
-                <span class="cat-hint">常用分类 · 点按即选</span>
-                <span class="chip js-cat-chip">已选：{{ selectedCategoryLabel }}</span>
+                <span class="cat-hint">一级分类 · 点按即选</span>
+                <span class="chip js-cat-chip">已选：{{ selectedCategoryLabel }} <code>{{ selectedCategoryName }}</code></span>
               </div>
+              <!-- 一级 grid：根分类由 accountApi.list() 的 parent_uuid 动态派生，6 列。 -->
               <div class="rs-cats">
                 <button
-                  v-for="cat in categoryGrid"
+                  v-for="cat in rootCategories"
                   :key="cat.id"
                   type="button"
                   class="rs-cat"
-                  :class="{ on: form.categoryAccountId === cat.id }"
-                  :aria-pressed="form.categoryAccountId === cat.id"
+                  :class="{ on: activeRootId === cat.id }"
+                  :aria-pressed="activeRootId === cat.id"
                   data-act="cat"
                   :data-cat="cat.id"
                   @click="selectCategory(cat.id)"
                 >
-                  <span class="rs-cat__icon">{{ catIcon(cat) }}</span>
+                  <span class="rs-cat__icon" :style="cat.color === undefined ? undefined : { color: cat.color }">{{ catIcon(cat) }}</span>
                   <span class="rs-cat__name">{{ accountLabel(cat) }}</span>
+                  <span class="rs-cat__mono">{{ cat.name }}</span>
                 </button>
-                <p v-if="categoryGrid.length === 0" class="rs-muted">
+                <p v-if="rootCategories.length === 0" class="rs-muted">
                   当前账本暂无{{ form.kind === 'income' ? '收入' : '支出' }}分类账户
                 </p>
               </div>
-              <div class="cat-more">
-                <div class="more-hint">
-                  ↳ 完整列表是同一字段 · 真实导出名 <code>{{ selectedCategoryName }}</code>
-                  <template v-if="selectedCategory !== undefined && isThirdLevel(selectedCategory)">（三级账户，冒号分层）</template>
-                </div>
-                <div class="sel sel--more">
-                  <span class="sel-text js-cat-select">{{ selectedCategoryLabel }} · {{ selectedCategoryName }}</span>
-                  <span class="chev"></span>
-                  <select
-                    class="rs-select"
-                    :value="categorySelectValue"
-                    data-field="category"
-                    aria-label="完整分类列表"
-                    @change="onCategorySelect"
-                  >
-                    <option value="">选择其他分类…</option>
-                    <option v-for="cat in categoryOptions" :key="cat.id" :value="String(cat.id)">
-                      {{ accountLabel(cat) }} · {{ cat.name }}
-                    </option>
-                  </select>
-                </div>
+              <!-- 二级 chips：无子分类整行隐藏，一级本身即提交分类。 -->
+              <div v-if="subCategories.length > 0" class="rs-subcats" role="group" aria-label="二级分类">
+                <button
+                  v-for="sub in subCategories"
+                  :key="sub.id"
+                  type="button"
+                  class="rs-subcat"
+                  :class="{ on: form.categoryAccountId === sub.id }"
+                  :aria-pressed="form.categoryAccountId === sub.id"
+                  data-act="cat"
+                  :data-cat="sub.id"
+                  @click="selectCategory(sub.id)"
+                >{{ catIcon(sub) }} {{ accountLabel(sub) }}</button>
+                <button type="button" class="rs-subcat rs-subcat--all" data-popover="category" @click="togglePopover('category', $event)">全部 ▾</button>
               </div>
-              <div class="fld">
-                <label class="fld-label">资金账户 <b>必选</b></label>
-                <div class="sel">
-                  <span class="sel-ico">🔵</span>
-                  <span class="sel-text js-fund">{{ accountNameOf(form.fundAccountId ?? -1) }}</span>
-                  <select
-                    class="rs-select"
-                    :value="fundValue"
-                    data-field="fund"
-                    aria-label="资金账户"
-                    @change="onFundSelect"
-                  >
-                    <option value="">选择资金账户</option>
-                    <option v-for="acc in fundAccounts" :key="acc.id" :value="String(acc.id)">
-                      {{ accountLabel(acc) }} · {{ acc.name }}（{{ balanceText(acc) }}）
-                    </option>
-                  </select>
-                </div>
+              <div v-else class="cat-more">
+                <button type="button" class="rs-subcat rs-subcat--all" data-popover="category" @click="togglePopover('category', $event)">全部 ▾</button>
+                <span class="more-hint">真实导出名 <code class="js-cat-name">{{ selectedCategoryName }}</code></span>
               </div>
             </section>
 
@@ -1564,12 +2134,21 @@ watch(
                   {{ form.transferFromAccountId === form.transferToAccountId ? '转出与转入不可相同' : '两行资产分录' }}
                 </span>
               </div>
+              <div class="transfer-chips">
+                <button type="button" class="transfer-chip js-from-chip" data-field="from" data-role="chip" @click="openFundPopover('from', $event)">
+                  🔵 {{ accountNameOf(form.transferFromAccountId ?? -1) }}
+                </button>
+                <span class="transfer-arrow">→</span>
+                <button type="button" class="transfer-chip js-to-chip" data-field="to" data-role="chip" @click="openFundPopover('to', $event)">
+                  🟢 {{ accountNameOf(form.transferToAccountId ?? -1) }}
+                </button>
+              </div>
               <div class="fld">
                 <label class="fld-label">转出账户 <b>必选</b></label>
                 <div class="sel">
                   <span class="sel-ico">🔵</span>
                   <span class="sel-text">{{ accountNameOf(form.transferFromAccountId ?? -1) }}</span>
-                  <select class="rs-select" :value="transferFromValue" data-field="from" aria-label="转出账户" @change="onTransferFrom">
+                  <select class="rs-select" :value="transferFromValue" data-field="from" data-role="input" aria-label="转出账户" @change="onTransferFrom">
                     <option value="">选择转出账户</option>
                     <option v-for="acc in fundAccounts" :key="acc.id" :value="String(acc.id)">
                       {{ accountLabel(acc) }} · {{ acc.name }}（{{ balanceText(acc) }}）
@@ -1583,7 +2162,7 @@ watch(
                 <div class="sel">
                   <span class="sel-ico">🟢</span>
                   <span class="sel-text">{{ accountNameOf(form.transferToAccountId ?? -1) }}</span>
-                  <select class="rs-select" :value="transferToValue" data-field="to" aria-label="转入账户" @change="onTransferTo">
+                  <select class="rs-select" :value="transferToValue" data-field="to" data-role="input" aria-label="转入账户" @change="onTransferTo">
                     <option value="">选择转入账户</option>
                     <option v-for="acc in fundAccounts" :key="acc.id" :value="String(acc.id)">
                       {{ accountLabel(acc) }} · {{ acc.name }}（{{ balanceText(acc) }}）
@@ -1593,43 +2172,19 @@ watch(
               </div>
             </section>
 
+            <!-- meta chips：日期 → 资金 → 标签 → flag，flex-wrap 自然换行。 -->
+            <section class="rs-meta" aria-label="交易附加信息">
+              <button type="button" class="meta-chip js-date-chip" data-field="date" data-role="chip" data-popover="date" @click="togglePopover('date', $event)">📅 {{ dateChipLabel }}</button>
+              <button type="button" class="meta-chip js-fund-chip" data-field="fund" data-role="chip" data-popover="fund" @click="openFundPopover('fund', $event)">🏦 {{ fundChipLabel }}</button>
+              <button type="button" class="meta-chip js-tags-chip" data-field="tags" data-role="chip" data-popover="tags" @click="togglePopover('tags', $event)">🏷 {{ tagsText === '' ? '＋ 标签' : tagsText }}</button>
+              <button type="button" class="meta-chip js-flag-chip" data-field="flag" data-role="chip" data-popover="flag" @click="togglePopover('flag', $event)">{{ flagChipLabel }}</button>
+            </section>
+
             <section class="grp">
               <div class="g-head"><span class="g-title"><i class="g-dot"></i>这笔钱的细节</span><span class="g-side">可选项</span></div>
-              <div class="fld-row">
-                <div class="fld">
-                  <label class="fld-label">日期</label>
-                  <input class="inp-text" type="date" data-field="date" v-model="form.date" aria-label="交易日期" />
-                  <div class="date-chips" role="group" aria-label="快捷日期">
-                    <button type="button" data-act="date-today" :class="{ on: form.date === quickDate(0) }" @click="applyQuickDate(0)">今天</button>
-                    <button type="button" data-act="date-yesterday" :class="{ on: form.date === quickDate(1) }" @click="applyQuickDate(1)">昨天</button>
-                    <button type="button" data-act="date-day-before" :class="{ on: form.date === quickDate(2) }" @click="applyQuickDate(2)">前天</button>
-                  </div>
-                </div>
-                <div class="fld">
-                  <label class="fld-label">flag</label>
-                  <select class="inp-text" data-field="flag" v-model="form.flag" aria-label="交易 flag">
-                    <option value="*">* 已完成</option>
-                    <option value="!">! 待核 / 冲正</option>
-                  </select>
-                </div>
-              </div>
-              <div class="fld">
-                <label class="fld-label">标签（空格或逗号分隔）</label>
-                <input
-                  class="inp-text"
-                  type="text"
-                  :value="tagsText"
-                  data-field="tags"
-                  placeholder="如：日常 孩子"
-                  enterkeyhint="done"
-                  aria-label="标签"
-                  @input="onTagsChange"
-                  @change="onTagsChange"
-                />
-              </div>
               <div class="fld">
                 <label class="fld-label">描述 / 备注</label>
-                <input class="inp-text" type="text" v-model="form.description" data-field="desc" placeholder="如：超市采购" enterkeyhint="done" aria-label="描述" />
+                <input class="inp-text" type="text" v-model="form.description" data-field="desc" data-role="input" placeholder="和朋友一起吃晚餐" enterkeyhint="done" aria-label="描述" />
               </div>
               <p class="bean-note">标签导出为 <code>tags: "..."</code> 元数据行（中文标签不走 <code>#tag</code>）。</p>
             </section>
@@ -1640,6 +2195,203 @@ watch(
               :bean="beanText"
               @advanced="toggleAdvanced"
             />
+            <div class="rs-preview js-preview" :class="previewBalanced ? 'is-ok' : 'is-bad'" role="status">
+              <template v-if="previewBalanced">✓ 配平</template>
+              <template v-else>
+                {{ previewError === '' ? '不平' : previewError }}
+                <span v-for="diff in diffViews" :key="diff.commodity" class="rs-preview__diff">
+                  {{ diff.commodity }} 差额 {{ diff.text }}
+                </span>
+              </template>
+            </div>
+
+            <!-- 浮层 portal 到 mask 层宿主，避开 .rs-panel overflow:hidden / .rs-body overflow-y:auto 裁剪；
+                 容器常驻 DOM（v-show）以保留 data-field 契约，仅激活态可见。 -->
+            <Teleport v-if="portalHostEl" :to="portalHostEl">
+            <div v-show="activePopover !== ''" class="rs-popover-mask" @click.self="closePopover">
+              <div class="rs-popover" :style="popoverStyle" role="dialog" aria-label="编辑选项">
+                <div class="pop-handle"></div>
+                <button type="button" class="pop-close" aria-label="关闭浮层" @click="closePopover">✕</button>
+
+                <div v-show="activePopover === 'date'" class="pop-body js-pop-date">
+                  <h4>选择日期</h4>
+                  <div class="date-chips" role="group" aria-label="快捷日期">
+                    <button type="button" data-act="date-today" :class="{ on: form.date === quickDate(0) }" @click="applyQuickDate(0)">今天</button>
+                    <button type="button" data-act="date-yesterday" :class="{ on: form.date === quickDate(1) }" @click="applyQuickDate(1)">昨天</button>
+                    <button type="button" data-act="date-day-before" :class="{ on: form.date === quickDate(2) }" @click="applyQuickDate(2)">前天</button>
+                  </div>
+                  <div class="cal-head">
+                    <button type="button" aria-label="上个月" @click="shiftCalendarMonth(-1)">‹</button>
+                    <span class="cal-title">{{ calendarMonth === '' ? form.date.slice(0, 7) : calendarMonth }}</span>
+                    <button type="button" aria-label="下个月" @click="shiftCalendarMonth(1)">›</button>
+                  </div>
+                  <div class="cal-grid">
+                    <span v-for="label in ['日', '一', '二', '三', '四', '五', '六']" :key="label" class="cal-week">{{ label }}</span>
+                    <template v-for="cell in calendarCells" :key="cell.key">
+                      <span v-if="cell.day === null" class="cal-day cal-day--blank"></span>
+                      <button
+                        v-else
+                        type="button"
+                        class="cal-day"
+                        :class="{ on: form.date === cell.date, today: cell.date === quickDate(0) }"
+                        :disabled="cell.disabled"
+                        :data-date="cell.date"
+                        @click="selectCalendarDate(cell.date)"
+                      >{{ cell.day }}</button>
+                    </template>
+                  </div>
+                  <p v-if="dateError" class="pop-error" role="alert">{{ dateError }}</p>
+                  <label class="pop-label">精确日期
+                    <input
+                      class="inp-text"
+                      type="date"
+                      :value="form.date"
+                      :min="minDate"
+                      :max="maxDate"
+                      data-field="date"
+                      data-role="input"
+                      aria-label="交易日期"
+                      @input="onDateInput"
+                    />
+                  </label>
+                </div>
+
+                <div v-show="activePopover === 'fund'" class="pop-body js-pop-fund">
+                  <h4>资金账户</h4>
+                  <button
+                    v-for="acc in fundAccounts"
+                    :key="acc.id"
+                    type="button"
+                    class="pop-row"
+                    :class="{ on: (fundPopoverTarget === 'from' ? form.transferFromAccountId : fundPopoverTarget === 'to' ? form.transferToAccountId : form.fundAccountId) === acc.id }"
+                    :data-account="acc.id"
+                    @click="selectFundAccount(acc.id)"
+                  >
+                    <span class="pop-row__icon">{{ catIcon(acc) }}</span>
+                    <span class="pop-row__main">{{ accountLabel(acc) }} <b>{{ balanceText(acc) }}</b></span>
+                    <code class="pop-row__mono">{{ acc.name }}</code>
+                    <span v-if="(fundPopoverTarget === 'from' ? form.transferFromAccountId : fundPopoverTarget === 'to' ? form.transferToAccountId : form.fundAccountId) === acc.id" class="pop-row__check">✓</span>
+                  </button>
+                  <label class="pop-label">账户字段（契约控件）
+                    <select
+                      class="inp-text"
+                      :value="fundPopoverTarget === 'from' ? transferFromValue : fundPopoverTarget === 'to' ? transferToValue : fundValue"
+                      data-field="fund"
+                      data-role="input"
+                      aria-label="资金账户"
+                      @change="onFundPopoverSelect"
+                    >
+                      <option value="">选择资金账户</option>
+                      <option v-for="acc in fundAccounts" :key="acc.id" :value="String(acc.id)">
+                        {{ accountLabel(acc) }} · {{ acc.name }}（{{ balanceText(acc) }}）
+                      </option>
+                    </select>
+                  </label>
+                </div>
+
+                <div v-show="activePopover === 'tags'" class="pop-body js-pop-tags">
+                  <h4>标签</h4>
+                  <div class="tag-list">
+                    <button
+                      v-for="tag in tagOptions"
+                      :key="tag"
+                      type="button"
+                      class="pop-tag"
+                      :class="{ on: form.tags.indexOf(tag) >= 0 }"
+                      :data-tag="tag"
+                      @click="toggleTag(tag)"
+                    >{{ tag }} <span v-if="form.tags.indexOf(tag) >= 0">✓</span></button>
+                    <button type="button" class="pop-tag pop-tag--new" @click="createTag">＋ 新标签</button>
+                  </div>
+                  <input
+                    v-model="newTagText"
+                    class="inp-text"
+                    type="text"
+                    data-tag-input="new"
+                    placeholder="输入新标签后点「＋ 新标签」"
+                    enterkeyhint="done"
+                    aria-label="新标签"
+                    @keydown.enter.prevent="createTag"
+                  />
+                  <label class="pop-label">标签字段（契约控件）
+                    <input
+                      class="inp-text"
+                      type="text"
+                      :value="tagsText"
+                      data-field="tags"
+                      data-role="input"
+                      placeholder="如：日常 孩子"
+                      enterkeyhint="done"
+                      aria-label="标签"
+                      @input="onTagsChange"
+                      @change="onTagsChange"
+                    />
+                  </label>
+                </div>
+
+                <div v-show="activePopover === 'flag'" class="pop-body js-pop-flag">
+                  <h4>交易状态</h4>
+                  <button type="button" class="pop-row" :class="{ on: form.flag === '*' }" data-flag="*" @click="selectFlag('*')">
+                    <b>* 已完成</b><span>已确认入账</span><span v-if="form.flag === '*'" class="pop-row__check">✓</span>
+                  </button>
+                  <button type="button" class="pop-row" :class="{ on: form.flag === '!' }" data-flag="!" @click="selectFlag('!')">
+                    <b>! 未完成</b><span>待确认核对</span><span v-if="form.flag === '!'" class="pop-row__check">✓</span>
+                  </button>
+                  <label class="pop-label">flag 字段（契约控件）
+                    <select class="inp-text" data-field="flag" data-role="input" v-model="form.flag" aria-label="交易 flag">
+                      <option value="*">* 已完成</option>
+                      <option value="!">! 未完成</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div v-show="activePopover === 'category'" class="pop-body js-pop-category">
+                  <h4>全部{{ form.kind === 'income' ? '收入' : '支出' }}分类</h4>
+                  <input
+                    v-model="categorySearch"
+                    class="inp-text"
+                    type="search"
+                    data-category-search="1"
+                    placeholder="搜索中文名或导出名"
+                    aria-label="搜索分类"
+                  />
+                  <div v-for="group in categoryGroups" :key="group.key" class="cat-group">
+                    <div class="cat-group__head">{{ group.label }} <code>{{ group.mono }}</code></div>
+                    <button
+                      v-for="cat in group.accounts"
+                      :key="cat.id"
+                      type="button"
+                      class="pop-row"
+                      :class="{ on: form.categoryAccountId === cat.id }"
+                      data-act="cat"
+                      :data-cat="cat.id"
+                      @click="selectCategory(cat.id)"
+                    >
+                      <span class="pop-row__icon">{{ catIcon(cat) }}</span>
+                      <span class="pop-row__main">{{ accountLabel(cat) }}</span>
+                      <code class="pop-row__mono">{{ cat.name }}</code>
+                      <span v-if="form.categoryAccountId === cat.id" class="pop-row__check">✓</span>
+                    </button>
+                  </div>
+                  <label class="pop-label">分类字段（契约控件）
+                    <select
+                      class="inp-text"
+                      :value="categorySelectValue"
+                      data-field="category"
+                      data-role="input"
+                      aria-label="完整分类列表"
+                      @change="onCategorySelect"
+                    >
+                      <option value="">选择其他分类…</option>
+                      <option v-for="cat in categoryOptions" :key="cat.id" :value="String(cat.id)">
+                        {{ accountLabel(cat) }} · {{ cat.name }}
+                      </option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+            </div>
+            </Teleport>
           </template>
         </div>
 
@@ -1684,23 +2436,61 @@ watch(
             </div>
           </template>
           <template v-else>
-            <div class="foot-note js-foot-note">
-              {{ canSubmit ? (isEditing ? '分录已配平 · 保存后原交易冲正（需联网）' : '分录已配平，可保存') : '分录未配平或账户未选全，保存已禁用' }}
-            </div>
-            <div class="rs-foot">
-              <button
-                type="button"
-                class="fb-btn-primary js-save"
-                :disabled="!canSubmit"
-                data-act="save"
-                @click="submit(false)"
-              >{{ submitting ? '保存中…' : '保存' }}</button>
-            </div>
+            <!-- 高级键盘展开：临时替代底部全宽保存条（§12-1 / §5-B），无保存键。 -->
+            <template v-if="advancedKeypadOpen">
+              <div class="dock-rail">
+                <span>第 {{ activeRowIndex + 1 }} 行金额 <b>¥<span class="js-adv-rail-amt">{{ magnitudeOf(form.advancedPostings?.[activeRowIndex]?.amount ?? '') }}</span></b></span>
+                <span class="rail-r is-ok"><i></i><span class="js-adv-rail-txt">行内四则 · 完成后保存条复现</span></span>
+              </div>
+              <div class="rs-keyboard rs-keyboard--advanced js-adv-keypad">
+                <button
+                  v-for="key in advancedKeypadKeys"
+                  :key="key"
+                  type="button"
+                  :class="keyClass(key)"
+                  data-act="key"
+                  :data-key="key"
+                  @click="pressAdvancedKey(key)"
+                >{{ key }}</button>
+                <button
+                  type="button"
+                  class="rs-key rs-key--done js-adv-keypad-done"
+                  data-act="advanced-keypad-done"
+                  data-key="完成"
+                  @click="closeAdvancedKeypad"
+                >完成</button>
+              </div>
+            </template>
+            <template v-else>
+              <div class="rs-preview rs-preview--dock js-preview" :class="previewBalanced ? 'is-ok' : 'is-bad'" role="status">
+                <template v-if="previewBalanced">✓ 配平</template>
+                <template v-else>
+                  {{ previewError === '' ? '不平' : previewError }}
+                  <span v-for="diff in diffViews" :key="diff.commodity" class="rs-preview__diff">
+                    {{ diff.commodity }} 差额 {{ diff.text }}
+                  </span>
+                </template>
+              </div>
+              <div class="foot-note js-foot-note">
+                {{ canSubmit ? (isEditing ? '分录已配平 · 保存后原交易冲正（需联网）' : '分录已配平，可保存') : '分录未配平或账户未选全，保存已禁用' }}
+              </div>
+              <div class="rs-foot">
+                <button
+                  type="button"
+                  class="fb-btn-primary js-save"
+                  :disabled="!canSubmit"
+                  data-act="save"
+                  @click="submit(false)"
+                >{{ submitting ? '保存中…' : '保存' }}</button>
+              </div>
+            </template>
           </template>
           <div class="home-bar" aria-hidden="true"></div>
         </div>
       </template>
     </section>
+    <!-- 浮层 portal 宿主：位于 mask 内、panel 外，不受弹窗 overflow 裁剪。 -->
+    <div ref="portalHostEl" class="rs-portal-host"></div>
   </div>
 </template>
 
@@ -1717,6 +2507,15 @@ watch(
   align-items: stretch;
   justify-content: center;
   background: var(--fb-mask);
+}
+
+/* 浮层 portal 宿主：零尺寸固定定位，不参与 mask 的 flex 布局，也不裁剪子元素。 */
+.rs-portal-host {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
 }
 
 .rs-mask--auto,
@@ -1918,6 +2717,40 @@ watch(
   font-size: 10px;
   letter-spacing: 1px;
   font-family: var(--fb-font-mono);
+}
+
+.amt-chip {
+  min-height: 26px;
+  padding: 2px 9px;
+  border: 1px solid var(--fb-brand-line);
+  border-radius: var(--fb-radius-pill);
+  background: var(--fb-card);
+  color: var(--fb-brand);
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.amt-expr {
+  width: 100%;
+  min-height: 20px;
+  padding: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--fb-sub);
+  font-family: var(--fb-font-mono);
+  /* 物理键盘输入口同样遵守 iOS 16px 防缩放。 */
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.amt-error {
+  margin-top: 2px;
+  color: var(--fb-danger-ink);
+  font-size: 11.5px;
+  line-height: 1.5;
 }
 
 .amt-line {
@@ -2129,7 +2962,7 @@ watch(
 
 .rs-cats {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 6px;
 }
 
@@ -2201,6 +3034,60 @@ watch(
 .rs-cat.on .rs-cat__name {
   color: var(--fb-brand);
   font-weight: 800;
+}
+
+.rs-cat__mono {
+  max-width: 100%;
+  margin-top: 2px;
+  color: var(--fb-sub);
+  font-family: var(--fb-font-mono);
+  font-size: 8.5px;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rs-subcats {
+  display: flex;
+  gap: 6px;
+  margin-top: 9px;
+  padding-bottom: 4px;
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: none;
+}
+
+.rs-subcats::-webkit-scrollbar {
+  display: none;
+}
+
+.rs-subcat {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 4px 10px;
+  border: 1px solid var(--fb-line);
+  border-radius: var(--fb-radius-pill);
+  background: var(--fb-card);
+  color: var(--fb-ink);
+  font-family: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.rs-subcat.on {
+  border-color: var(--fb-brand);
+  background: var(--fb-brand-soft);
+  color: var(--fb-brand);
+  font-weight: 800;
+}
+
+.rs-subcat--all {
+  border-style: dashed;
+  border-color: var(--fb-brand-line);
+  background: var(--fb-brand-soft);
+  color: var(--fb-brand);
+  font-weight: 700;
 }
 
 .rs-muted {
@@ -2417,6 +3304,319 @@ watch(
   font-size: 16px;
 }
 
+/* meta chips：固定顺序，自然换行 */
+.rs-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 12px;
+}
+
+.meta-chip,
+.transfer-chip {
+  min-height: 36px;
+  padding: 5px 12px;
+  border: 1px solid var(--fb-line-strong);
+  border-radius: var(--fb-radius-pill);
+  background: var(--fb-card);
+  color: var(--fb-ink);
+  font-family: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.meta-chip:active,
+.transfer-chip:active {
+  border-color: var(--fb-brand);
+}
+
+.transfer-chips {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.transfer-arrow {
+  color: var(--fb-sub);
+  font-size: 14px;
+}
+
+/* 复式预览条：✓ 配平 / 按币种差额 */
+.rs-preview {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 7px 12px;
+  border-radius: var(--fb-radius-input);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.rs-preview.is-ok {
+  background: var(--fb-brand-soft);
+  color: var(--fb-brand);
+}
+
+.rs-preview.is-bad {
+  background: var(--fb-danger-soft);
+  color: var(--fb-danger-ink);
+}
+
+.rs-preview__diff {
+  font-family: var(--fb-font-numeric);
+  font-weight: 800;
+}
+
+.rs-preview--dock {
+  margin: 8px 12px 0;
+}
+
+/* 浮层：移动底部弹层；PC 用锚点变量降级为 chip 下方锚定下拉。 */
+.rs-popover-mask {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 70;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: var(--fb-mask);
+}
+
+.rs-popover {
+  position: relative;
+  width: 100%;
+  max-height: 72vh;
+  overflow-y: auto;
+  padding: 16px 14px 18px;
+  border-radius: var(--fb-radius-card) var(--fb-radius-card) 0 0;
+  background: var(--fb-card);
+  box-shadow: var(--fb-shadow-panel);
+}
+
+.pop-handle {
+  width: 40px;
+  height: 4px;
+  margin: -8px auto 10px;
+  border-radius: var(--fb-radius-pill);
+  background: var(--fb-line-strong);
+}
+
+.pop-close {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  min-width: 32px;
+  min-height: 32px;
+  border: 1px solid var(--fb-line);
+  border-radius: var(--fb-radius-pill);
+  background: var(--fb-soft);
+  color: var(--fb-sub);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.pop-body h4 {
+  margin: 0 36px 10px 0;
+  color: var(--fb-ink-deep);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.pop-label {
+  display: block;
+  margin-top: 12px;
+  color: var(--fb-sub);
+  font-size: 11px;
+}
+
+.pop-label .inp-text {
+  margin-top: 5px;
+}
+
+.pop-error {
+  margin: 6px 0 0;
+  color: var(--fb-danger-ink);
+  font-size: 11px;
+}
+
+.pop-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-bottom-color: var(--fb-line);
+  background: transparent;
+  color: var(--fb-ink);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pop-row.on {
+  border-color: var(--fb-brand-line);
+  border-radius: var(--fb-radius-input);
+  background: var(--fb-brand-soft);
+  color: var(--fb-brand);
+}
+
+.pop-row__icon {
+  flex: 0 0 auto;
+  font-size: 16px;
+}
+
+.pop-row__main {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pop-row__main b {
+  margin-left: 6px;
+  font-family: var(--fb-font-numeric);
+  font-weight: 700;
+}
+
+.pop-row__mono,
+.cat-group__head code {
+  flex: 0 0 auto;
+  color: var(--fb-sub);
+  font-family: var(--fb-font-mono);
+  font-size: 9.5px;
+}
+
+.pop-row__check {
+  flex: 0 0 auto;
+  color: var(--fb-brand);
+  font-weight: 800;
+}
+
+.cal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 10px 0 6px;
+}
+
+.cal-head button {
+  min-width: 36px;
+  min-height: 32px;
+  border: 1px solid var(--fb-line);
+  border-radius: var(--fb-radius-input);
+  background: var(--fb-card);
+  color: var(--fb-brand);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.cal-title {
+  color: var(--fb-ink-deep);
+  font-family: var(--fb-font-mono);
+  font-size: 12px;
+}
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 3px;
+}
+
+.cal-week,
+.cal-day {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  border-radius: var(--fb-radius-input);
+  font-size: 11.5px;
+}
+
+.cal-week {
+  color: var(--fb-sub);
+}
+
+.cal-day {
+  border: 1px solid transparent;
+  background: var(--fb-soft);
+  color: var(--fb-ink);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.cal-day.today {
+  border-color: var(--fb-brand);
+}
+
+.cal-day.on {
+  border-color: var(--fb-brand);
+  background: var(--fb-brand);
+  color: var(--fb-white);
+  font-weight: 800;
+}
+
+.cal-day:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.cal-day--blank {
+  background: transparent;
+}
+
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.pop-tag {
+  min-height: 34px;
+  padding: 4px 10px;
+  border: 1px solid var(--fb-line-strong);
+  border-radius: var(--fb-radius-pill);
+  background: var(--fb-card);
+  color: var(--fb-ink);
+  font-family: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.pop-tag.on {
+  border-color: var(--fb-brand);
+  background: var(--fb-brand-soft);
+  color: var(--fb-brand);
+  font-weight: 800;
+}
+
+.pop-tag--new {
+  border-style: dashed;
+  border-color: var(--fb-brand-line);
+  color: var(--fb-brand);
+}
+
+.cat-group {
+  margin-top: 10px;
+}
+
+.cat-group__head {
+  padding: 4px 0;
+  color: var(--fb-ink-deep);
+  font-size: 11.5px;
+  font-weight: 800;
+}
+
 /* 底部操作区 */
 .rs-dock {
   flex: 0 0 auto;
@@ -2523,14 +3723,15 @@ watch(
 .rs-keyboard {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  grid-auto-rows: var(--kb-h);
+  /* 4×5 键位：压缩行高，保持与旧 4 行键盘近似的总高度。 */
+  grid-auto-rows: calc(var(--kb-h) * 0.84);
   gap: 6px;
   padding: 8px 10px 10px;
   background: transparent;
 }
 
 .rs-key {
-  min-height: var(--kb-h);
+  min-height: calc(var(--kb-h) * 0.84);
   border: 1px solid var(--fb-line);
   border-radius: 10px;
   background: var(--fb-card);
@@ -2569,6 +3770,34 @@ watch(
   font-weight: 800;
   letter-spacing: 1px;
   box-shadow: var(--fb-shadow-brand), 0 2px 0 var(--fb-ink-deep);
+}
+
+/* 视觉上的 ✓ 走伪元素，按钮 text() 仍为「保存」，兼容既有契约测试。 */
+.rs-key--save::after {
+  content: '✓';
+  margin-left: 3px;
+}
+
+.rs-key--advanced {
+  background: var(--fb-soft);
+  border-color: var(--fb-brand-line);
+  color: var(--fb-brand);
+  font-size: 11.5px;
+  font-weight: 800;
+}
+
+/* 高级行内键盘动作条：整行单键「完成」，不承载保存语义。 */
+.rs-key--done {
+  grid-column: 1 / -1;
+  background: var(--fb-brand);
+  border-color: var(--fb-brand);
+  color: var(--fb-white);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  box-shadow: var(--fb-shadow-brand);
+  appearance: none;
+  -webkit-appearance: none;
 }
 
 .rs-key:disabled,
@@ -2790,7 +4019,8 @@ body.kbd-open .rs-body {
   .rs-mask--dialog .rs-panel {
     width: 460px;
     max-width: 92%;
-    height: 88%;
+    /* §1：图册目标 520px，矮屏取视口 88vh；内部 .rs-body 仍独立滚动。 */
+    height: min(520px, 88vh);
     border-radius: 18px;
   }
   .rs-mask--auto .rs-panel--receipt,
@@ -2799,6 +4029,29 @@ body.kbd-open .rs-body {
     max-width: 340px;
     height: 100%;
     border-radius: 0;
+  }
+
+  /* PC：浮层 = chip 锚定下拉，固定定位避开弹窗 overflow:hidden 裁剪。 */
+  .rs-popover-mask {
+    align-items: flex-start;
+    justify-content: flex-start;
+    background: var(--fb-bg-transparent);
+  }
+
+  .rs-popover {
+    position: fixed;
+    top: var(--pop-top, 120px);
+    left: var(--pop-left, 50%);
+    width: var(--pop-width, 250px);
+    min-width: 250px;
+    max-height: min(420px, 70vh);
+    border: 1px solid var(--fb-line);
+    border-radius: var(--fb-radius-card);
+    box-shadow: var(--fb-shadow-panel);
+  }
+
+  .pop-handle {
+    display: none;
   }
 }
 </style>

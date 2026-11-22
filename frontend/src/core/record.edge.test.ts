@@ -74,6 +74,26 @@ describe('边界 A：金额表达式定点求值（AC-22）', () => {
     expect(evaluateAmountExpression('12.').toString()).toBe('12.00')
   })
 
+  it('P2 四则扩展：顺序求值、逐步定点、除零报错（§5-E）', () => {
+    // 1*2 现为合法表达式（旧基线「必抛」口径已废止）。
+    expect(evaluateAmountExpression('1*2').toString()).toBe('2.00')
+    // 从左到右、不做乘除优先级。
+    expect(evaluateAmountExpression('1+2*3').toString()).toBe('9.00')
+    expect(evaluateAmountExpression('86.5*2').toString()).toBe('173.00')
+    expect(evaluateAmountExpression('100/3*3').toString()).toBe('99.99')
+    // 除零必须给出明确文案，不静默兜底。
+    expect(() => evaluateAmountExpression('9/0')).toThrow('除数不能为 0')
+    expect(() => evaluateAmountExpression('9/0')).toThrow(RangeError)
+  })
+
+  it('四则结果进入分录仍为定点且配平（账芯口径不变）', () => {
+    const postings = buildPostings(form({ amountExpression: '86.5*2' }), baseAccounts, 'CNY')
+    expect(postings).toHaveLength(2)
+    expect(postings[0].amount).toBe('173.00')
+    expect(postings[1].amount).toBe('-173.00')
+    expect(postingsBalanced(postings)).toBe(true)
+  })
+
   it('非法表达式一律抛 RangeError，绝不静默按 0 处理', () => {
     const illegal = [
       '1e3',
@@ -85,7 +105,10 @@ describe('边界 A：金额表达式定点求值（AC-22）', () => {
       '1-',
       '',
       'abc',
-      '1*2',
+      '1+*2', // 连续运算符
+      '1//2',
+      '1*', // 以运算符结尾
+      '1/',
       ' 0.1 + 0.2 ', // 含空格：字符集校验拒绝
       '1--2',
     ]

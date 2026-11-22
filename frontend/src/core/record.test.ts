@@ -92,6 +92,35 @@ describe('金额表达式定点求值', () => {
     expect(() => evaluateAmountExpression('+1')).toThrow(RangeError)
     expect(() => evaluateAmountExpression('')).toThrow(RangeError)
   })
+
+  it('四则运算从左到右顺序求值，不启用乘除优先级（§5-E）', () => {
+    expect(evaluateAmountExpression('1+2*3').toString()).toBe('9.00')
+    expect(evaluateAmountExpression('12/2*3').toString()).toBe('18.00')
+    expect(evaluateAmountExpression('86.5*2').toString()).toBe('173.00')
+    expect(evaluateAmountExpression('1*2').toString()).toBe('2.00')
+    expect(evaluateAmountExpression('9/2').toString()).toBe('4.50')
+    expect(evaluateAmountExpression('10-2/4').toString()).toBe('2.00')
+  })
+
+  it('每步舍入到两位定点再参与下一步：100/3*3 = 99.99', () => {
+    // 100/3 → 33.33（HALF_UP），33.33*3 → 99.99；若全精度链则得 100.00。
+    expect(evaluateAmountExpression('100/3*3').toString()).toBe('99.99')
+    expect(evaluateAmountExpression('1/3*3').toString()).toBe('0.99')
+  })
+
+  it('除数为 0 抛「除数不能为 0」，绝不静默返回 0 / NaN', () => {
+    expect(() => evaluateAmountExpression('9/0')).toThrow('除数不能为 0')
+    expect(() => evaluateAmountExpression('9/0.00')).toThrow('除数不能为 0')
+    expect(() => evaluateAmountExpression('1+2/0')).toThrow('除数不能为 0')
+    expect(() => evaluateAmountExpression('8/2/0')).toThrow('除数不能为 0')
+  })
+
+  it('连续运算符、以运算符结尾、以运算符开头一律抛错', () => {
+    const illegal = ['1++2', '1--2', '1+-2', '1**2', '1+*2', '1//2', '1*/2', '1*', '1/', '*1', '/1']
+    for (const expr of illegal) {
+      expect(() => evaluateAmountExpression(expr), `表达式 ${expr} 应被拒绝`).toThrow(RangeError)
+    }
+  })
 })
 
 describe('记一笔分录平衡与符号口径', () => {

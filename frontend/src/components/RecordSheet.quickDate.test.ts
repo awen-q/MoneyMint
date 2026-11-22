@@ -59,7 +59,8 @@ async function mountSheet(): Promise<VueWrapper> {
 }
 
 function dateValue(wrapper: VueWrapper): string {
-  return (wrapper.find('[data-field="date"]').element as HTMLInputElement).value
+  // chip 也带同名 data-field（契约迁移），真控件用 input 标签锚定。
+  return (wrapper.find('input[data-field="date"]').element as HTMLInputElement).value
 }
 
 async function enter100AndSave(wrapper: VueWrapper): Promise<void> {

@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 /**
  * 批 2.5 修 5：RecordSheet 高级双录模式。
- * - 高级模式提交前按 commodity 分组做配平校验，差额明细直出；
+ * - 高级双录提交前按 commodity 分组做配平校验，差额明细直出；
  * - 不平衡的提交被拦截（transactionApi.create 不被调用）；
- * - 高级模式的 postings 走与简化模式**完全相同**的提交路径（幂等键 / 草稿语义不变）。
+ * - 高级双录的 postings 走与简化模式**完全相同**的提交路径（幂等键 / 草稿语义不变）。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
@@ -57,7 +57,7 @@ const ACCOUNTS = [
 async function mountAdvanced(): Promise<ReturnType<typeof mount>> {
   const wrapper = mount(RecordSheet)
   await flushPromises()
-  const toggle = wrapper.findAll('button').find((b) => b.text().includes('高级模式'))
+  const toggle = wrapper.findAll('button').find((b) => b.text().includes('高级双录'))
   await toggle?.trigger('click')
   await flushPromises()
   return wrapper
@@ -76,7 +76,7 @@ async function fillRow(
 }
 
 /**
- * 高级模式（编辑态同）没有数字键盘，唯一保存入口是底部操作区 .rs-foot
+ * 高级双录（编辑态同）没有数字键盘，唯一保存入口是底部操作区 .rs-foot
  * 的全宽主操作按钮。按新的真实用户路径定位，不再靠全局文本搜「保存」。
  */
 function findSave(wrapper: ReturnType<typeof mount>): ReturnType<typeof wrapper.find> {
@@ -93,7 +93,7 @@ beforeEach(() => {
 })
 
 describe('批 2.5 修 5：高级双录', () => {
-  it('进入高级模式以简化模式分录预填；配平提交走与简化模式相同路径（幂等键）', async () => {
+  it('进入高级双录以简化模式分录预填；配平提交走与简化模式相同路径（幂等键）', async () => {
     h.create.mockResolvedValue({ id: 1, uuid: 't-1', date: '2026-11-10', postings: 2 })
     const wrapper = await mountAdvanced()
 

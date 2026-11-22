@@ -50,7 +50,7 @@ export interface PostingDraft {
 /** 记一笔表单的持久化形状（草稿不含任何凭据）。 */
 export interface RecordForm {
   kind: RecordKind
-  /** 数字键盘拼出的表达式，如 `12.50+3.25`；空串表示未输入。 */
+  /** 数字键盘拼出的表达式，如 `12.50+3.25*2`（内部半角 `+ - * /`）；空串表示未输入。 */
   amountExpression: string
   date: string
   description: string
@@ -172,29 +172,48 @@ function normalizeNumberToken(token: string): string {
   return result
 }
 
+/** 表达式内部运算符（键盘键面显示 `× ÷ −`，拼串一律用半角 `+ - * /`，§5-E）。 */
+type AmountOperator = '+' | '-' | '*' | '/'
+
+/** 一个求值项：前导运算符 + 操作数；首项运算符恒为 '+'。 */
+interface AmountTerm {
+  operator: AmountOperator
+  value: string
+}
+
+/** 字符是否为合法的四则运算符（类型守卫，避免裸断言）。 */
+function isAmountOperator(ch: string): ch is AmountOperator {
+  return ch === '+' || ch === '-' || ch === '*' || ch === '/'
+}
+
 /**
- * 定点求值金额表达式（数字键盘的 ＋ / － 会拼出 `12.5+3.25`）。
- * 只接受数字、小数点和加减号；结果取绝对值（方向由三 Tab 决定）。
- * 全程 Money 定点运算，杜绝 `0.1 + 0.2` 浮点尾差（AC-22）。
+ * 定点求值金额表达式（键盘拼出 `86.5*2`，内部运算符一律半角 `+ - * /`）。
+ *
+ * 口径（§5-E）：
+ * - 合法形态 `数字(运算符数字)*`；连续运算符、以运算符结尾一律抛 RangeError；
+ * - **从左到右顺序求值，不启用乘除优先级**（`1+2*3 = 9.00`，非 7）；
+ * - 每步以 Money 定点收敛到两位小数（HALF_UP）再参与下一步（`100/3*3 = 99.99`）；
+ * - 除数为 0 抛「除数不能为 0」，绝不静默返回 0 / NaN；
+ * - 结果取绝对值（方向由三 Tab 决定）；全程 Money 定点，杜绝 `0.1 + 0.2` 尾差（AC-22）。
  */
 export function evaluateAmountExpression(expression: string): Money {
   const expr = expression.trim()
-  if (expr === '' || !/^[0-9.]+(?:[+-][0-9.]+)*$/.test(expr)) {
-    throw new RangeError('金额只能包含数字、小数点与加减号')
+  if (expr === '' || !/^[0-9.]+(?:[+\-*/][0-9.]+)*$/.test(expr)) {
+    throw new RangeError('金额只能包含数字、小数点与加减乘除号')
   }
 
-  const parts: Array<{ minus: boolean; value: string }> = []
+  const terms: AmountTerm[] = []
   let buffer = ''
-  let minus = false
+  let operator: AmountOperator = '+'
   for (let i = 0; i < expr.length; i += 1) {
     const ch = expr.charAt(i)
-    if (ch === '+' || ch === '-') {
+    if (isAmountOperator(ch)) {
       if (buffer === '') {
         throw new RangeError('金额表达式的运算符位置不正确')
       }
-      parts.push({ minus, value: normalizeNumberToken(buffer) })
+      terms.push({ operator, value: normalizeNumberToken(buffer) })
       buffer = ''
-      minus = ch === '-'
+      operator = ch
     } else {
       buffer += ch
     }
@@ -202,12 +221,27 @@ export function evaluateAmountExpression(expression: string): Money {
   if (buffer === '') {
     throw new RangeError('金额表达式不能以运算符结尾')
   }
-  parts.push({ minus, value: normalizeNumberToken(buffer) })
+  terms.push({ operator, value: normalizeNumberToken(buffer) })
 
   let total = Money.zero()
-  for (const part of parts) {
-    const value = Money.from(part.value)
-    total = part.minus ? total.minus(value) : total.plus(value)
+  for (const term of terms) {
+    const value = Money.from(term.value)
+    switch (term.operator) {
+      case '+':
+        total = total.plus(value)
+        break
+      case '-':
+        total = total.minus(value)
+        break
+      case '*':
+        total = total.times(value)
+        break
+      case '/':
+        total = total.dividedBy(value)
+        break
+    }
+    // 每步收敛到「分」：顺序求值下前一步的舍入结果即下一步的输入（§5-E）。
+    total = total.rounded()
   }
   return total.abs()
 }
