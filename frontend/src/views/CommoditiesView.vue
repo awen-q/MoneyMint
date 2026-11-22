@@ -302,28 +302,30 @@ onMounted(() => {
       <div class="fb-card cmd__card">
         <h3 class="cmd__title">余额聚合（只读）</h3>
         <p v-if="rows.length === 0" class="cmd__empty">账本里还没有任何币种余额。</p>
-        <table v-else class="cmd__table">
-          <thead>
-            <tr>
-              <th>币种</th>
-              <th>总资产</th>
-              <th>负债</th>
-              <th>净资产</th>
-              <th>账户</th>
-              <th>交易</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in rows" :key="row.code">
-              <td>{{ row.code }}<span v-if="row.isMain" class="cmd__main">默认</span></td>
-              <td><MoneyText :amount="row.assets" :commodity="row.code" size="sm" /></td>
-              <td><MoneyText :amount="row.liabilities" :commodity="row.code" size="sm" /></td>
-              <td><MoneyText :amount="row.netWorth" :commodity="row.code" size="sm" /></td>
-              <td>{{ row.accountCount }}</td>
-              <td>{{ row.txnCount }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <div v-else class="cmd__tbl-wrap">
+          <table class="cmd__table">
+            <thead>
+              <tr>
+                <th>币种</th>
+                <th>总资产</th>
+                <th>负债</th>
+                <th>净资产</th>
+                <th>账户</th>
+                <th>交易</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in rows" :key="row.code">
+                <td>{{ row.code }}<span v-if="row.isMain" class="cmd__main">默认</span></td>
+                <td><MoneyText :amount="row.assets" :commodity="row.code" size="sm" /></td>
+                <td><MoneyText :amount="row.liabilities" :commodity="row.code" size="sm" /></td>
+                <td><MoneyText :amount="row.netWorth" :commodity="row.code" size="sm" /></td>
+                <td>{{ row.accountCount }}</td>
+                <td>{{ row.txnCount }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
         <p class="cmd__hint">聚合口径来自账户余额与交易分录，与后端删除门禁的引用检查相互独立。</p>
       </div>
     </template>
@@ -355,8 +357,16 @@ onMounted(() => {
   font-size: 14px;
 }
 
+/* 金额列（MoneyText）在移动端必然超出卡片宽度：容器横向滚动，
+   表格保住最小可用宽度不被压缩（与 PostingPreview 的滚动容器同约定）。 */
+.cmd__tbl-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 .cmd__table {
   width: 100%;
+  min-width: 420px;
   border-collapse: collapse;
   font-size: 12px;
   /* 账户数 / 交易数数字列与 MoneyText 金额列同口径。 */

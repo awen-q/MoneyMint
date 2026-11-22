@@ -445,8 +445,8 @@ watch(
 }
 
 .detail__delete {
-  flex: 0 0 auto;
-  padding: 0 14px;
+  /* 与修改/分享同宽：整行铺满（此前 flex:0 0 auto 贴内容，比上面两个按钮短）。 */
+  flex: 1 0 100%;
   height: 46px;
   border: 1px solid var(--fb-danger);
   border-radius: var(--fb-radius-input);
