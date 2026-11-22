@@ -56,6 +56,8 @@ const emit = defineEmits<{
   (event: 'focus-amount', index: number, el: HTMLInputElement): void
   /** 焦点行消失（删除 / 返回简化）时请父组件收起键盘。 */
   (event: 'keypad-done'): void
+  /** 焦点行之前的行被删：焦点行内容左移一位，请父组件同步 activeRow 下标。 */
+  (event: 'active-row-shift', next: number): void
 }>()
 
 /** 本地副本：只在用户操作时变更，随后 emit 交回父组件（props 保持只读）。 */
@@ -65,8 +67,30 @@ watch(
   () => props.rows,
   (next) => {
     localRows.value = cloneRows(next)
+    pruneRowDirections(next)
   },
 )
+
+/**
+ * 外部行数据变化（草稿恢复 / 编辑态回填）时清理失配的显式方向：
+ * 只保留仍指向存在行、且与已落值非零金额的符号不冲突的条目；
+ * 空金额 / 0 金额（数据无符号）的显式方向无条件保留。
+ */
+function pruneRowDirections(rows: ReadonlyArray<AdvancedRow>): void {
+  const next: Record<number, 'debit' | 'credit'> = {}
+  for (const [key, dir] of Object.entries(rowDirections.value)) {
+    const index = Number(key)
+    const row = rows[index]
+    if (row === undefined) {
+      continue
+    }
+    const amount = typeof row.amount === 'string' ? row.amount.trim() : ''
+    if (amount === '' || magnitudeOf(amount) === '0.00' || amountDirection(amount) === dir) {
+      next[index] = dir
+    }
+  }
+  rowDirections.value = next
+}
 
 function cloneRows(rows: ReadonlyArray<AdvancedRow>): AdvancedRow[] {
   return rows.map((row) => ({
@@ -165,6 +189,13 @@ const ROW_OPERATOR_KEYS: Record<string, string> = {
 const rowExpressions = ref<Record<number, string>>({})
 const rowAfterEquals = ref<Record<number, boolean>>({})
 const rowEvalErrors = ref<Record<number, string>>({})
+/**
+ * 行级「显式借贷方向」：金额为空 / 为 0 时数据里没有符号可推导（signAmount
+ * 对空幅值返回 ''、-0.00 与 0.00 数值相等），方向必须独立保存在 UI 态，
+ * 否则点借 / 贷会被静默吞掉（金额框显示 placeholder 0.00、Toggle 永远弹回「借」）。
+ * 有已落值非零金额时方向由符号推导，显式选择会同步赋号，两处永远一致。
+ */
+const rowDirections = ref<Record<number, 'debit' | 'credit'>>({})
 
 function isRowOperator(char: string): boolean {
   return char === '+' || char === '-' || char === '*' || char === '/'
@@ -206,6 +237,53 @@ function expressionOf(index: number): string {
   return pretty
 }
 
+/**
+ * 行金额输入框的显示值。
+ *
+ * 自定义键盘服务该行且仍在表达式编辑态（未按 `=`、无求值错误）时，直接显示
+ * rowExpressions 原文——这样每按一个数字 / ⌫ / 小数点 / 运算符，输入框都即时
+ * 反映当前输入（点 5 显示 5、再点 7 显示 57）。此处**只改显示**，不写
+ * row.amount：`=` 求值、带符号落值、配平与提交链路完全不变。
+ *
+ * 其余场景继续读 row.amount 幅值：PC 物理直输（keypadActive=false）、已按 `=`
+ * （显示定点结果）、除零报错（沿用上次成功落值，与 evaluateRow 的口径一致）。
+ */
+function amountDisplayOf(index: number): string {
+  const row = localRows.value[index]
+  const fallback = row === undefined ? '' : magnitudeOf(row.amount)
+  const expression = rowExpressions.value[index] ?? ''
+  const editingByKeypad =
+    props.keypadActive === true &&
+    props.activeRow === index &&
+    rowAfterEquals.value[index] !== true &&
+    (rowEvalErrors.value[index] ?? '') === ''
+  // 表达式为空（刚聚焦尚未按键 / ⌫ 删空）时保留原金额幅值，避免一展开键盘就清空看起来已有值。
+  return editingByKeypad && expression !== '' ? expression : fallback
+}
+
+/**
+ * 行当前借贷方向：显式选择的 rowDirections 永远优先（不限键盘态——金额空 /
+ * 为 0 时数据没有符号，方向只能存这里），其余场景回退 amountDirection(row.amount)。
+ * Toggle 高亮、符号提示、＝ 落值赋号、＋− 翻转都必须经过它。
+ */
+function directionOf(index: number): 'debit' | 'credit' {
+  const pending = rowDirections.value[index]
+  if (pending !== undefined) {
+    return pending
+  }
+  const row = localRows.value[index]
+  return row === undefined ? 'debit' : amountDirection(row.amount)
+}
+
+/** 该行是否处于键盘表达式编辑态（金额尚未落值）。 */
+function inExpressionEditing(index: number): boolean {
+  return (
+    props.keypadActive === true &&
+    props.activeRow === index &&
+    rowAfterEquals.value[index] !== true
+  )
+}
+
 /** `=`：逐行调用 core 的定点求值；失败只写行内错误，绝不落值（保存守门随后拦截）。 */
 function evaluateRow(index: number): void {
   const row = localRows.value[index]
@@ -218,9 +296,14 @@ function evaluateRow(index: number): void {
   }
   try {
     const result = evaluateAmountExpression(expr)
-    row.amount = signAmount(amountDirection(row.amount), result.toString())
+    // 方向取用户显式选定的方向（含金额空 / 为 0 时先选方向的场景）。
+    row.amount = signAmount(directionOf(index), result.toString())
     rowAfterEquals.value[index] = true
     rowEvalErrors.value[index] = ''
+    // 非零结果符号已进数据，显式方向完成使命；0 没有符号，方向留在 UI 态。
+    if (magnitudeOf(result.toString()) !== '0.00') {
+      delete rowDirections.value[index]
+    }
     commit()
   } catch (err) {
     // 除零等错误：保留上一次成功落值，只显示该行错误。
@@ -279,17 +362,19 @@ function pressActiveKey(key: string): void {
   }
 }
 
-/** 重排后把逐行表达式状态同步到新下标，避免错行串值。 */
-function reindexExpressionState(): void {
-  const expressions = localRows.value.map((_, index) => rowExpressions.value[index] ?? '')
-  const afterEquals = localRows.value.map((_, index) => rowAfterEquals.value[index] === true)
-  const errors = localRows.value.map((_, index) => rowEvalErrors.value[index] ?? '')
-  rowExpressions.value = {}
-  rowAfterEquals.value = {}
-  rowEvalErrors.value = {}
-  expressions.forEach((value, index) => { rowExpressions.value[index] = value })
-  afterEquals.forEach((value, index) => { rowAfterEquals.value[index] = value })
-  errors.forEach((value, index) => { rowEvalErrors.value[index] = value })
+/** 删行后按下标左移表达式状态：小于 deleteIndex 的行不动，大于它的前移一位，
+ *  被删行状态丢弃。按值整体平移而不是按下标复制，否则删前面的行会串值。 */
+function shiftExpressionStateAfterRemove<T>(record: Record<number, T>, deleteIndex: number): Record<number, T> {
+  const next: Record<number, T> = {}
+  for (const rawKey of Object.keys(record)) {
+    const index = Number(rawKey)
+    if (index < deleteIndex) {
+      next[index] = record[index]
+    } else if (index > deleteIndex) {
+      next[index - 1] = record[index]
+    }
+  }
+  return next
 }
 
 // ─────────── 行账户 / 币种浮层（§12-3 / §12-4）：移动底部弹层 / PC 锚定下拉 ───────────
@@ -494,33 +579,53 @@ function onAmountChange(index: number, event: Event): void {
   }
   const target = event.target as HTMLInputElement
   const raw = typeof target.value === 'string' ? target.value : ''
-  // 兼容粘贴/测试里的带符号输入：显式负号优先决定方向；否则沿用当前方向。
-  // 金额框只负责幅值，符号由方向赋予，故必须先剥掉输入里的 +/-。
-  const dir = raw.trim().startsWith('-') ? 'credit' : amountDirection(row.amount)
+  // 兼容粘贴/测试里的带符号输入：显式负号优先决定方向；否则沿用显式方向 /
+  // 旧金额符号。金额框只负责幅值，符号由方向赋予，故必须先剥掉输入里的 +/-。
+  const dir = raw.trim().startsWith('-')
+    ? 'credit'
+    : (rowDirections.value[index] ?? amountDirection(row.amount))
   row.amount = signAmount(dir, raw)
   // 物理键盘直输（PC 口径）时同步表达式小字，保证后续键盘续算不串值。
   rowExpressions.value[index] = magnitudeOf(row.amount)
   rowAfterEquals.value[index] = false
   rowEvalErrors.value[index] = ''
+  // 幅值非零：符号已进数据，显式方向收编；空 / 0 幅值：方向继续留在 UI 态。
+  const mag = magnitudeOf(row.amount)
+  if (mag !== '' && mag !== '0.00') {
+    delete rowDirections.value[index]
+  } else if (mag === '0.00') {
+    rowDirections.value[index] = dir
+  }
   commit()
 }
 
 /** 点行内金额框：不唤起系统键盘，交给父组件开自定义键盘（PC 父组件会忽略）。 */
 function onAmountFocus(index: number, event: Event): void {
+  // 切走即结算：原焦点行的未落值表达式自动求值落账，切行后上一行
+  // 输入框显示 20.00 而不是 placeholder 0.00 + 悬空小字。
+  if (props.activeRow >= 0 && props.activeRow !== index) {
+    finishRow(props.activeRow)
+  }
   const element = event.currentTarget as HTMLInputElement | null
   if (element !== null) {
     emit('focus-amount', index, element)
   }
 }
 
-/** 借贷 Toggle：保留幅值，按所选方向重新赋号。 */
+/**
+ * 借贷 Toggle：显式方向立即生效（空金额 / 0 金额也能切，方向存 rowDirections）；
+ * 已落值非空金额同步赋号；键盘表达式编辑态不动 row.amount，`=` 落值时按此方向赋号。
+ */
 function onDirectionChange(index: number, dir: 'debit' | 'credit'): void {
   const row = localRows.value[index]
   if (row === undefined) {
     return
   }
-  row.amount = signAmount(dir, magnitudeOf(row.amount))
-  commit()
+  rowDirections.value[index] = dir
+  if (!inExpressionEditing(index) && row.amount.trim() !== '') {
+    row.amount = signAmount(dir, magnitudeOf(row.amount))
+    commit()
+  }
 }
 
 /** ＋/− 翻转：等价快捷切换借贷方向。 */
@@ -529,7 +634,7 @@ function onFlipDirection(index: number): void {
   if (row === undefined) {
     return
   }
-  onDirectionChange(index, amountDirection(row.amount) === 'debit' ? 'credit' : 'debit')
+  onDirectionChange(index, directionOf(index) === 'debit' ? 'credit' : 'debit')
 }
 
 function onCommodityChange(index: number, event: Event): void {
@@ -582,9 +687,16 @@ function removeRow(index: number): void {
     return
   }
   localRows.value.splice(index, 1)
-  reindexExpressionState()
+  rowExpressions.value = shiftExpressionStateAfterRemove(rowExpressions.value, index)
+  rowAfterEquals.value = shiftExpressionStateAfterRemove(rowAfterEquals.value, index)
+  rowEvalErrors.value = shiftExpressionStateAfterRemove(rowEvalErrors.value, index)
+  rowDirections.value = shiftExpressionStateAfterRemove(rowDirections.value, index)
   if (props.activeRow === index) {
+    // 焦点行本身被删：键盘随行收起（既有契约）。
     emit('keypad-done')
+  } else if (props.activeRow > index) {
+    // 焦点行在删除点之后：内容左移一位，同步下标让键盘继续编辑同一行内容。
+    emit('active-row-shift', props.activeRow - 1)
   }
   closeRowPopover()
   commit()
@@ -612,12 +724,36 @@ function autoBalance(): void {
   commit()
 }
 
+/**
+ * 就地落值指定行的未落值表达式（完成键 / 切换焦点行 / 键盘收起的统一收尾）。
+ * 口径：「离开这一行 = 这一行结算」——不点完成直接切走，输入框立即显示
+ * 求值结果（20.00），而不是 placeholder 0.00 + 角落悬空小字。
+ * 已落值 / 无表达式 / 报错行的行为不变。
+ */
+function finishRow(index: number): void {
+  if (index < 0 || index >= localRows.value.length) {
+    return
+  }
+  if (rowAfterEquals.value[index] === true) {
+    return
+  }
+  if ((rowExpressions.value[index] ?? '').trim() === '') {
+    return
+  }
+  evaluateRow(index)
+}
+
+/** 供父组件在收起键盘前调用：结算当前焦点行的未落值表达式。 */
+function finishActiveRow(): void {
+  finishRow(props.activeRow)
+}
+
 function backToSimple(): void {
   emit('keypad-done')
   emit('back')
 }
 
-defineExpose({ canSubmit, addRow, removeRow, autoBalance, pressActiveKey })
+defineExpose({ canSubmit, addRow, removeRow, autoBalance, pressActiveKey, finishActiveRow })
 </script>
 
 <template>
@@ -682,8 +818,8 @@ defineExpose({ canSubmit, addRow, removeRow, autoBalance, pressActiveKey })
             <button
               type="button"
               class="seg debit"
-              :class="{ on: amountDirection(row.amount) === 'debit' }"
-              :aria-pressed="amountDirection(row.amount) === 'debit'"
+              :class="{ on: directionOf(index) === 'debit' }"
+              :aria-pressed="directionOf(index) === 'debit'"
               data-rf="dir"
               data-dir="debit"
               @click="onDirectionChange(index, 'debit')"
@@ -691,8 +827,8 @@ defineExpose({ canSubmit, addRow, removeRow, autoBalance, pressActiveKey })
             <button
               type="button"
               class="seg credit"
-              :class="{ on: amountDirection(row.amount) === 'credit' }"
-              :aria-pressed="amountDirection(row.amount) === 'credit'"
+              :class="{ on: directionOf(index) === 'credit' }"
+              :aria-pressed="directionOf(index) === 'credit'"
               data-rf="dir"
               data-dir="credit"
               @click="onDirectionChange(index, 'credit')"
@@ -701,15 +837,15 @@ defineExpose({ canSubmit, addRow, removeRow, autoBalance, pressActiveKey })
           <div class="amt-box">
             <span
               class="sign-hint"
-              :class="{ neg: amountDirection(row.amount) === 'credit' }"
+              :class="{ neg: directionOf(index) === 'credit' }"
               data-rf="sign"
               aria-hidden="true"
-            >{{ amountDirection(row.amount) === 'debit' ? '+' : '−' }}</span>
+            >{{ directionOf(index) === 'debit' ? '+' : '−' }}</span>
             <input
               type="text"
               inputmode="decimal"
               :readonly="!isPcViewport || (keypadActive && activeRow === index)"
-              :value="magnitudeOf(row.amount)"
+              :value="amountDisplayOf(index)"
               :aria-label="`第 ${index + 1} 行金额（正数）`"
               data-rf="amt"
               placeholder="0.00"

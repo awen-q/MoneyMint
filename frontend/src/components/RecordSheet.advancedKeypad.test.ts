@@ -2,8 +2,8 @@
 /**
  * 规格 §12-1 / §1 / §7(c)：RecordSheet 高级行内键盘与 PC 浮层 portal。
  * - 移动端点行金额框 → 独立 advancedKeypadOpen，替代保存条，不唤起系统键盘；
- * - PC 行内物理输入，无内嵌键盘；弹窗高度 min(520px, 88vh)；
- * - 浮层 portal 到 mask 层宿主，不被 .rs-panel / .rs-body 的 overflow 裁剪。
+ * - PC 行内物理输入，无内嵌键盘；弹窗高度内容自适应 + 视口上限，保证常驻 5 行键盘完整；
+ * - 浮层 portal 到 mask 层宿主，不被 .rs-panel / .rs-body 的 overflow 裁剪，且层级高于金额区。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -103,7 +103,17 @@ describe('§12-1：移动端高级行内键盘', () => {
     expect(wrapper.findAll('.js-adv-keypad [data-key="再记"]')).toHaveLength(0)
     expect(wrapper.findAll('.js-adv-keypad [data-key="高级双录"]')).toHaveLength(0)
     expect(wrapper.findAll('.js-adv-keypad [data-key="保存"]')).toHaveLength(0)
-    expect(wrapper.findAll('.js-adv-keypad [data-act="key"]')).toHaveLength(16)
+    expect(wrapper.findAll('.js-adv-keypad [data-act="key"]')).toHaveLength(17)
+    wrapper.unmount()
+  })
+
+  it('高级键盘键序锁定：前四行数字/运算 + 第五行「+」，含加号且无动作键混入', async () => {
+    setWidth(500)
+    const wrapper = await mountAdvanced()
+    await wrapper.findAll('.rs-adv-row')[0].find('[data-rf="amt"]').trigger('click')
+    await flushPromises()
+    const order = wrapper.findAll('.js-adv-keypad [data-act="key"]').map((key) => key.attributes('data-key'))
+    expect(order).toEqual(['7', '8', '9', '⌫', '4', '5', '6', '×', '1', '2', '3', '÷', '.', '0', '=', '−', '+'])
     wrapper.unmount()
   })
 
@@ -125,6 +135,20 @@ describe('§12-1：移动端高级行内键盘', () => {
     expect(wrapper.find('.js-adv-keypad').exists()).toBe(false)
     expect(wrapper.find('.rs-foot button').exists()).toBe(true)
     expect(wrapper.findAll('.rs-adv-row')[0].classes()).not.toContain('rs-adv-row--focus')
+    wrapper.unmount()
+  })
+
+  it('行内 5+3 → = 8.00：加法键可用且只写焦点行', async () => {
+    setWidth(500)
+    const wrapper = await mountAdvanced()
+    await wrapper.findAll('.rs-adv-row')[0].find('[data-rf="amt"]').trigger('click')
+    await flushPromises()
+    for (const key of ['5', '+', '3', '=']) {
+      await pressKey(wrapper, key)
+    }
+    const amounts = wrapper.findAll('[data-rf="amt"]')
+    expect((amounts[0].element as HTMLInputElement).value).toBe('8.00')
+    expect((amounts[1].element as HTMLInputElement).value).toBe('')
     wrapper.unmount()
   })
 
@@ -210,10 +234,64 @@ describe('§12-1 PC / §1：物理键盘直输与 portal 承载', () => {
     wrapper.unmount()
   })
 
-  it('PC 弹窗高度按视口取 min(520px, 88vh)，内部滚动保留', () => {
+  it('PC 弹窗高度自适应 + 视口上限，键盘不被裁切且内部滚动保留', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/components/RecordSheet.vue'), 'utf8')
-    expect(source).toMatch(/height:\s*min\(520px,\s*88vh\)/)
+    // 固定 height:min(520px,88vh) + overflow:hidden 会把 5 行键盘 dock 整段裁掉。
+    expect(source).not.toMatch(/height:\s*min\(520px,\s*88vh\)/)
+    expect(source).toMatch(/height:\s*auto;/)
+    expect(source).toMatch(/max-height:\s*min\(720px,\s*calc\(var\(--vvh,\s*100vh\)\s*-\s*16px\)\)/)
+    // PC 上 body 必须让位于常驻键盘，但仍保留自身滚动。
+    expect(source).toMatch(/\.rs-mask--auto \.rs-body[\s\S]*?min-height:\s*0/)
     expect(source).toMatch(/\.rs-body[\s\S]*?overflow-y:\s*auto/)
+    // fixed 宿主自身创建层叠上下文，必须抬升 z-index 才能盖过金额区 z-index:1。
+    expect(source).toMatch(/\.rs-portal-host\s*\{[^}]*z-index:\s*70/)
     expect(source).toMatch(/<Teleport v-if="portalHostEl" :to="portalHostEl">/)
+  })
+})
+
+describe('BUG-3：高级态保存成功 →「再记一笔」回简化态默认口径', () => {
+  it('advancedMode 复位、行内键盘收起、高级双录键回归、简化键盘默认展开', async () => {
+    setWidth(500)
+    h.create.mockResolvedValue({
+      id: 11,
+      uuid: 'u-again',
+      date: '2026-11-22',
+      postings: 2,
+      idempotent: false,
+    })
+    const wrapper = await mountAdvanced()
+    // 第 1 行 +5.00；第 2 行先录入再切贷方 → -5.00，配平可保存。
+    await wrapper.findAll('.rs-adv-row')[0].find('[data-rf="amt"]').trigger('click')
+    await flushPromises()
+    for (const key of ['5', '=']) {
+      await pressKey(wrapper, key)
+    }
+    await wrapper.findAll('.rs-adv-row')[1].find('[data-rf="amt"]').trigger('click')
+    await flushPromises()
+    // 默认第 2 行账户是 USD 限制户，换成 CNY 户才能与第 1 行按币种配平。
+    await wrapper.findAll('.rs-adv-row')[1].find('select.acc-contract').setValue('3')
+    await flushPromises()
+    for (const key of ['5', '=']) {
+      await pressKey(wrapper, key)
+    }
+    await wrapper.findAll('.rs-adv-row')[1].find('[data-rf="dir"][data-dir="credit"]').trigger('click')
+    await flushPromises()
+    // 「完成」收起行内键盘，底部保存条复现。
+    await wrapper.find('.js-adv-keypad-done').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.js-save').attributes('disabled')).toBeUndefined()
+
+    await wrapper.find('.js-save').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.rs-rcpt-btn--primary').exists()).toBe(true)
+    await wrapper.find('.rs-rcpt-btn--primary').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.js-advrows').exists()).toBe(false)
+    expect(wrapper.find('.js-adv-keypad').exists()).toBe(false)
+    expect(wrapper.find('.rs-keyboard').exists()).toBe(true)
+    expect(wrapper.findAll('[data-key="高级双录"]')).toHaveLength(1)
+    expect(wrapper.findAll('[data-key="保存"]')).toHaveLength(1)
+    wrapper.unmount()
   })
 })

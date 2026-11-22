@@ -303,8 +303,9 @@ const OPERATOR_KEYS: Record<string, string> = {
   '−': '-',
   '+': '+',
 }
-/** 高级行内键盘：复用前四行数字 / 运算键，第五行改为单键「完成」（无保存键）。 */
-const advancedKeypadKeys: string[] = keyboardKeys.slice(0, 16)
+/** 高级行内键盘：复用前四行数字 / 运算键 + 第五行「+」（§5-E 四则缺一不可），
+ * 末尾「完成」按钮与 + 同行占 3 格（grid-column: 2/-1），共 5 行 18 格。 */
+const advancedKeypadKeys: string[] = keyboardKeys.slice(0, 17)
 
 const containerClass = computed(() =>
   props.variant === 'auto' ? 'rs-mask--auto' : `rs-mask--${props.variant}`,
@@ -1383,8 +1384,17 @@ function onAdvancedFocusAmount(index: number, _element: HTMLInputElement): void 
 }
 
 function closeAdvancedKeypad(): void {
+  // 收起即结算：任何路径收起键盘（完成 / 删除焦点行 / 返回简化 / 重置），
+  // 焦点行未落值的表达式都先就地求值，避免输入框显示 placeholder 0.00
+  // 而角落小字还悬着数字。finishActiveRow 对无表达式 / 已落值行为幂等。
+  advancedPostingsRef.value?.finishActiveRow()
   advancedKeypadOpen.value = false
   activeRowIndex.value = -1
+}
+
+/** 焦点行之前的行被删：焦点行内容左移一位，同步下标保持键盘继续编辑同一行。 */
+function onActiveRowShift(next: number): void {
+  activeRowIndex.value = next
 }
 
 /** 键盘按键转发给子组件的焦点行；求值与写回都留在 AdvancedPostings。 */
@@ -1682,6 +1692,10 @@ function resetForm(): void {
   form.description = ''
   form.tags = []
   form.advancedPostings = []
+  // 「再记一笔」回到简化态默认口径：高级态残留会让面板变成 0 行死状态
+  //（无金额输入框、无「高级双录」键、保存恒禁用）。简化态新建默认展开键盘（§5-K）。
+  advancedMode.value = false
+  keypadOpen.value = true
   resetIdempotencyKey()
   showSuccess.value = false
   receipt.value = null
@@ -1898,7 +1912,10 @@ watch(
         @close="shareOpen = false"
       />
 
-      <template v-else>
+      <!-- 成功态只渲染票面与操作按钮：表单分支必须排除 showSuccess，
+           否则整张表单（Tabs / 金额舞台 / 高级双录 / dock）会排在票面下方，
+           面板 overflow-y:auto 一滚就露出来（保存成功后底部还有布局的根因）。 -->
+      <template v-else-if="!showSuccess">
         <header class="rs-head">
           <div class="head-left">
             <span class="head-mark">¥</span>
@@ -2023,6 +2040,7 @@ watch(
               @back="toggleAdvanced"
               @focus-amount="onAdvancedFocusAmount"
               @keypad-done="closeAdvancedKeypad"
+              @active-row-shift="onActiveRowShift"
             />
             <!-- 日期 / flag / 标签 / 备注：与简化态共用同一 form 字段 -->
             <section class="grp">
@@ -2509,13 +2527,18 @@ watch(
   background: var(--fb-mask);
 }
 
-/* 浮层 portal 宿主：零尺寸固定定位，不参与 mask 的 flex 布局，也不裁剪子元素。 */
+/* 浮层 portal 宿主：零尺寸固定定位，不参与 mask 的 flex 布局，也不裁剪子元素。
+   ⚠️ fixed 元素自身会创建层叠上下文：若宿主停在 z-index:auto(0)，浮层内部的
+   z-index:70 只在这个 0 层上下文里生效，仍会被面板内 .rs-tabs/.rs-amount 的
+   z-index:1 盖住（矮屏底部浮层上缘压到金额区时必然暴露）。宿主层级必须高于
+   面板内任意层级，浮层才能真正置顶。 */
 .rs-portal-host {
   position: fixed;
   top: 0;
   left: 0;
   width: 0;
   height: 0;
+  z-index: 70;
 }
 
 .rs-mask--auto,
@@ -3786,9 +3809,10 @@ watch(
   font-weight: 800;
 }
 
-/* 高级行内键盘动作条：整行单键「完成」，不承载保存语义。 */
+/* 高级行内键盘动作条：「完成」与第五行「+」同行，占第 2~4 列（+ 占第 1 列），
+   不承载保存语义。若用 1/-1 整行会让 17 键多出一行、键盘过高。 */
 .rs-key--done {
-  grid-column: 1 / -1;
+  grid-column: 2 / -1;
   background: var(--fb-brand);
   border-color: var(--fb-brand);
   color: var(--fb-white);
@@ -4019,9 +4043,55 @@ body.kbd-open .rs-body {
   .rs-mask--dialog .rs-panel {
     width: 460px;
     max-width: 92%;
-    /* §1：图册目标 520px，矮屏取视口 88vh；内部 .rs-body 仍独立滚动。 */
-    height: min(520px, 88vh);
+    /* 键盘常驻后内容最小高度 ≈ head + stage + 5 行键 dock ≈ 600px；
+       固定 520px + overflow:hidden 会把 dock 底部整段裁掉。改为内容自适应 +
+       视口上限，超出的空间全由 .rs-body 收缩并独立滚动，dock 永远完整可见。 */
+    height: auto;
+    max-height: min(720px, calc(var(--vvh, 100vh) - 16px));
     border-radius: 18px;
+  }
+  /* PC 上 body 必须能把纵向空间让给常驻键盘（基础规则 min-height:96px 会
+     把 dock 顶出裁剪区）；overflow-y:auto 保留，表单内部照常滚动。 */
+  .rs-mask--auto .rs-body,
+  .rs-mask--dialog .rs-body {
+    min-height: 0;
+  }
+  /* PC 图册：紧凑键盘。设计稿键高约 27px，移动端 --kb-h（40~48px）放大到 34~40px
+     才把表单区挤成一小条；只在 PC 容器作用域把 --kb-h 压到 37px（×0.84 ≈ 31px），
+     配合 4px gap / 6+8px 内边距让键盘区从 ~244px 降到 ~185px，腾出的高度自动
+     回到 body。移动端 <900px 不受影响，仍走 tokens.css 的 clamp。 */
+  .rs-mask--auto,
+  .rs-mask--dialog {
+    --kb-h: 37px;
+  }
+  .rs-mask--auto .rs-keyboard,
+  .rs-mask--dialog .rs-keyboard {
+    grid-auto-rows: calc(var(--kb-h) * 0.84);
+    gap: 4px;
+    padding: 6px 10px 8px;
+  }
+  .rs-mask--auto .rs-key,
+  .rs-mask--dialog .rs-key {
+    min-height: calc(var(--kb-h) * 0.84);
+    font-size: 14px;
+  }
+  .rs-mask--auto .rs-key--op,
+  .rs-mask--dialog .rs-key--op {
+    font-size: 13px;
+  }
+  .rs-mask--auto .rs-key--again,
+  .rs-mask--dialog .rs-key--again {
+    font-size: 11.5px;
+  }
+  .rs-mask--auto .rs-key--save,
+  .rs-mask--dialog .rs-key--save,
+  .rs-mask--auto .rs-key--done,
+  .rs-mask--dialog .rs-key--done {
+    font-size: 12px;
+  }
+  .rs-mask--auto .rs-key--advanced,
+  .rs-mask--dialog .rs-key--advanced {
+    font-size: 11px;
   }
   .rs-mask--auto .rs-panel--receipt,
   .rs-mask--dialog .rs-panel--receipt {

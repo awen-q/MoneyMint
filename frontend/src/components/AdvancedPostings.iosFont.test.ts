@@ -73,7 +73,9 @@ describe('iOS 聚焦缩放回归：高级录入子组件控件字号 >=16px、�
   it('金额框保留 inputmode=decimal 且只显示剥符号后的幅值', () => {
     expect(sfcSource).toMatch(/inputmode="decimal"/)
     expect(sfcSource).not.toMatch(/inputmode="numeric"/)
-    expect(sfcSource).toMatch(/:value="magnitudeOf\(row\.amount\)"/)
+    // 自定义键盘编辑态由 amountDisplayOf 逐键回填表达式；其余场景仍走剥符号幅值。
+    expect(sfcSource).toMatch(/:value="amountDisplayOf\(index\)"/)
+    expect(sfcSource).toMatch(/magnitudeOf\(row\.amount\)/)
   })
 })
 

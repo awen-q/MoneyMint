@@ -515,3 +515,33 @@ describe('编辑态（冲正 + 新建）：无类型 Tab 与金额舞台', () =>
     wrapper.unmount()
   })
 })
+
+describe('成功态只渲染票面（保存后底部不得残留表单布局）', () => {
+  it('保存成功后：票面出现，标题栏 / 金额舞台 / 键盘 / 保存键全部消失', async () => {
+    const wrapper = await mountSheet({}, { keypad: false })
+    await openKeypad(wrapper)
+    await enterAmount(wrapper, '50')
+    await press(wrapper, '保存')
+    await flushPromises()
+    expect(wrapper.find('.rs-receipt').exists()).toBe(true)
+    expect(wrapper.find('.rs-mask').classes()).toContain('rs-mask--receipt')
+    // 底部残留表单布局的根因：表单分支此前只挂在分享抽屉的 v-else 上
+    expect(wrapper.find('.rs-head').exists()).toBe(false)
+    expect(wrapper.find('.rs-stage').exists()).toBe(false)
+    expect(wrapper.find('.rs-keyboard').exists()).toBe(false)
+    expect(wrapper.find('.rs-dock').exists()).toBe(false)
+    expect(wrapper.findAll('button').filter((button) => button.text() === '保存')).toHaveLength(0)
+    wrapper.unmount()
+  })
+
+  it('成功态操作按钮齐全：返回 / 分享图 / 复制上一笔 / 再记一笔', async () => {
+    const wrapper = await mountSheet({}, { keypad: false })
+    await openKeypad(wrapper)
+    await enterAmount(wrapper, '50')
+    await press(wrapper, '保存')
+    await flushPromises()
+    const labels = wrapper.findAll('.rs-rcpt-btn').map((button) => button.text())
+    expect(labels).toEqual(['返回', '分享图', '复制上一笔', '再记一笔'])
+    wrapper.unmount()
+  })
+})
