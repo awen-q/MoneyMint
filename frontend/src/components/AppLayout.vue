@@ -133,8 +133,14 @@ function goChangePassword(): void {
       <p v-if="notice" class="layout__notice" role="status">{{ notice }}</p>
     </div>
 
-    <!-- 移动底栏（<900）：4 Tab + 中央 FAB -->
+    <!-- 移动底栏（<900）：4 Tab + 中央 FAB。
+         记账弹窗打开期间必须整体隐藏（v-show 保留实例状态）：
+         .rs-panel 高度取 --vvh（visualViewport.height），安卓地址栏收起 /
+         UC·夸克等自带底部工具栏的浏览器里它小于 layout 视口，面板底部会
+         露出一截缝隙——底栏 z-index 30 在遮罩 60 之下，透过 44% 半透明
+         遮罩把「账单 统计 资产 更多」漏出来。全屏接管态不该露出导航。 -->
     <ShellTabs
+      v-show="!sheet.isOpen"
       :active-path="route.path"
       @select="onSelect"
       @record="openRecord"
