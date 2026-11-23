@@ -181,3 +181,33 @@ describe('P0 可选 ASCII 英文账号（分类页，owner 可见）', () => {
     wrapper.unmount()
   })
 })
+
+describe('上级下拉可辨识化（与 AccountForm 统一口径，AC-9）', () => {
+  /** 上级下拉是第 2 个 select（第 1 个是类型）。 */
+  function parentOptionsOf(wrapper: ReturnType<typeof mount>): string[] {
+    return wrapper
+      .findAll('select')[1]
+      .findAll('option')
+      .map((option) => option.text())
+  }
+
+  it('上级选项文案 = 显示名（全名）', async () => {
+    const wrapper = mount(CategoriesView)
+    await flushPromises()
+    expect(parentOptionsOf(wrapper)).toContain('餐饮（Expenses:Food）')
+    wrapper.unmount()
+  })
+
+  it('「无上级」明示生成形态，随类型切换联动', async () => {
+    const wrapper = mount(CategoriesView)
+    await flushPromises()
+    expect(parentOptionsOf(wrapper)).toContain(
+      '无 · 直接挂在类型根下（生成 Expenses:新段 两段全名）',
+    )
+    await wrapper.findAll('select')[0].setValue('Income')
+    expect(parentOptionsOf(wrapper)).toContain(
+      '无 · 直接挂在类型根下（生成 Income:新段 两段全名）',
+    )
+    wrapper.unmount()
+  })
+})

@@ -264,6 +264,28 @@ export function accountLabel(account: AccountLabelSource): string {
 }
 
 /**
+ * 父账户下拉选项文案：显示名（全名）；显示名空则仅全名。
+ * AccountForm 与 CategoriesView 共用同一口径——存量账户多为
+ * 「自动 ASCII 名 + 中文显示名」，只渲染原始全名（如 `Assets:Item3`）
+ * 用户认不出哪个是「银行卡」，必须把显示名一并摆出来。
+ */
+export function accountOptionLabel(account: AccountLabelSource): string {
+  return account.display_name !== undefined && account.display_name !== ''
+    ? `${account.display_name}（${account.name}）`
+    : account.name
+}
+
+/**
+ * 下拉选项层级缩进：一层一个全角空格 U+3000。
+ * 原生 select 的 option 在 iOS Safari 上不受 CSS 控制（padding / background
+ * 基本无效），文本前缀是唯一跨端可靠的缩进；`String.prototype.repeat`
+ * 是 ES2015 API，过 es2020 门禁与 compat.mjs 扫描。
+ */
+export function indentOptionLabel(label: string, depth: number): string {
+  return depth > 0 ? '\u3000'.repeat(depth) + label : label
+}
+
+/**
  * 账户币种：commodity_restriction 优先，否则用账本默认币种。
  * 高级双录「选账户自动带出币种」与 buildPostings 共用同一口径，避免两处漂移。
  */

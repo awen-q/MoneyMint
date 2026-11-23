@@ -22,7 +22,7 @@ import {
   isClosed,
 } from '@/core/accounts'
 import { buildSortOrders, moveItem, sortBySortOrder } from '@/core/ordering'
-import { accountLabel, todayString } from '@/core/record'
+import { accountLabel, accountOptionLabel, indentOptionLabel, todayString } from '@/core/record'
 import { readCategoryOrder, writeCategoryOrder } from '@/core/storage'
 import { markDirty } from '@/stores/dataFreshness'
 import { useSessionStore } from '@/stores/session'
@@ -207,6 +207,20 @@ const parentOptions = computed(() =>
     (account) =>
       !isClosed(account) && (account.type === 'Expenses' || account.type === 'Income'),
   ),
+)
+
+/**
+ * 上级下拉按树展开（父先子后），depth 供全角空格缩进；与 AccountForm
+ * 统一口径（显示名（全名）+ 缩进）。刻意不传分类页拖拽 compare——
+ * 下拉排序语义是服务端 sort_order 序，与拖拽草稿无关。
+ */
+const parentOptionsFlat = computed(() =>
+  flattenAccountTree(buildAccountTree(parentOptions.value)),
+)
+
+/** 「无上级」动态明示结果形态：随类型切换联动（与 AccountForm 同文案口径）。 */
+const noParentOptionText = computed(
+  () => `无 · 直接挂在类型根下（生成 ${newType.value}:新段 两段全名）`,
 )
 
 function onNewNameChange(event: Event): void {
@@ -432,10 +446,9 @@ onMounted(() => {
             :value="newParentId === null ? '' : String(newParentId)"
             @change="onNewParentChange"
           >
-            <option value="">无上级（挂在类型根下）</option>
-            <option v-for="option in parentOptions" :key="option.id" :value="String(option.id)">
-              {{ accountLabel(option) }}
-            </option>
+            <option value="">{{ noParentOptionText }}</option>
+            <!-- 单行排版：避免 Vue 模板空白 condense 产生前导空格，干扰缩进前缀断言 -->
+            <option v-for="opt in parentOptionsFlat" :key="opt.account.id" :value="String(opt.account.id)">{{ indentOptionLabel(accountOptionLabel(opt.account), opt.depth) }}</option>
           </select>
           <input
             class="fb-input cats__name"

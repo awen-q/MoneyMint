@@ -18,9 +18,9 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { accountApi, openingApi } from '@/api/client'
 import { ApiError } from '@/api/errors'
 import type { AccountView, OpeningDirection, OpeningView } from '@/api/types'
-import { isClosed } from '@/core/accounts'
+import { buildAccountTree, flattenAccountTree, isClosed } from '@/core/accounts'
 import { validateOpeningForm } from '@/core/opening'
-import { todayString } from '@/core/record'
+import { accountOptionLabel, indentOptionLabel, todayString } from '@/core/record'
 import { markDirty } from '@/stores/dataFreshness'
 import { useSessionStore } from '@/stores/session'
 import MoneyText from '@/components/MoneyText.vue'
@@ -71,8 +71,9 @@ const openingLoaded = ref(false)
 
 /** 由外部「＋ 增加下级」入口预填父项时，父与类型都不可改。 */
 const parentFixed = computed(() => props.parent !== null && props.parent !== undefined)
-const parentFixedName = computed(() =>
-  props.parent !== null && props.parent !== undefined ? props.parent.name : '',
+/** 预填态选项文案：显示名（全名），不再渲染裸 Beancount 全名。 */
+const parentFixedOptionText = computed(() =>
+  props.parent !== null && props.parent !== undefined ? accountOptionLabel(props.parent) : '',
 )
 
 const ledgerOpeningDate = computed(() => {
@@ -93,6 +94,21 @@ const parentOptions = computed(() =>
   knownAccounts.value.filter(
     (account) => account.type === accountType.value && !isClosed(account),
   ),
+)
+
+/**
+ * 父下拉按树展开（父先子后、同层按 sort_order），depth 供全角空格缩进——
+ * 只渲染平铺全名时用户看不出层级。孤儿语义（写死口径）：父已关户被过滤后，
+ * 其未关户子账户在树里成为根（depth 0）——展示不缩进但仍是合法父候选
+ * （后端只要求父存在 / 同 type / 未关户）。
+ */
+const parentOptionsFlat = computed(() =>
+  flattenAccountTree(buildAccountTree(parentOptions.value)),
+)
+
+/** 「无」选项动态明示结果形态：随类型切换联动，避免「二级 / 三级」语义漂移。 */
+const noParentOptionText = computed(
+  () => `无 · 直接挂在类型根下（生成 ${accountType.value}:新段 两段全名）`,
 )
 
 function resolveParent(): AccountView | null {
@@ -166,7 +182,10 @@ function onParentChange(event: Event): void {
 
 async function loadKnownAccounts(): Promise<void> {
   try {
-    const res = await accountApi.list()
+    // 避重集合必须含已关户账户：后端重名判定覆盖关户行（自动命名可落
+    // 409 account_name_exists）；父下拉渲染侧由 parentOptions 的 isClosed
+    // 过滤兜底，关户项不会回流进下拉。
+    const res = await accountApi.list({ includeClosed: true })
     knownAccounts.value = Array.isArray(res.accounts) ? res.accounts : []
   } catch {
     // 父下拉为增强项，加载失败不阻断新建。
@@ -393,12 +412,11 @@ onMounted(() => {
               :value="parentAccountId === null ? '' : String(parentAccountId)"
               @change="onParentChange"
             >
-              <option v-if="parentFixed" :value="String(parentAccountId)">{{ parentFixedName }}</option>
-              <option v-if="!parentFixed" value="">无（直接挂在类型根下）</option>
+              <option v-if="parentFixed" :value="String(parentAccountId)">{{ parentFixedOptionText }}</option>
+              <option v-if="!parentFixed" value="">{{ noParentOptionText }}</option>
+              <!-- 单行排版：Vue 模板空白 condense 会在多行插值外产生前导空格，干扰缩进前缀断言 -->
               <template v-if="!parentFixed">
-                <option v-for="acc in parentOptions" :key="acc.id" :value="String(acc.id)">
-                  {{ acc.name }}
-                </option>
+                <option v-for="opt in parentOptionsFlat" :key="opt.account.id" :value="String(opt.account.id)">{{ indentOptionLabel(accountOptionLabel(opt.account), opt.depth) }}</option>
               </template>
             </select>
           </label>

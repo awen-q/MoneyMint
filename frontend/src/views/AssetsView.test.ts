@@ -20,10 +20,12 @@ import AssetsView from '@/views/AssetsView.vue'
 import { useSessionStore } from '@/stores/session'
 import { usePeriodStore } from '@/stores/period'
 import { usePrivacyStore } from '@/stores/privacy'
+import { writeLedgerId } from '@/core/storage'
 import { PRIVACY_MASK } from '@/core/privacy'
 
 const h = vi.hoisted(() => ({
   accountList: vi.fn(),
+  accountCreate: vi.fn(),
   txnList: vi.fn(),
   me: vi.fn(),
   ledgerList: vi.fn(),
@@ -39,8 +41,11 @@ vi.mock('vue-router', () => ({
   useRoute: () => ({ query: {}, path: '/assets', name: 'assets' }),
 }))
 
+// 注意：AccountForm（创建弹层）内部 import 了 openingApi——mock 工厂缺
+// named export 会让整个测试文件在 import 阶段直接崩（设计文档点名的确定性风险）。
 vi.mock('@/api/client', () => ({
-  accountApi: { list: h.accountList },
+  accountApi: { list: h.accountList, create: h.accountCreate },
+  openingApi: { get: vi.fn(), set: vi.fn() },
   transactionApi: { list: h.txnList },
   authApi: {
     me: h.me,
@@ -219,5 +224,135 @@ describe('AssetsView：「资产统计 ›」入口（B6 / A-2）', () => {
     const wrapper = await mountView()
     expect(wrapper.text()).toContain('加载失败')
     expect(wrapper.find('.assets__link').exists()).toBe(true)
+  })
+})
+
+describe('AssetsView：创建入口（FR-1，AC-1 / AC-2）', () => {
+  const NEW_ACCOUNT = account(
+    9,
+    'Assets:Bank2',
+    'Assets',
+    { CNY: '0.00' },
+    { display_name: '测试二级' },
+  )
+
+  /**
+   * 角色门禁用真实 session store 构造：isViewer / isOwner 只从
+   * `ledgers[].role` 派生（user.role 恒空串不可作数），且要求 user 非空。
+   * markDirty 的账本分桶依赖 localStorage 里持久化的账本 id，一并写入，
+   * 否则 AC-2 的「markDirty → reload」链路在测试里不会触发。
+   */
+  function actAs(role: 'owner' | 'viewer'): void {
+    const session = useSessionStore()
+    session.user = {
+      id: 1,
+      username: 'demo',
+      display_name: '一家之主',
+      role: '',
+      is_admin: role === 'owner',
+      must_change_password: false,
+    }
+    session.ledgers = [
+      { id: 7, name: '一家三口', default_commodity: 'CNY', opening_date: '2026-01-01', role },
+    ]
+    session.ledgerId = 7
+    localStorage.clear()
+    writeLedgerId(7)
+  }
+
+  beforeEach(() => {
+    h.accountCreate.mockReset()
+    h.accountCreate.mockResolvedValue({
+      id: 9,
+      uuid: 'uuid-9',
+      name: 'Assets:Bank2',
+      type: 'Assets',
+      open_date: '2026-01-01',
+    })
+    actAs('owner')
+  })
+
+  it('owner：工具卡有「＋ 新建账户」按钮，点击弹出 AccountForm（AC-1）', async () => {
+    const wrapper = await mountView()
+    const button = wrapper.find('.assets__create')
+    expect(button.exists()).toBe(true)
+    expect(button.text()).toBe('＋ 新建账户')
+    expect(wrapper.find('.af-panel').exists()).toBe(false)
+    await button.trigger('click')
+    expect(wrapper.find('.af-panel').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('viewer：工具卡按钮与空态动作按钮都不渲染（DOM 断言，AC-1）', async () => {
+    actAs('viewer')
+    h.accountList.mockResolvedValue({
+      accounts: [account(9, 'Expenses:Food', 'Expenses', { CNY: '1.00' })],
+    })
+    const wrapper = await mountView()
+    expect(wrapper.find('.assets__create').exists()).toBe(false)
+    expect(wrapper.text()).toContain('还没有资产或负债账户')
+    expect(wrapper.find('.sc-btn').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('空态直达：StateCard 空态动作按钮点击后弹出 AccountForm（FR-1）', async () => {
+    h.accountList.mockResolvedValue({
+      accounts: [account(9, 'Expenses:Food', 'Expenses', { CNY: '1.00' })],
+    })
+    const wrapper = await mountView()
+    const action = wrapper.find('.sc-btn')
+    expect(action.exists()).toBe(true)
+    expect(action.text()).toBe('＋ 新建账户')
+    await action.trigger('click')
+    expect(wrapper.find('.af-panel').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('AC-2 提交链路：父=无 → POST body parent_uuid===\'\' 且 name=Assets:Bank2；成功后弹窗关闭、列表原地出现新账户', async () => {
+    const wrapper = await mountView()
+
+    // mockResolvedValueOnce 是全局 FIFO 队列，按调用顺序消费：设置队列后
+    // 第 1 次调用 = AccountForm 自身的父下拉 + 避重集合拉取（点击创建时），
+    // 第 2 次 = markDirty 触发的 reload（返回含新账户的快照）。
+    // 队列必须在 mountView 之后排定——ensure 是 mount 时的第 1 次调用，
+    // 走基础 mock，不吃队列。
+    h.accountList
+      .mockResolvedValueOnce({ accounts: ACCOUNTS })
+      .mockResolvedValueOnce({ accounts: [...ACCOUNTS, NEW_ACCOUNT] })
+
+    await wrapper.find('.assets__create').trigger('click')
+    expect(wrapper.find('.af-panel').exists()).toBe(true)
+
+    // 显示名是表单里第一个 text 输入框；owner 额外填 ASCII 段 Bank2。
+    const inputs = wrapper.findAll('input')
+    const display = inputs.find((i) => (i.element as HTMLInputElement).type === 'text')
+    expect(display).toBeDefined()
+    await display?.setValue('测试二级')
+    const ascii = wrapper.find('input.af-ascii')
+    expect(ascii.exists()).toBe(true)
+    await ascii.setValue('Bank2')
+
+    const save = wrapper.findAll('button').find((b) => b.text() === '保存')
+    expect(save).toBeDefined()
+    await save?.trigger('click')
+    await flushPromises()
+
+    expect(h.accountCreate).toHaveBeenCalledTimes(1)
+    const body = h.accountCreate.mock.calls[0][0] as {
+      name: string
+      display_name: string
+      parent_uuid: string
+      type: string
+    }
+    expect(body.name).toBe('Assets:Bank2')
+    expect(body.display_name).toBe('测试二级')
+    expect(body.parent_uuid).toBe('')
+    expect(body.type).toBe('Assets')
+
+    // 弹窗已关、数据经 ledgerData 既有失效链路原地刷新（无页面级直调）。
+    expect(wrapper.find('.af-panel').exists()).toBe(false)
+    expect(wrapper.text()).toContain('测试二级')
+    expect(h.accountList).toHaveBeenCalledTimes(3)
+    wrapper.unmount()
   })
 })

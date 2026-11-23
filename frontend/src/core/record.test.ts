@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   accountLabel,
+  accountOptionLabel,
   balanceDiffByCommodity,
   buildPostings,
   computeBalanceSummary,
@@ -14,6 +15,7 @@ import {
   displayKindOf,
   evaluateAmountExpression,
   accountRunningBalances,
+  indentOptionLabel,
   postingsBalanced,
   todayString,
   transactionKind,
@@ -489,5 +491,23 @@ describe('展示类型 displayKindOf：还款主体 + 小额优惠（Bug2）', (
     expect(
       displayKindOf([posting(1, '-0.02'), posting(2, '0.03'), posting(3, '-0.01')], kindAccounts),
     ).toBe('transfer')
+  })
+})
+
+describe('账户选项标签（父下拉可辨识化地基）', () => {
+  it('显示名非空：文案为「显示名（全名）」（全角括号，与全站中文文案一致）', () => {
+    expect(accountOptionLabel({ name: 'Expenses:Food', display_name: '餐饮' })).toBe(
+      '餐饮（Expenses:Food）',
+    )
+  })
+
+  it('display_name 缺失或空串：退回裸全名', () => {
+    expect(accountOptionLabel({ name: 'Assets:Item3' })).toBe('Assets:Item3')
+    expect(accountOptionLabel({ name: 'Assets:Item3', display_name: '' })).toBe('Assets:Item3')
+  })
+
+  it('indentOptionLabel：depth 0 无前缀；depth 2 前缀为两个全角空格 U+3000', () => {
+    expect(indentOptionLabel('Assets:Bank', 0)).toBe('Assets:Bank')
+    expect(indentOptionLabel('Assets:Bank:CMB', 2)).toBe('\u3000\u3000Assets:Bank:CMB')
   })
 })

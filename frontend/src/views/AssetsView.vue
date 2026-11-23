@@ -22,7 +22,7 @@
  * 分组聚合全部由 `core/assets.ts` 产出，净资产由 `core/record.ts` 的
  * `computeBalanceSummary` 产出 —— 本页**不做任何算术**。
  */
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { buildAssetBreakdown, type AssetBreakdown } from '@/core/assets'
@@ -30,6 +30,8 @@ import { computeBalanceSummary, type BalanceSummary } from '@/core/record'
 import { useLedgerDataStore } from '@/stores/ledgerData'
 import { usePeriodStore } from '@/stores/period'
 import { usePrivacyStore } from '@/stores/privacy'
+import { useSessionStore } from '@/stores/session'
+import AccountForm from '@/components/AccountForm.vue'
 import AssetGroupList from '@/components/assets/AssetGroupList.vue'
 import AssetHero from '@/components/assets/AssetHero.vue'
 import StateCard from '@/components/shell/StateCard.vue'
@@ -110,6 +112,41 @@ function reload(): void {
 }
 
 /**
+ * 「＋ 新建账户」入口（FR-1）：owner/editor 可见，viewer 不渲染。
+ * 门禁只用 `session.isViewer`（ledgers[].role 派生）——创建只需非 viewer，
+ * 与 AccountsView 同口径；`isOwner` 是另一个口径，勿混用。
+ */
+const session = useSessionStore()
+const showCreateForm = ref(false)
+
+function openCreate(): void {
+  if (session.isViewer) {
+    return
+  }
+  showCreateForm.value = true
+}
+
+function closeCreateForm(): void {
+  showCreateForm.value = false
+}
+
+/**
+ * StateCard 空态动作：空态且非 viewer 直达创建；error 态传空串走
+ * StateCard 默认「重试」。空态文案保持既有不动（按钮直达已解决可达性）。
+ */
+const stateActionText = computed(() =>
+  pageState.value === 'empty' && !session.isViewer ? '＋ 新建账户' : '',
+)
+
+function onStateAction(): void {
+  if (pageState.value === 'empty') {
+    openCreate()
+    return
+  }
+  reload()
+}
+
+/**
  * 进「资产统计」。
  *
  * 走**命名路由**（`asset-stats`）而不是拼 `'/assets/stats'` 字符串：路由改写 /
@@ -137,11 +174,14 @@ const closedNote = computed(() => {
       <p class="assets__desc">存量全景：净资产 / 总资产 / 总负债 + 资产列表</p>
     </header>
 
-    <!-- ② 工具行卡：标题 + 「资产统计 ›」入口（与 /assets/stats 路由同批落地，见脚本注释 5） -->
+    <!-- ② 工具行卡：标题 + 创建入口（非 viewer）+「资产统计 ›」入口（与 /assets/stats 路由同批落地，见脚本注释 5） -->
     <section class="assets__card assets__card--tool">
       <div class="assets__tool-row">
         <h2 class="assets__card-title">资产总览</h2>
-        <button type="button" class="assets__link" @click="goAssetStats">资产统计 ›</button>
+        <div class="assets__tool-actions">
+          <button v-if="!session.isViewer" type="button" class="assets__create" @click="openCreate">＋ 新建账户</button>
+          <button type="button" class="assets__link" @click="goAssetStats">资产统计 ›</button>
+        </div>
       </div>
     </section>
 
@@ -160,7 +200,7 @@ const closedNote = computed(() => {
         <h2 class="assets__card-title">资产列表</h2>
         <span class="assets__card-note">名称 · 金额 · 货币</span>
       </div>
-      <StateCard :state="pageState" :desc="cardDesc" @action="reload">
+      <StateCard :state="pageState" :desc="cardDesc" :action-text="stateActionText" @action="onStateAction">
         <AssetGroupList
           :groups="breakdown.groups"
           :commodity="breakdown.commodity"
@@ -172,6 +212,16 @@ const closedNote = computed(() => {
         </p>
       </StateCard>
     </section>
+
+    <!-- ⑤ 新建账户弹层：与 AccountsView / CategoriesView 同款本地挂载（不跳页）。
+         数据刷新零新增代码：AccountForm create 成功已调 markDirty → 既有失效
+         链路（dataFreshness → ledgerData watch → reload）让本页列表原地更新。 -->
+    <AccountForm
+      v-if="showCreateForm"
+      mode="create"
+      @close="closeCreateForm"
+      @saved="closeCreateForm"
+    />
 
   </section>
 </template>
@@ -220,6 +270,32 @@ const closedNote = computed(() => {
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
+}
+
+/* 右侧动作区：pill 实体按钮（主动作）+ 文字链接（次入口） */
+.assets__tool-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 样式仿 AccountsView 的 `.accts__create`：实体按钮表达主动作 */
+.assets__create {
+  padding: 6px 12px;
+  border: none;
+  border-radius: var(--fb-radius-pill);
+  background: var(--fb-on-hero-pill);
+  color: var(--fb-white);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.assets__create:focus-visible {
+  outline: 2px solid var(--fb-blue);
+  outline-offset: 2px;
 }
 
 /* 稿 `.link-btn`：文字型链接按钮，13/700，不是实体按钮（会抢走注意力） */

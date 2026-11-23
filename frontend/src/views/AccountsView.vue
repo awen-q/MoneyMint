@@ -75,7 +75,6 @@ function openCreate(): void {
   notice.value = ''
   formParent.value = null
   showForm.value = true
-  void router.push({ name: 'accounts', query: { create: '1' } })
 }
 
 /** 0.6.0 S2：账户行「＋ 增加下级」，父项预填、类型继承且置灰。 */

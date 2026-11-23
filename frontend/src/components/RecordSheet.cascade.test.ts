@@ -88,6 +88,25 @@ function amount(wrapper: VueWrapper): string {
   return wrapper.find('.js-amount').text()
 }
 
+/** Date → 本地 YYYY-MM-DD（补零；getMonth 从 0 起需 +1）。 */
+function isoOf(date: Date): string {
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${date.getFullYear()}-${month}-${day}`
+}
+
+/** 本地「今天」± days 天；Date 的日溢出自动跨月 / 跨年（11-01 减一天 → 10-31）。 */
+function relativeDate(days: number): string {
+  const now = new Date()
+  return isoOf(new Date(now.getFullYear(), now.getMonth(), now.getDate() + days))
+}
+
+/** 给定 YYYY-MM-DD 的前一天（Date 溢出自动跨月 / 跨年）。 */
+function dayBefore(iso: string): string {
+  const parts = iso.split('-').map(Number)
+  return isoOf(new Date(parts[0]!, parts[1]! - 1, parts[2]! - 1))
+}
+
 beforeEach(() => {
   h.list.mockReset()
   h.list.mockResolvedValue({ accounts: ACCOUNTS })
@@ -226,14 +245,21 @@ describe('meta chips 四浮层回填与日期边界', () => {
     await flushPromises()
     const pop = wrapper.find('.js-pop-date')
     expect(pop.find('[data-act="date-today"]').exists()).toBe(true)
+    // 「今天」动态取本地日期（与 core/record.todayString 同口径），禁用边界
+    // 由 relativeDate / dayBefore 派生——硬编码会在跨日后必挂（曾钉死 2026-11-22）。
+    const today = relativeDate(0)
+    const yesterday = relativeDate(-1)
+    const tomorrow = relativeDate(1)
+    const beforeOpening = dayBefore(h.opening)
+
     const native = pop.find('input[data-field="date"]')
-    expect(native.attributes('min')).toBe('2026-11-10')
-    expect(native.attributes('max')).toBe('2026-11-22')
-    expect(pop.find('button[data-date="2026-11-09"]').attributes('disabled')).toBeDefined()
-    expect(pop.find('button[data-date="2026-11-23"]').attributes('disabled')).toBeDefined()
+    expect(native.attributes('min')).toBe(h.opening)
+    expect(native.attributes('max')).toBe(today)
+    expect(pop.find(`button[data-date="${beforeOpening}"]`).attributes('disabled')).toBeDefined()
+    expect(pop.find(`button[data-date="${tomorrow}"]`).attributes('disabled')).toBeDefined()
     await pop.find('[data-act="date-yesterday"]').trigger('click')
     await flushPromises()
-    expect((wrapper.find('input[data-field="date"]').element as HTMLInputElement).value).toBe('2026-11-21')
+    expect((wrapper.find('input[data-field="date"]').element as HTMLInputElement).value).toBe(yesterday)
     expect(wrapper.find('.js-date-chip').text()).toContain('昨天')
     wrapper.unmount()
   })
