@@ -590,6 +590,13 @@ onMounted(() => {
   color: var(--fb-danger);
 }
 
+/* 清除 ul 浏览器默认边距与列表样式，行缩进统一由 li 的 inline padding-left 控制 */
+.cats__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
 .cats__row {
   display: flex;
   align-items: center;
