@@ -24,6 +24,20 @@
 > `/legacy/` 回滚通道已于批 6 后废弃（无产物、无脚本；需要旧版只能从 git 历史重建）。
 > 想直接跑起来用，按下面「快速开始」即可；架构与约定看 [`AGENTS.md`](AGENTS.md)。
 
+## 截图预览
+
+账单页（日历 + 当月统计 + 收支折线 + 交易列表）：
+
+![账单总览](docs/screenshots/bills.png)
+
+| 记一笔（九宫格速记） | 统计账单 |
+|---|---|
+| ![记一笔](docs/screenshots/record.png) | ![统计账单](docs/screenshots/stats.png) |
+| **搜索账单** | **资产总览** |
+| ![搜索账单](docs/screenshots/search.png) | ![资产总览](docs/screenshots/assets.png) |
+| **资产统计** | **登录页** |
+| ![资产统计](docs/screenshots/asset-stats.png) | ![登录页](docs/screenshots/login.png) |
+
 ## 特性
 
 - **复式记账**：Beancount 五大账户类型（资产/负债/权益/收入/支出），按币种借贷平衡校验，金额定点十进制无浮点误差。
