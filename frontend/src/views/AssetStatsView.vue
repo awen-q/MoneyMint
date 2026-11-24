@@ -224,7 +224,9 @@ const currencyOptions = computed(() => {
       <button type="button" class="astats__stale-btn" @click="reload">重试</button>
     </p>
 
-    <StateCard :state="pageState" :desc="cardDesc" @action="reload">
+    <!-- loading 骨架模式（骨架屏批）：本页等待区结构固定（趋势卡 + 月度变化卡），
+         显式开启 StateCard 的骨架档；其余视图未显式开启，仍是旧文字档。 -->
+    <StateCard :state="pageState" :desc="cardDesc" loading-skeleton @action="reload">
       <section class="astats__card">
         <div class="astats__card-head">
           <span class="astats__card-title">资产趋势</span>

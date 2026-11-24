@@ -300,6 +300,30 @@ describe('批 I 两段加载：聚合守 fullReady', () => {
     expect(wrapper.find('.stats-metrics').exists()).toBe(true)
     wrapper.unmount()
   })
+
+  it('补齐中渲染「双环 + 排行」骨架组合，而非呼吸点文字档（骨架屏批）', async () => {
+    const { wrapper } = await mountPending()
+
+    expect(wrapper.find('.stats__skel').exists()).toBe(true)
+    expect(wrapper.findAll('.skel--chart')).toHaveLength(2)
+    expect(wrapper.findAll('.skel--line').length).toBeGreaterThanOrEqual(3)
+    // 不再渲染 StateCard 的呼吸点文字档；读屏文案保留
+    expect(wrapper.find('.sc-loading').exists()).toBe(false)
+    expect(wrapper.text()).toContain('正在聚合数据…')
+    wrapper.unmount()
+  })
+
+  it('补齐完成后骨架组合消失（双环骨架换回真实卡片）', async () => {
+    const { wrapper, resolveFull } = await mountPending()
+    expect(wrapper.find('.stats__skel').exists()).toBe(true)
+
+    resolveFull({ transactions: TXNS })
+    await flushPromises()
+
+    expect(wrapper.find('.stats__skel').exists()).toBe(false)
+    expect(wrapper.find('.stats-metrics').exists()).toBe(true)
+    wrapper.unmount()
+  })
 })
 
 describe('T48 StatsView：子页切换走 period store', () => {

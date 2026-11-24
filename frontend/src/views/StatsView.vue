@@ -44,6 +44,7 @@ import { usePrivacyStore } from '@/stores/privacy'
 import { useSessionStore } from '@/stores/session'
 import MoneyText from '@/components/MoneyText.vue'
 import StateCard from '@/components/shell/StateCard.vue'
+import SkeletonBlock from '@/components/shell/SkeletonBlock.vue'
 import MonthPicker from '@/components/shell/MonthPicker.vue'
 import TrendChart from '@/components/charts/TrendChart.vue'
 import CategoryBarCard from '@/components/stats/CategoryBarCard.vue'
@@ -197,8 +198,15 @@ const pageState = computed<'loading' | 'error' | 'empty' | 'ready'>(() => {
   return 'ready'
 })
 
-/** 骨架文案：首次装载走默认「正在加载…」；补齐等待期换聚合文案。 */
-const loadingText = computed(() => (data.loaded && !data.fullReady ? '正在聚合数据…' : ''))
+/**
+ * 聚合骨架开关（骨架屏批）：只在「快照已装载、全量补齐未完成」时替换 StateCard 的
+ * loading 文字档；首次装载（!loaded）仍走通用「正在加载…」。出现条件与旧
+ * 「正在聚合数据…」文案完全一致，渲染形态换成「双环 + 排行条」骨架组合；
+ * 聚合守 fullReady 的判据本身不动。
+ */
+const showAggregateSkeleton = computed(
+  () => pageState.value === 'loading' && data.loaded && !data.fullReady,
+)
 
 const staleError = computed(() => (data.error !== '' && data.loaded ? data.error : ''))
 
@@ -408,7 +416,26 @@ const currencyOptions = computed(() => {
       <button type="button" class="stats__stale-btn" @click="reload">重试</button>
     </p>
 
-    <StateCard :state="pageState" :desc="cardDesc" :loading-text="loadingText" @action="reload">
+    <!-- 聚合骨架（骨架屏批）：补齐等待期先渲染「双环 + 排行」骨架，补齐完成即换回。
+         判据（fullReady）不动；sr 文案保留「正在聚合数据…」的读屏播报。 -->
+    <div v-if="showAggregateSkeleton" class="stats__skel" role="status" aria-live="polite">
+      <span class="stats__skel-sr">正在聚合数据…</span>
+      <section class="stats__card">
+        <div class="stats__skel-donuts">
+          <SkeletonBlock variant="chart" height="150px" />
+          <SkeletonBlock variant="chart" height="150px" />
+        </div>
+      </section>
+      <section class="stats__card">
+        <div class="stats__skel-rows">
+          <SkeletonBlock variant="line" width="88%" />
+          <SkeletonBlock variant="line" width="72%" />
+          <SkeletonBlock variant="line" width="80%" />
+          <SkeletonBlock variant="line" width="64%" />
+        </div>
+      </section>
+    </div>
+    <StateCard v-else :state="pageState" :desc="cardDesc" @action="reload">
       <!-- 子页互斥依赖「无 Transition」：加 in-out 过渡会让两面板共存，
            图表实例峰值 4→6（超过 liveCount 的 MAX_LIVE_CHARTS=4），见 liveCount.ts。
            要加动画就先给 DonutRankCard / TagPanel 里其中一张环图加条件挂载。 -->
@@ -704,5 +731,37 @@ const currencyOptions = computed(() => {
 .stats__panel > .member-card,
 .stats__panel > .trial-card {
   margin: 14px 0 0;
+}
+
+/* 聚合骨架（骨架屏批）：双环两块 + 排行条，结构贴近补齐完成后的真实卡片；
+   sr 文案保留「正在聚合数据…」的读屏播报。 */
+.stats__skel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.stats__skel-donuts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.stats__skel-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.stats__skel-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 </style>

@@ -559,3 +559,79 @@ describe('BillsView：两段加载（批 I）', () => {
     expect(wrapper.text()).not.toContain('正在加载')
   })
 })
+
+/**
+ * 聚合骨架（骨架屏批）：monthPending 时 StateCard 的 loading 文字档换成
+ * 「日历 + 指标 + 列表条」骨架组合；窗口落地即换回真实内容。
+ */
+describe('BillsView：聚合骨架（骨架屏批）', () => {
+  function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+    let resolveFn: (value: T) => void = () => undefined
+    const promise = new Promise<T>((resolve) => {
+      resolveFn = resolve
+    })
+    return { promise, resolve: resolveFn }
+  }
+
+  /** 挂载并切到 10 月（该月窗口悬停）→ monthPending 骨架态；返回解开悬停窗口的 resolve。 */
+  async function mountSkeleton(): Promise<{
+    wrapper: ReturnType<typeof mount>
+    resolveWindow: (value: { transactions: TransactionView[] }) => void
+  }> {
+    const slowWindow = deferred<{ transactions: TransactionView[] }>()
+    h.txnListPage.mockImplementation((query: { from?: string }) =>
+      query.from === '2026-11-01'
+        ? Promise.resolve({ transactions: TXNS })
+        : slowWindow.promise,
+    )
+    // 补齐段悬停，保住补齐态
+    h.txnList.mockImplementation(() => new Promise(() => undefined))
+
+    const wrapper = mount(BillsView, {
+      global: { plugins: [pinia], stubs: { TrendChart: TrendStub } },
+    })
+    await flushPromises()
+    period.setBillsMonth(2026, 10)
+    await flushPromises()
+    return { wrapper, resolveWindow: slowWindow.resolve }
+  }
+
+  it('monthPending 渲染骨架组合而非文字 loading（日历块 / 4 指标卡 / 列表条）', async () => {
+    const { wrapper } = await mountSkeleton()
+
+    expect(wrapper.find('.bills__skel').exists()).toBe(true)
+    expect(wrapper.find('.skel--calendar').exists()).toBe(true)
+    expect(wrapper.findAll('.skel--card')).toHaveLength(4)
+    expect(wrapper.findAll('.skel--line').length).toBeGreaterThanOrEqual(3)
+    // 不再渲染 StateCard 的呼吸点文字档；读屏文案保留（aria-live 播报语义不变）
+    expect(wrapper.find('.sc-loading').exists()).toBe(false)
+    expect(wrapper.text()).toContain('正在聚合当月数据…')
+    wrapper.unmount()
+  })
+
+  it('窗口落地后骨架消失、列表恢复渲染', async () => {
+    const { wrapper, resolveWindow } = await mountSkeleton()
+    expect(wrapper.find('.bills__skel').exists()).toBe(true)
+
+    resolveWindow({
+      transactions: [
+        {
+          id: 301,
+          uuid: 't-301',
+          date: '2026-10-15',
+          flag: '*',
+          description: '十月聚餐',
+          created_by_name: '林小满',
+          postings: [
+            { account_id: 2, account: 'Expenses:Food', commodity: 'CNY', amount: '66.00' },
+          ],
+        },
+      ],
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.bills__skel').exists()).toBe(false)
+    expect(wrapper.findAll('.bills__row')).toHaveLength(1)
+    wrapper.unmount()
+  })
+})

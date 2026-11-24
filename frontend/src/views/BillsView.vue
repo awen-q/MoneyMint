@@ -42,6 +42,7 @@ import TrendChart from '@/components/charts/TrendChart.vue'
 import LedgerSwitcher from '@/components/shell/LedgerSwitcher.vue'
 import MonthPicker from '@/components/shell/MonthPicker.vue'
 import StateCard from '@/components/shell/StateCard.vue'
+import SkeletonBlock from '@/components/shell/SkeletonBlock.vue'
 
 /** 刷新失败但仍有旧快照时的内联提示（四页逐字统一）。 */
 const STALE_NOTICE = '刷新失败，当前显示的是上次数据'
@@ -239,10 +240,14 @@ const pageState = computed<'loading' | 'error' | 'empty' | 'ready'>(() => {
 })
 
 /**
- * loading 文案：首次装载仍是通用「正在加载…」（loadingText 传空走 StateCard 默认）；
- * 「有快照但当月窗口还在路上」时换聚合文案，让用户知道不是整页没数据。
+ * 聚合骨架开关（骨架屏批）：只在「有快照但当月窗口未到」时替换 StateCard 的
+ * loading 文字档 —— 首次装载（!loaded）仍是通用「正在加载…」文字态，两个等待
+ * 阶段视觉可区分。出现条件与旧「正在聚合当月数据…」文案完全一致，只是渲染
+ * 形态换成「日历 + 指标 + 列表条」骨架组合；monthPending 判据本身不动。
  */
-const loadingText = computed(() => (data.loaded && monthPending.value ? '正在聚合当月数据…' : ''))
+const showMonthSkeleton = computed(
+  () => pageState.value === 'loading' && data.loaded && monthPending.value,
+)
 
 /** 有旧快照时的刷新失败：留在 ready，只出内联条。 */
 const staleError = computed(() => (data.error !== '' && data.loaded ? data.error : ''))
@@ -415,8 +420,27 @@ function goStats(): void {
       <button type="button" class="bills__stale-btn" @click="reload">重试</button>
     </p>
 
-    <!-- ③–⑥ 内容区四态（标题/说明用 StateCard 默认，避免 error 态被写成「账单」） -->
-    <StateCard :state="pageState" :desc="cardDesc" :loading-text="loadingText" @action="reload">
+    <!-- ③–⑥ 内容区四态（标题/说明用 StateCard 默认，避免 error 态被写成「账单」）。
+         monthPending 等待期换「日历 + 指标 + 列表条」骨架组合（骨架屏批）：判据
+         monthPending 不动，sr 文案保留原「正在聚合当月数据…」的读屏播报。 -->
+    <div v-if="showMonthSkeleton" class="bills__skel" role="status" aria-live="polite">
+      <span class="bills__skel-sr">正在聚合当月数据…</span>
+      <section class="bills__card">
+        <SkeletonBlock variant="calendar" />
+      </section>
+      <div class="bills__skel-metrics">
+        <SkeletonBlock v-for="i in 4" :key="i" variant="card" />
+      </div>
+      <section class="bills__card">
+        <div class="bills__skel-rows">
+          <SkeletonBlock variant="line" width="92%" />
+          <SkeletonBlock variant="line" width="76%" />
+          <SkeletonBlock variant="line" width="84%" />
+          <SkeletonBlock variant="line" width="68%" />
+        </div>
+      </section>
+    </div>
+    <StateCard v-else :state="pageState" :desc="cardDesc" @action="reload">
       <!-- ③ 日历卡（内容由 BillCalendar 承担，卡片外观由本页给） -->
       <section class="bills__card">
         <BillCalendar
@@ -820,6 +844,45 @@ function goStats(): void {
 @media (min-width: 900px) {
   .bills__card {
     padding: 16px;
+  }
+}
+
+/* 聚合骨架（骨架屏批）：三段结构贴近真实内容区（日历大块 / 4 指标小卡 / 列表条），
+   数据到达后 v-if 切换不产生布局跳动；指标栅格与 BillMetrics 同构（900 断点 2→4 列）。 */
+.bills__skel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.bills__skel-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.bills__skel-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* 读屏专用（视觉隐藏）：骨架是纯装饰块，原「正在聚合当月数据…」文案继续喂给 aria-live。 */
+.bills__skel-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (min-width: 900px) {
+  .bills__skel-metrics {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 </style>
