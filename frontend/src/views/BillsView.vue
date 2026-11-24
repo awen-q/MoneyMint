@@ -58,21 +58,6 @@ const ledgerOpen = ref(false)
 /** 被点选的日（1..31）；`null` 表示看整月。 */
 const selectedDay = ref<number | null>(null)
 
-// 账本数据全量快照：**必须**在挂载时拉一次。
-// `!loaded → loading` 的判据意味着漏调它表现为「永久骨架屏」，所以这条调用有测试守。
-onMounted(() => {
-  void data.ensure()
-})
-
-// 切账本时 `ledgerData` 的 `reset()` 会清空快照，本页要重新拉取并清掉选中的日。
-// 用 `watch` 而不是 `session.$subscribe`：订阅需要手动退订，watch 随组件销毁自动停。
-watch(
-  () => session.ledgerId,
-  () => {
-    selectedDay.value = null
-  },
-)
-
 const year = computed(() => period.bills.year)
 const month = computed(() => period.bills.month)
 const commodity = computed(() => period.bills.commodity)
@@ -83,6 +68,32 @@ function twoDigits(value: number): string {
 
 /** 当月前缀 `YYYY-MM`：页面的月份过滤只做这一件事（聚合全部交给 core）。 */
 const monthPrefix = computed(() => `${year.value}-${twoDigits(month.value)}`)
+
+// 账本数据全量快照：**必须**在挂载时拉一次。
+// 批 I 两段加载：先声明「正在看当月」（补齐中会立即拉当月窗口，与首段的
+// 自然当月窗口单飞共享，不会发两笔请求），再 `ensure()` 走两段装载。
+// `!loaded → loading` 的判据意味着漏调它表现为「永久骨架屏」，所以这条调用有测试守。
+onMounted(() => {
+  void data.setWindowMonth(monthPrefix.value)
+  void data.ensure()
+})
+
+// 切账本时 `ledgerData` 的 `reset()` 会清空快照，本页要重新拉取并清掉选中的日。
+// 用 `watch` 而不是 `session.$subscribe`：订阅需要手动退订，watch 随组件销毁自动停。
+watch(
+  () => session.ledgerId,
+  () => {
+    selectedDay.value = null
+    // reset() 后窗口集合已清空、store 只会重拉「自然当月」窗口；
+    // 用户切账本前停留的月份要由这里重新声明，否则当月永远停在聚合等待态。
+    void data.setWindowMonth(monthPrefix.value)
+  },
+)
+
+// 切月：把新月份声明成窗口关注月（补齐中拉该月窗口；全量态为缓存命中 noop）。
+watch(monthPrefix, (prefix) => {
+  void data.setWindowMonth(prefix)
+})
 
 /** 当月交易（`ledgerData.txns` 是全量历史，不做周期过滤，故在此按前缀筛）。 */
 const monthTxns = computed(() => data.txns.filter((txn) => txn.date.startsWith(monthPrefix.value)))
@@ -203,7 +214,14 @@ const trendSeries = computed<LineSeriesInput[]>(() => [
   },
 ])
 
-/** 整页四态（v3.2，逐字照用）。 */
+/**
+ * 当月窗口是否还在聚合（批 I 两段加载守卫）：
+ * `fullReady`（全量快照就绪）或该月窗口已并入快照之前都算「聚合中」。
+ * 必须先于 empty 判定，否则补齐期间会把「当月无记录」误报给用户。
+ */
+const monthPending = computed(() => !data.fullReady && !data.hasMonthWindow(monthPrefix.value))
+
+/** 整页四态（v3.2，逐字照用）；monthPending 时先判 loading（防误判「当月无记录」）。 */
 const pageState = computed<'loading' | 'error' | 'empty' | 'ready'>(() => {
   if (data.error !== '' && !data.loaded) {
     return 'error'
@@ -211,11 +229,20 @@ const pageState = computed<'loading' | 'error' | 'empty' | 'ready'>(() => {
   if (!data.loaded) {
     return 'loading'
   }
+  if (monthPending.value) {
+    return 'loading'
+  }
   if (monthTxns.value.length === 0) {
     return 'empty'
   }
   return 'ready'
 })
+
+/**
+ * loading 文案：首次装载仍是通用「正在加载…」（loadingText 传空走 StateCard 默认）；
+ * 「有快照但当月窗口还在路上」时换聚合文案，让用户知道不是整页没数据。
+ */
+const loadingText = computed(() => (data.loaded && monthPending.value ? '正在聚合当月数据…' : ''))
 
 /** 有旧快照时的刷新失败：留在 ready，只出内联条。 */
 const staleError = computed(() => (data.error !== '' && data.loaded ? data.error : ''))
@@ -262,7 +289,13 @@ function onLedgerSelect(id: number | string): void {
   session.selectLedger(Number(id))
 }
 
-/** 现网账户里出现过的币种 + 当前币种（去重、稳定排序）。 */
+/**
+ * 币种下拉（批 I 两段加载降级口径）：
+ * - `fullReady`（全量态）：现行口径不变——当前币种优先，其余按全量 postings 首次出现序；
+ * - 补齐态：全量不可用，退化为 **账户 balances 键集合 ∪ 当月窗口 postings 币种 ∪ 当前币种**。
+ *   去重、选中币种优先、其余按首次出现序；用数组 + indexOf 去重，
+ *   **禁依赖 Set 迭代序**（兼容基线与确定性双重要求）。
+ */
 const commodities = computed(() => {
   const out: string[] = []
   const push = (value: string): void => {
@@ -271,7 +304,23 @@ const commodities = computed(() => {
     }
   }
   push(commodity.value)
-  for (const txn of data.txns) {
+  if (data.fullReady) {
+    for (const txn of data.txns) {
+      for (const posting of txn.postings) {
+        push(posting.commodity)
+      }
+    }
+    return out
+  }
+  for (const account of data.accounts) {
+    const balances = account.balances
+    if (balances !== undefined) {
+      for (const key of Object.keys(balances)) {
+        push(key)
+      }
+    }
+  }
+  for (const txn of monthTxns.value) {
     for (const posting of txn.postings) {
       push(posting.commodity)
     }
@@ -367,7 +416,7 @@ function goStats(): void {
     </p>
 
     <!-- ③–⑥ 内容区四态（标题/说明用 StateCard 默认，避免 error 态被写成「账单」） -->
-    <StateCard :state="pageState" :desc="cardDesc" @action="reload">
+    <StateCard :state="pageState" :desc="cardDesc" :loading-text="loadingText" @action="reload">
       <!-- ③ 日历卡（内容由 BillCalendar 承担，卡片外观由本页给） -->
       <section class="bills__card">
         <BillCalendar

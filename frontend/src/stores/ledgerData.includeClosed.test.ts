@@ -17,6 +17,7 @@ import { useSessionStore } from '@/stores/session'
 const h = vi.hoisted(() => ({
   accountList: vi.fn(),
   txnList: vi.fn(),
+  txnListPage: vi.fn(),
   me: vi.fn(),
   ledgerList: vi.fn(),
   login: vi.fn(),
@@ -27,7 +28,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/api/client', () => ({
   accountApi: { list: h.accountList },
-  transactionApi: { list: h.txnList },
+  transactionApi: { list: h.txnList, listPage: h.txnListPage },
   authApi: { me: h.me, login: h.login, logout: h.logout, changePassword: h.changePassword },
   ledgerApi: { list: h.ledgerList },
   setLedgerIdProvider: h.setLedgerIdProvider,
@@ -59,6 +60,8 @@ beforeEach(() => {
   }
   h.accountList.mockImplementation(serverList)
   h.txnList.mockResolvedValue({ transactions: [] } as TransactionListResponse)
+  // 批 I 两段加载：首段窗口腿默认空窗口（本文件只关心账户口径）
+  h.txnListPage.mockResolvedValue({ transactions: [] })
   h.ledgerList.mockResolvedValue({ ledgers: [] })
   h.me.mockResolvedValue({ user: null })
 })

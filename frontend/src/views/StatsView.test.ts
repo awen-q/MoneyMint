@@ -44,6 +44,7 @@ function makeRouter(): Router {
 const h = vi.hoisted(() => ({
   accountList: vi.fn(),
   txnList: vi.fn(),
+  txnListPage: vi.fn(),
   me: vi.fn(),
   ledgerList: vi.fn(),
   login: vi.fn(),
@@ -56,7 +57,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/api/client', () => ({
   accountApi: { list: h.accountList },
-  transactionApi: { list: h.txnList },
+  transactionApi: { list: h.txnList, listPage: h.txnListPage },
   authApi: {
     me: h.me,
     login: h.login,
@@ -125,6 +126,26 @@ const TXNS = [
   ]),
 ]
 
+/**
+ * 等两段都落地（批 I 两段加载）：
+ * - 两轮 flushPromises 让首段（窗口段）完成；
+ * - 再等一轮 **setTimeout 宏任务**让补齐段的兜底定时器触发——flush-promises 用
+ *   setImmediate（check 相），与 setTimeout 的相对次序不保证，必须用 setTimeout
+ *   显式排序（先注册的 1ms 定时器先触发）；
+ * - 最后一轮 flushPromises 等补齐段触发的渲染 / 微任务链收尾（fullReady → 图表挂载）。
+ */
+async function flushBothSegments(): Promise<void> {
+  await flushPromises()
+  await flushPromises()
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, 0)
+  })
+  await flushPromises()
+}
+
+/**
+ * 挂载并等两段都落地：统计页聚合守 fullReady，不等补齐段整页都会停在「聚合中」骨架。
+ */
 async function mountView(): Promise<ReturnType<typeof mount>> {
   const wrapper = mount(StatsView, {
     global: {
@@ -137,16 +158,28 @@ async function mountView(): Promise<ReturnType<typeof mount>> {
       },
     },
   })
-  await flushPromises()
+  await flushBothSegments()
   return wrapper
 }
 
-beforeEach(() => {
+/** 排空上一用例遗留的补齐段定时器（批 I）：必须排在 mockReset 之前。 */
+async function drainTimers(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, 0)
+  })
+  await Promise.resolve()
+}
+
+beforeEach(async () => {
+  await drainTimers()
   setActivePinia(createPinia())
   h.accountList.mockReset()
   h.txnList.mockReset()
+  h.txnListPage.mockReset()
   h.accountList.mockResolvedValue({ accounts: ACCOUNTS })
   h.txnList.mockResolvedValue({ transactions: TXNS })
+  // 批 I：首段窗口腿默认空窗口
+  h.txnListPage.mockResolvedValue({ transactions: [] })
   useSessionStore().ledgerId = 7
   // 固定到 2026-11，避开「当月/未来月」随时间变化的抖动
   usePeriodStore().setStatsMonth(2026, 11)
@@ -205,6 +238,70 @@ describe('T48 StatsView：四态与出口', () => {
   })
 })
 
+/**
+ * 批 I 两段加载：聚合计算守 `fullReady`。
+ *
+ * 补齐段完成前 `txns` 只有「已拉窗口」的月份，拿它算「当季 / 当年」聚合会静默
+ * 出**错数**（日均、占比、标签分面全错却不报错）——所以 fullReady=false 时整页
+ * 走四态 loading 骨架（文案「正在聚合数据…」），补齐完成后恢复现行渲染。
+ */
+describe('批 I 两段加载：聚合守 fullReady', () => {
+  function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+    let resolveFn: (value: T) => void = () => undefined
+    const promise = new Promise<T>((resolve) => {
+      resolveFn = resolve
+    })
+    return { promise, resolve: resolveFn }
+  }
+
+  /** 补齐态挂载：全量请求悬停，页面停在「聚合中」骨架。 */
+  async function mountPending(): Promise<{
+    wrapper: ReturnType<typeof mount>
+    resolveFull: (value: { transactions: unknown[] }) => void
+  }> {
+    const slowFull = deferred<{ transactions: unknown[] }>()
+    h.txnList.mockImplementation(() => slowFull.promise)
+    const wrapper = mount(StatsView, {
+      global: {
+        plugins: [makeRouter()],
+        stubs: { TrendChart: true, DonutChart: true, BarChart: true, MonthPicker: true },
+      },
+    })
+    // 等补齐段定时器触发并悬停在慢响应上：fullReady 停在 false
+    await flushBothSegments()
+    return {
+      wrapper,
+      resolveFull: (value: { transactions: unknown[] }) => {
+        slowFull.resolve(value)
+      },
+    }
+  }
+
+  it('补齐中（fullReady=false）整页聚合骨架，不渲染半窗指标', async () => {
+    const { wrapper } = await mountPending()
+    expect(wrapper.text()).toContain('正在聚合数据…')
+    // 半窗快照绝不能渲染成指标（11 月窗口只有部分数据时会算出错数）
+    expect(wrapper.find('.stats-metrics').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('900.00')
+    // 骨架不能变成死路：工具卡（周期 / 月份）仍在 StateCard 之外
+    expect(wrapper.find('.period-seg').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('补齐完成（fullReady=true）恢复现行渲染', async () => {
+    const { wrapper, resolveFull } = await mountPending()
+    expect(wrapper.text()).toContain('正在聚合数据…')
+
+    resolveFull({ transactions: TXNS })
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('正在聚合数据…')
+    expect(wrapper.text()).toContain('900.00')
+    expect(wrapper.find('.stats-metrics').exists()).toBe(true)
+    wrapper.unmount()
+  })
+})
+
 describe('T48 StatsView：子页切换走 period store', () => {
   it('点「标签」→ period.stats.tab 变 tag，并渲染标签面板', async () => {
     const wrapper = await mountView()
@@ -260,7 +357,8 @@ async function mountWithRealCharts(): Promise<ReturnType<typeof mount>> {
     attachTo: document.body,
     global: { plugins: [makeRouter()], stubs: { MonthPicker: true } },
   })
-  await flushPromises()
+  // 等两段都落地（聚合守 fullReady，图表只在 ready 态挂载）
+  await flushBothSegments()
   return wrapper
 }
 
@@ -338,7 +436,7 @@ describe('P4 标签下钻 → 搜索账单页', () => {
         stubs: { TrendChart: true, DonutChart: true, BarChart: true, MonthPicker: true },
       },
     })
-    await flushPromises()
+    await flushBothSegments()
     usePeriodStore().setStatsTab('tag')
     await flushPromises()
 
@@ -364,7 +462,7 @@ describe('P4 标签下钻 → 搜索账单页', () => {
         stubs: { TrendChart: true, DonutChart: true, BarChart: true, MonthPicker: true },
       },
     })
-    await flushPromises()
+    await flushBothSegments()
     // 先切「年」，再切「标签」子页
     await wrapper.findAll('.period-seg__btn')[2].trigger('click')
     usePeriodStore().setStatsTab('tag')

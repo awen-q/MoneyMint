@@ -21,6 +21,7 @@ import { usePrivacyStore } from '@/stores/privacy'
 import { PRIVACY_MASK } from '@/core/privacy'
 
 import SearchView from './SearchView.vue'
+import SearchFilters from '@/components/search/SearchFilters.vue'
 
 const h = vi.hoisted(() => ({
   listPage: vi.fn(),
@@ -505,5 +506,57 @@ describe('SearchView：已选条件 chips 显示名称（P1）', () => {
 
     const chips = wrapper.findAll('.search-bar__chip').map((chip) => chip.text())
     expect(chips.some((text) => text.includes('账户：#99（已删除）'))).toBe(true)
+  })
+})
+
+/**
+ * 批 I 两段加载：筛选项区域（标签 / 成员）守 `fullReady`。
+ *
+ * 标签 / 成员全集来自 `data.txns` 全量快照；补齐完成前只有「已拉窗口」的月份，
+ * 拿半集当全集会让用户以为「没有别的标签可选」。补齐中先给基础项（空选项），
+ * 补齐完成后恢复现行全集。执行与 CSV 不受影响（走服务端 listPage，不依赖本地快照）。
+ */
+describe('SearchView：筛选项守 fullReady（批 I 两段加载）', () => {
+  function seedTxns(): void {
+    const seeded: TransactionView[] = [
+      {
+        id: 1,
+        uuid: 'txn-1',
+        date: '2026-11-16',
+        flag: '*',
+        description: '午餐',
+        created_by_name: '阿文',
+        tags: ['家庭'],
+        postings: [{ account_id: 2, account: 'Expenses:Food', commodity: 'CNY', amount: '10.00' }],
+      },
+    ]
+    const data = useLedgerDataStore()
+    data.txns = seeded
+  }
+
+  it('补齐中（fullReady=false）标签/成员下拉不给半集', async () => {
+    seedTxns()
+    const data = useLedgerDataStore()
+    data.fullReady = false
+    const wrapper = mountView()
+    await flushPromises()
+
+    const filters = wrapper.findComponent(SearchFilters)
+    expect(filters.exists()).toBe(true)
+    expect(filters.props('tags')).toEqual([])
+    expect(filters.props('members')).toEqual([])
+  })
+
+  it('补齐完成（fullReady=true）恢复标签/成员全集', async () => {
+    seedTxns()
+    const data = useLedgerDataStore()
+    data.fullReady = true
+    const wrapper = mountView()
+    await flushPromises()
+
+    const filters = wrapper.findComponent(SearchFilters)
+    expect(filters.exists()).toBe(true)
+    expect(filters.props('tags')).toEqual(['家庭'])
+    expect(filters.props('members')).toEqual(['阿文'])
   })
 })

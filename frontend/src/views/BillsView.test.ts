@@ -32,6 +32,7 @@ import BillsView from './BillsView.vue'
 const h = vi.hoisted(() => ({
   accountList: vi.fn(),
   txnList: vi.fn(),
+  txnListPage: vi.fn(),
   me: vi.fn(),
   ledgerList: vi.fn(),
   login: vi.fn(),
@@ -43,7 +44,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/api/client', () => ({
   accountApi: { list: h.accountList },
-  transactionApi: { list: h.txnList },
+  transactionApi: { list: h.txnList, listPage: h.txnListPage },
   authApi: { me: h.me, login: h.login, logout: h.logout, changePassword: h.changePassword },
   ledgerApi: { list: h.ledgerList },
   setLedgerIdProvider: h.setLedgerIdProvider,
@@ -126,6 +127,17 @@ async function settle(): Promise<void> {
   await flushPromises()
 }
 
+/**
+ * 排空上一用例遗留的补齐段定时器（批 I 两段加载）：必须排在 mockReset 之前，
+ * 让遗留回调带 epoch 守卫与旧 mock 的可解析返回值安全落地。
+ */
+async function drainTimers(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, 0)
+  })
+  await Promise.resolve()
+}
+
 /** 挂载并把 store 状态压到「已加载 + 指定交易」，避免每个用例都走一遍异步装载。 */
 function mountWith(txns: TransactionView[]): ReturnType<typeof mount> {
   data.txns = txns
@@ -133,13 +145,17 @@ function mountWith(txns: TransactionView[]): ReturnType<typeof mount> {
   data.loaded = true
   data.loading = false
   data.error = ''
+  // 批 I 两段加载：手工压入的 txns 视为「全量快照」，否则 monthPending 会把
+  // 既有用例全部打到「正在聚合当月数据…」的等待态。
+  data.fullReady = true
   vi.spyOn(data, 'ensure').mockResolvedValue(undefined)
   return mount(BillsView, {
     global: { plugins: [pinia], stubs: { TrendChart: TrendStub } },
   })
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  await drainTimers()
   pinia = createPinia()
   setActivePinia(pinia)
   localStorage.clear()
@@ -148,6 +164,8 @@ beforeEach(() => {
   }
   h.accountList.mockResolvedValue({ accounts: ACCOUNTS })
   h.txnList.mockResolvedValue({ transactions: TXNS })
+  // 批 I：首段窗口腿默认空窗口
+  h.txnListPage.mockResolvedValue({ transactions: [] })
   h.ledgerList.mockResolvedValue({ ledgers: [] })
   h.me.mockResolvedValue({ user: null })
   // 先把 ledgerId 定下来再建 data store：`ledgerData` 会在 setup 里 watch ledgerId，
@@ -402,5 +420,142 @@ describe('BillsView：工具卡与列表', () => {
     const wrapper = mountWith(TXNS)
     const heads = wrapper.findAll('.bills__group-date').map((node) => node.text())
     expect(heads).toEqual(['11月16日', '11月10日', '11月3日'])
+  })
+})
+
+/**
+ * 批 I 两段加载接入（首屏窗口段 + 后台补齐）。
+ *
+ * 页面级契约：onMounted 先 `setWindowMonth` 再 `ensure`；monthPending 先判 loading
+ * （防「当月无记录」误报）；币种下拉在补齐态降级、全量态口径不变；reload 不清
+ * fullReady（SWR 不闪整页骨架）。
+ */
+describe('BillsView：两段加载（批 I）', () => {
+  /** 手动可控的 Promise。 */
+  function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+    let resolveFn: (value: T) => void = () => undefined
+    const promise = new Promise<T>((resolve) => {
+      resolveFn = resolve
+    })
+    return { promise, resolve: resolveFn }
+  }
+
+  it('补齐态币种下拉降级：账户 balances 键 ∪ 当月窗口 postings 币种 ∪ 当前币种', async () => {
+    const accounts: AccountView[] = [
+      ...ACCOUNTS,
+      {
+        id: 9,
+        name: 'Assets:Card',
+        uuid: 'uuid-9',
+        type: 'Assets',
+        open_date: '2026-01-01',
+        sort_order: 9,
+        balances: { CNY: '10.00', USD: '5.00' },
+      },
+    ]
+    const windowRows: TransactionView[] = [
+      {
+        id: 201,
+        uuid: 't-201',
+        date: '2026-11-05',
+        flag: '*',
+        description: '欧元票',
+        created_by_name: '林小满',
+        postings: [{ account_id: 1, account: 'Assets:Bank', commodity: 'EUR', amount: '8.00' }],
+      },
+    ]
+    h.accountList.mockResolvedValue({ accounts })
+    h.txnListPage.mockResolvedValue({ transactions: windowRows })
+    // 补齐段悬停：让页面保持在补齐态（fullReady=false）
+    h.txnList.mockImplementation(() => new Promise(() => undefined))
+
+    const wrapper = mount(BillsView, {
+      global: { plugins: [pinia], stubs: { TrendChart: TrendStub } },
+    })
+    await flushPromises()
+
+    // 首段落地：当月窗口已并入快照，但全量还没回来
+    expect(data.loaded).toBe(true)
+    expect(data.fullReady).toBe(false)
+    expect(data.hasMonthWindow('2026-11')).toBe(true)
+    // 当前币种 CNY 优先，其余按首次出现序：账户 balances 的 USD，再窗口里的 EUR
+    expect(wrapper.findAll('.bills__seg-btn').map((btn) => btn.text())).toEqual([
+      'CNY',
+      'USD',
+      'EUR',
+    ])
+  })
+
+  it('全量态币种下拉口径不变：当前币种优先，其余按全量 postings 首次出现序', async () => {
+    const usdTxn: TransactionView = {
+      id: 104,
+      uuid: 't-104',
+      date: '2026-11-20',
+      flag: '*',
+      description: '美元订阅',
+      created_by_name: '林小满',
+      postings: [{ account_id: 1, account: 'Assets:Bank', commodity: 'USD', amount: '9.99' }],
+    }
+    const wrapper = mountWith([...TXNS, usdTxn])
+    expect(wrapper.findAll('.bills__seg-btn').map((btn) => btn.text())).toEqual(['CNY', 'USD'])
+  })
+
+  it('monthPending 时不出「暂无数据」，文案为「正在聚合当月数据…」；窗口落地后恢复', async () => {
+    const slowWindow = deferred<{ transactions: TransactionView[] }>()
+    h.txnListPage.mockImplementation((query: { from?: string }) =>
+      query.from === '2026-11-01'
+        ? Promise.resolve({ transactions: TXNS })
+        : slowWindow.promise,
+    )
+    // 补齐段悬停，保住补齐态
+    h.txnList.mockImplementation(() => new Promise(() => undefined))
+
+    const wrapper = mount(BillsView, {
+      global: { plugins: [pinia], stubs: { TrendChart: TrendStub } },
+    })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('暂无数据')
+
+    // 切到 10 月：该月窗口请求悬停 → monthPending，先判 loading 而不是误判 empty
+    period.setBillsMonth(2026, 10)
+    await flushPromises()
+    expect(wrapper.text()).toContain('正在聚合当月数据…')
+    expect(wrapper.text()).not.toContain('暂无数据')
+    expect(wrapper.find('.metrics').exists()).toBe(false)
+
+    // 窗口落地：恢复 ready 并渲染该月数据
+    slowWindow.resolve({
+      transactions: [
+        {
+          id: 301,
+          uuid: 't-301',
+          date: '2026-10-15',
+          flag: '*',
+          description: '十月聚餐',
+          created_by_name: '林小满',
+          postings: [
+            { account_id: 2, account: 'Expenses:Food', commodity: 'CNY', amount: '66.00' },
+          ],
+        },
+      ],
+    })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('正在聚合当月数据…')
+    expect(wrapper.find('.metrics').exists()).toBe(true)
+  })
+
+  it('reload 后无整页骨架（fullReady / loaded 不被清除，SWR 不闪）', async () => {
+    const wrapper = mountWith(TXNS)
+    expect(wrapper.findAll('.metrics__card')).toHaveLength(4)
+    // reload 悬停在途：若 reload 清了 fullReady，monthPending 会把页面打成骨架
+    vi.spyOn(data, 'reload').mockReturnValueOnce(new Promise<void>(() => undefined))
+    data.error = '服务暂时不可用'
+    await wrapper.vm.$nextTick()
+    await wrapper.find('.bills__stale-btn').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.findAll('.metrics__card')).toHaveLength(4)
+    expect(wrapper.text()).not.toContain('正在聚合当月数据…')
+    expect(wrapper.text()).not.toContain('正在加载')
   })
 })

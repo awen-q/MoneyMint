@@ -29,6 +29,7 @@ import type {
 const h = vi.hoisted(() => ({
   accountList: vi.fn(),
   txnList: vi.fn(),
+  txnListPage: vi.fn(),
   me: vi.fn(),
   ledgerList: vi.fn(),
   login: vi.fn(),
@@ -39,7 +40,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/api/client', () => ({
   accountApi: { list: h.accountList },
-  transactionApi: { list: h.txnList },
+  transactionApi: { list: h.txnList, listPage: h.txnListPage },
   authApi: {
     me: h.me,
     login: h.login,
@@ -91,6 +92,19 @@ async function settle(): Promise<void> {
   })
 }
 
+/**
+ * 排空上一用例遗留的补齐段定时器（批 I 两段加载）：补齐段走 setTimeout 兜底，
+ * 用例结束时可能仍在途。必须排在 mockReset **之前**——旧 mock 仍有可解析的
+ * 返回值，遗留回调带 epoch 守卫落地无副作用；否则会拿 undefined 响应并污染
+ * 新用例的调用计数。
+ */
+async function drainTimers(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, 0)
+  })
+  await Promise.resolve()
+}
+
 /** 手动可控的 Promise，用于构造「旧账本响应晚到」的竞态。 */
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolveFn: (value: T) => void = () => undefined
@@ -100,10 +114,12 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   return { promise, resolve: resolveFn }
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  await drainTimers()
   setActivePinia(createPinia())
   h.accountList.mockReset()
   h.txnList.mockReset()
+  h.txnListPage.mockReset()
   h.me.mockReset()
   h.ledgerList.mockReset()
   h.login.mockReset()
@@ -111,6 +127,8 @@ beforeEach(() => {
   h.changePassword.mockReset()
   h.setLedgerIdProvider.mockReset()
   h.txnList.mockResolvedValue(txnRes([]))
+  // 首段窗口腿默认空窗口（批 I 两段加载：首段只拉自然当月窗口）
+  h.txnListPage.mockResolvedValue({ transactions: [] })
 })
 
 describe('ledgerData：单例全量快照', () => {
@@ -131,6 +149,8 @@ describe('ledgerData：单例全量快照', () => {
     const third = data.ensure()
 
     await Promise.all([first, second, third])
+    // 批 I 两段加载：ensure 只等首段；断言全量快照前须等补齐段落地
+    await settle()
 
     expect(h.accountList).toHaveBeenCalledTimes(1)
     expect(h.txnList).toHaveBeenCalledTimes(1)
@@ -254,6 +274,7 @@ describe('ledgerData：单例全量快照', () => {
     session.ledgerId = 1
     const data = useLedgerDataStore()
     await data.ensure()
+    await settle() // 等补齐段落地：旧快照 = 全量 [txn7]
 
     h.accountList.mockRejectedValueOnce(new ApiError(503, '服务暂时不可用'))
     await data.reload()
@@ -293,6 +314,8 @@ describe('ledgerData：单例全量快照', () => {
     expect(data.error).toBe('')
     expect(data.loaded).toBe(false)
     expect(data.loading).toBe(false)
+    // 批 I：两段状态一并复位（fullReady 复位由 ledgerData.window.test.ts 细化）
+    expect(data.fullReady).toBe(false)
   })
 })
 
@@ -356,11 +379,11 @@ describe('ledgerData：切账本自动重建', () => {
     expect(data.accounts[0].name).toBe('账本二银行')
   })
 
-  it('切账本后旧账本的在途响应不回写（epoch 守卫）', async () => {
+  it('切账本后旧账本的在途响应不回写（epoch 守卫，两段各自守卫）', async () => {
     const slowAccount = deferred<AccountListResponse>()
-    const slowTxn = deferred<TransactionListResponse>()
+    const slowWindow = deferred<{ transactions: TransactionView[] }>()
     h.accountList.mockReturnValueOnce(slowAccount.promise)
-    h.txnList.mockReturnValueOnce(slowTxn.promise)
+    h.txnListPage.mockReturnValueOnce(slowWindow.promise)
 
     const session = useSessionStore()
     session.ledgerId = 1
@@ -368,7 +391,7 @@ describe('ledgerData：切账本自动重建', () => {
     const slow = data.ensure()
     expect(data.loading).toBe(true)
 
-    // 切到账本 2，第二次请求立即返回。
+    // 切到账本 2，新账本两段立即返回。
     h.accountList.mockResolvedValue(accountRes([makeAccount(2, '账本二银行')]))
     h.txnList.mockResolvedValue(txnRes([makeTxn(2)]))
     session.ledgerId = 2
@@ -377,9 +400,9 @@ describe('ledgerData：切账本自动重建', () => {
     expect(data.accounts[0].name).toBe('账本二银行')
     expect(data.loaded).toBe(true)
 
-    // 账本 1 的慢响应此刻才回来，必须被丢弃。
+    // 账本 1 的慢响应（账户 + 窗口）此刻才回来，必须都被丢弃。
     slowAccount.resolve(accountRes([makeAccount(1, '账本一银行')]))
-    slowTxn.resolve(txnRes([makeTxn(1)]))
+    slowWindow.resolve(txnRes([makeTxn(1)]))
     await slow
     await settle()
 
@@ -414,6 +437,7 @@ describe('ledgerData：保存成功自动失效（savedEpoch 订阅）', () => {
     session.ledgerId = 1
     const data = useLedgerDataStore()
     await data.ensure()
+    await settle() // 等补齐段落地：旧快照 = 全量 [txn7]
     expect(data.txns[0].id).toBe(7)
 
     // 编辑态：notifyChanged
@@ -444,6 +468,7 @@ describe('ledgerData：保存成功自动失效（savedEpoch 订阅）', () => {
     session.ledgerId = 1
     const data = useLedgerDataStore()
     await data.ensure()
+    await settle() // 等补齐段落地：旧快照 = 全量 [txn7]
 
     const slowAccount = deferred<AccountListResponse>()
     const slowTxn = deferred<TransactionListResponse>()
@@ -476,6 +501,7 @@ describe('ledgerData：保存成功自动失效（savedEpoch 订阅）', () => {
     session.ledgerId = 1
     const data = useLedgerDataStore()
     await data.ensure()
+    await settle() // 等补齐段落地：旧快照 = 全量 [txn7]
 
     h.accountList.mockRejectedValueOnce(new ApiError(503, '服务暂时不可用'))
     useRecordSheetStore().notifyChanged()

@@ -175,7 +175,12 @@ const tags = computed(() => tagShares(windowTxns.value, data.accounts, commodity
 const members = computed(() => memberContributions(windowTxns.value, data.accounts, commodity.value))
 const trial = computed(() => trialBalanceRows(data.accounts, commodity.value))
 
-/** 整页四态（v3.2）。 */
+/**
+ * 整页四态（v3.2）。
+ * 批 I 两段加载：补齐段完成前 `txns` 只有「已拉窗口」的月份，拿它算「当季 / 当年」
+ * 聚合会静默出**错数**（日均、占比、标签分面全错却不报错）——所以聚合计算守
+ * `fullReady`，未就绪时整页走 loading 骨架（复用四态 loading 档）。
+ */
 const pageState = computed<'loading' | 'error' | 'empty' | 'ready'>(() => {
   if (data.error !== '' && !data.loaded) {
     return 'error'
@@ -183,11 +188,17 @@ const pageState = computed<'loading' | 'error' | 'empty' | 'ready'>(() => {
   if (!data.loaded) {
     return 'loading'
   }
+  if (!data.fullReady) {
+    return 'loading'
+  }
   if (windowTxns.value.length === 0) {
     return 'empty'
   }
   return 'ready'
 })
+
+/** 骨架文案：首次装载走默认「正在加载…」；补齐等待期换聚合文案。 */
+const loadingText = computed(() => (data.loaded && !data.fullReady ? '正在聚合数据…' : ''))
 
 const staleError = computed(() => (data.error !== '' && data.loaded ? data.error : ''))
 
@@ -397,7 +408,7 @@ const currencyOptions = computed(() => {
       <button type="button" class="stats__stale-btn" @click="reload">重试</button>
     </p>
 
-    <StateCard :state="pageState" :desc="cardDesc" @action="reload">
+    <StateCard :state="pageState" :desc="cardDesc" :loading-text="loadingText" @action="reload">
       <!-- 子页互斥依赖「无 Transition」：加 in-out 过渡会让两面板共存，
            图表实例峰值 4→6（超过 liveCount 的 MAX_LIVE_CHARTS=4），见 liveCount.ts。
            要加动画就先给 DonutRankCard / TagPanel 里其中一张环图加条件挂载。 -->

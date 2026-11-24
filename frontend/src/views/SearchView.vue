@@ -312,6 +312,16 @@ const memberOptions = computed(() => {
   return out.sort()
 })
 
+/**
+ * 标签 / 成员选项（批 I 两段加载守卫）：
+ * 这两个全集来自 `data.txns` 全量快照；补齐完成前只有「已拉窗口」的月份，
+ * 拿半集当全集会让用户以为「没有别的标签可选」。守 `fullReady`：
+ * 补齐中先给基础项（空选项），补齐完成后恢复现行全集。执行与 CSV 不受影响
+ * （它们走服务端 listPage，不依赖本地快照）。
+ */
+const filterTags = computed<string[]>(() => (data.fullReady ? tagOptions.value : []))
+const filterMembers = computed<string[]>(() => (data.fullReady ? memberOptions.value : []))
+
 function goBills(): void {
   void router.push({ name: 'bills' })
 }
@@ -366,8 +376,8 @@ async function exportCsv(): Promise<void> {
         <SearchFilters
           :filters="filters"
           :accounts="data.accounts"
-          :tags="tagOptions"
-          :members="memberOptions"
+          :tags="filterTags"
+          :members="filterMembers"
           @change="onFilterChange"
         />
       </SearchBar>

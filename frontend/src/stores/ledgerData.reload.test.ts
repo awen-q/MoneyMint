@@ -24,6 +24,7 @@ import type {
 const h = vi.hoisted(() => ({
   accountList: vi.fn(),
   txnList: vi.fn(),
+  txnListPage: vi.fn(),
   me: vi.fn(),
   ledgerList: vi.fn(),
   login: vi.fn(),
@@ -34,7 +35,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/api/client', () => ({
   accountApi: { list: h.accountList },
-  transactionApi: { list: h.txnList },
+  transactionApi: { list: h.txnList, listPage: h.txnListPage },
   authApi: {
     me: h.me,
     login: h.login,
@@ -82,21 +83,36 @@ async function settle(): Promise<void> {
   })
 }
 
+/**
+ * 排空上一用例遗留的补齐段定时器（批 I 两段加载）：必须排在 mockReset 之前，
+ * 让遗留回调带着旧 mock 的可解析返回值 + epoch 守卫安全落地。
+ */
+async function drainTimers(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, 0)
+  })
+  await Promise.resolve()
+}
+
 let visibility: {
   mockReturnValue(value: DocumentVisibilityState): unknown
   mockRestore(): unknown
 } | null = null
 
-beforeEach(() => {
+beforeEach(async () => {
+  await drainTimers()
   setActivePinia(createPinia())
   localStorage.clear()
   h.accountList.mockReset()
   h.txnList.mockReset()
+  h.txnListPage.mockReset()
   h.me.mockReset()
   h.ledgerList.mockReset()
   h.setLedgerIdProvider.mockReset()
   h.accountList.mockResolvedValue(accountRes([1]))
   h.txnList.mockResolvedValue(txnRes([1]))
+  // 批 I：首段窗口腿默认空窗口
+  h.txnListPage.mockResolvedValue({ transactions: [] })
   visibility = vi.spyOn(document, 'visibilityState', 'get')
   visibility.mockReturnValue('visible')
 })
@@ -113,6 +129,7 @@ describe('ledgerData：脏标记订阅', () => {
     session.ledgerId = 301
     const data = useLedgerDataStore()
     await data.ensure()
+    await settle() // 等补齐段落地，快照进入「全量态」再测置脏刷新
     expect(h.accountList).toHaveBeenCalledTimes(1)
 
     h.accountList.mockResolvedValue(accountRes([1, 2]))
@@ -133,6 +150,7 @@ describe('ledgerData：脏标记订阅', () => {
     session.ledgerId = 302
     const data = useLedgerDataStore()
     await data.ensure()
+    await settle() // 等补齐段落地，快照进入「全量态」再测置脏刷新
     expect(h.accountList).toHaveBeenCalledTimes(1)
 
     visibility?.mockReturnValue('hidden')
@@ -170,6 +188,7 @@ describe('ledgerData：脏标记订阅', () => {
     session.ledgerId = 305
     const data = useLedgerDataStore()
     await data.ensure()
+    await settle() // 等补齐段落地：旧快照 = 全量 [txn1]
 
     h.accountList.mockRejectedValueOnce(new Error('boom'))
     markDirty('local-write', 305)

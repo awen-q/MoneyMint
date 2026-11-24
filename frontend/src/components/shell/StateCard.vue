@@ -23,6 +23,8 @@ const props = withDefaults(
     title?: string
     /** 一句话说明；不传则不渲染。 */
     desc?: string
+    /** loading 态文案；不传时用默认「正在加载…」（批 I：账单页聚合等待用「正在聚合当月数据…」）。 */
+    loadingText?: string
     /** 动作按钮文案；error 态不传时默认「重试」，empty 态不传则不显示按钮。 */
     actionText?: string
     /** 动作按钮禁用（如无权限 / 正在重试）。 */
@@ -31,6 +33,7 @@ const props = withDefaults(
   {
     title: '',
     desc: '',
+    loadingText: '',
     actionText: '',
     actionDisabled: false,
   },
@@ -61,6 +64,11 @@ const resolvedActionText = computed(() => {
   return props.state === 'error' ? '重试' : ''
 })
 
+/** loading 文案：显式传入优先，否则保持默认（既有页面零感知）。 */
+const resolvedLoadingText = computed(() =>
+  props.loadingText !== '' ? props.loadingText : '正在加载…',
+)
+
 const showAction = computed(
   () => (props.state === 'error' || props.state === 'empty') && resolvedActionText.value !== '',
 )
@@ -77,7 +85,7 @@ function onAction(): void {
       <span class="sc-loading__dots" aria-hidden="true">
         <i /><i /><i />
       </span>
-      <span class="sc-loading__text">正在加载…</span>
+      <span class="sc-loading__text">{{ resolvedLoadingText }}</span>
     </p>
 
     <!-- error：标题 + 说明 + 重试。此处刻意没有任何金额节点，见文件头红线说明。 -->
