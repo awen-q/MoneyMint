@@ -177,7 +177,7 @@ export function getChartPalette(tokens: ThemeTokens): ChartPalette {
   }
 }
 
-/** 阶段 4 深色模式重绘信号：useTheme.setTheme() 经 refreshThemeTokens() 递增。 */
+/** 深色模式重绘信号：useTheme 偏好切换 / 系统暗色变化经 refreshThemeTokens() 递增。 */
 export const themeEpoch = ref<number>(0)
 
 /**
@@ -212,6 +212,11 @@ export function pickColor(
  * 与色值相关的字面量只允许放在本文件或 tokens.css（主题护栏白名单）。
  */
 export const THEME_STORAGE_KEY = 'fambean.theme'
+/**
+ * 主题偏好持久化键（三态：system / light / dark）。
+ * 旧键 THEME_STORAGE_KEY 仅作一次性迁移读取（night→dark、paper→light），不再写入。
+ */
+export const THEME_MODE_STORAGE_KEY = 'fambean.theme.mode'
 export const THEME_COLOR_PAPER = '#20352c'
 export const THEME_COLOR_NIGHT = '#121512'
 

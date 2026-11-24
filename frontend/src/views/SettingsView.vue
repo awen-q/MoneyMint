@@ -12,7 +12,7 @@ import { useRouter } from 'vue-router'
 
 import { accountApi, settingsApi } from '@/api/client'
 import AppVersionCard from '@/components/AppVersionCard.vue'
-import { isNight, toggleTheme } from '@/composables/useTheme'
+import { setThemePreference, theme, themePreference, type ThemePreference } from '@/composables/useTheme'
 import { ApiError } from '@/api/errors'
 import type { AccountView } from '@/api/types'
 import { roleLabel } from '@/core/batch3'
@@ -45,6 +45,30 @@ const currentRole = computed(() => {
   }
   return session.user === null ? '' : session.user.role
 })
+
+interface AppearanceOption {
+  value: ThemePreference
+  label: string
+}
+
+/** 外观三段选项：与 useTheme 偏好层一一对应（跟随系统 / 强制浅纸 / 强制夜纸）。 */
+const APPEARANCE_OPTIONS: AppearanceOption[] = [
+  { value: 'system', label: '跟随系统' },
+  { value: 'light', label: '浅纸' },
+  { value: 'dark', label: '夜纸' },
+]
+
+/** 跟随系统态的说明：显示当前实际生效主题，帮用户理解「跟随」的含义。 */
+const appearanceHint = computed<string>(() => {
+  if (themePreference.value !== 'system') {
+    return '选择全站配色，切换后立即生效'
+  }
+  return `当前跟随系统（生效：${theme.value === 'night' ? '夜纸' : '浅纸'}）`
+})
+
+function pickAppearance(value: ThemePreference): void {
+  setThemePreference(value)
+}
 
 interface LinkItem {
   key: string
@@ -208,19 +232,21 @@ onMounted(() => {
 
     <div class="fb-card set__card set__appearance">
       <div>
-        <strong>夜间模式</strong>
-        <p class="fb-muted">深色护眼，切换后全站生效</p>
+        <strong>外观</strong>
+        <p class="fb-muted">{{ appearanceHint }}</p>
       </div>
-      <button
-        class="set__switch"
-        type="button"
-        role="switch"
-        :aria-checked="isNight"
-        @click="toggleTheme"
-      >
-        <i :class="{ on: isNight }" />
-        <span>{{ isNight ? '夜纸' : '浅纸' }}</span>
-      </button>
+      <div class="set__seg" role="radiogroup" aria-label="外观主题">
+        <button
+          v-for="option in APPEARANCE_OPTIONS"
+          :key="option.value"
+          type="button"
+          role="radio"
+          class="set__seg-btn"
+          :class="{ 'set__seg-btn--on': themePreference === option.value }"
+          :aria-checked="themePreference === option.value"
+          @click="pickAppearance(option.value)"
+        >{{ option.label }}</button>
+      </div>
     </div>
 
     <div class="fb-card set__card set__links">
@@ -297,8 +323,12 @@ onMounted(() => {
 .set__missing { color: var(--fb-danger); }
 .set__hint, .set__registration p { margin: 10px 0 0; font-size: 11px; color: var(--fb-sub); line-height: 1.6; }
 .set__state { margin: 10px 0 0; font-size: 12px; color: var(--fb-sub); }
-.set__appearance { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.set__appearance { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .set__appearance strong { font-size: 13px; }
+/* 外观三段 seg：与 PeriodSeg 同款（soft 底胶囊容器，选中态实心卡片色）。 */
+.set__seg { display: inline-flex; padding: 2px; border-radius: var(--fb-radius-pill); background: var(--fb-soft); }
+.set__seg-btn { padding: 4px 12px; border: none; border-radius: var(--fb-radius-pill); background: transparent; color: var(--fb-sub); font-family: inherit; font-size: 12px; cursor: pointer; }
+.set__seg-btn--on { background: var(--fb-card); color: var(--fb-ink); font-weight: 600; }
 .set__links { padding: 4px 16px; }
 .set__link { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 0; border: none; border-bottom: 1px solid var(--fb-line); background: transparent; color: var(--fb-ink); font-size: 13px; font-family: inherit; text-align: left; cursor: pointer; }
 .set__link:last-child { border-bottom: none; }

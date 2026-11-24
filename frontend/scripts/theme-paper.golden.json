@@ -65,6 +65,9 @@
     "--fb-overlay-scrim": "rgba(40, 35, 25, 0.45)",
     "--fb-shadow-pop": "rgba(40, 35, 25, 0.2)",
     "--fb-shadow-accent": "rgba(60, 48, 28, 0.35)",
-    "--fb-shadow-deep": "rgba(40, 35, 25, 0.18)"
+    "--fb-shadow-deep": "rgba(40, 35, 25, 0.18)",
+    "--fb-skeleton-base": "#efe9db",
+    "--fb-skeleton-sheen-soft": "#f4efe2",
+    "--fb-skeleton-sheen": "#faf7ed"
   }
 }

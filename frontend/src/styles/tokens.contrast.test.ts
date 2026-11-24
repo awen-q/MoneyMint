@@ -313,3 +313,33 @@ describe('阶段 1 不变量门禁 G4：兼容与硬指标', () => {
     expect(tokensCss).not.toMatch(/(^|[^\w-])inset\s*:/)
   })
 })
+
+/**
+ * 骨架屏三色门禁（骨架屏批 / SkeletonBlock）：底色对卡面「可见但克制」，
+ * 扫光两档相对底色单调提亮 —— 「扫过变亮」的语义在浅纸 / 夜纸两态一致。
+ * 断言只依赖 token 名，测试内不写裸 hex（check-theme 护栏同样约束本文件）。
+ */
+describe('骨架屏 token 门禁：底色可见克制、扫光单调提亮', () => {
+  /** 浅纸 / 夜纸两套 token 各跑一遍同样的断言。 */
+  const SKELETON_THEMES: ReadonlyArray<{ label: string; tokens: Map<string, string> }> = [
+    { label: '浅纸', tokens: rootTokens },
+    { label: '夜纸', tokens: nightTokens },
+  ]
+
+  it('底色在卡面上可见（≥1.05）且不喧宾夺主（≤1.35）', () => {
+    for (const { label, tokens } of SKELETON_THEMES) {
+      const score = contrast('--fb-skeleton-base', '--fb-card', tokens)
+      expect(score, `${label} 骨架底 on 卡面`).toBeGreaterThanOrEqual(1.05)
+      expect(score, `${label} 骨架底 on 卡面`).toBeLessThanOrEqual(1.35)
+    }
+  })
+
+  it('扫光方向单调：高光 > 过渡 > 底（相对底色对比度递增）', () => {
+    for (const { label, tokens } of SKELETON_THEMES) {
+      const soft = contrast('--fb-skeleton-sheen-soft', '--fb-skeleton-base', tokens)
+      const peak = contrast('--fb-skeleton-sheen', '--fb-skeleton-base', tokens)
+      expect(soft, `${label} 过渡档 vs 底`).toBeGreaterThan(1.02)
+      expect(peak, `${label} 高光档 vs 底`).toBeGreaterThan(soft)
+    }
+  })
+})

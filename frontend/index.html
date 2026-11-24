@@ -8,8 +8,46 @@
       name="description"
       content="家庭协作复式记账（类 Beancount），支持离线多端记账与增量同步。"
     />
-    <!-- 主题色：与豆子图标底色 / manifest theme_color 一致 -->
+    <!-- 主题色静态兜底：与豆子图标底色 / manifest theme_color 一致（暗色用户由下方内联脚本改写） -->
     <meta name="theme-color" content="#20352c" />
+    <script>
+      // 冷启动防闪屏：在 JS bundle 执行前按持久化偏好预设 data-theme 与 meta theme-color。
+      // 偏好键 fambean.theme.mode（system/light/dark）；旧键 fambean.theme 一次性迁移
+      // （night→dark、paper→light），与 src/composables/useTheme.ts 的解析口径必须一致，勿单改一处。
+      // 下方两个色值与 src/styles/themeTokens.ts 的 THEME_COLOR_PAPER / THEME_COLOR_NIGHT 逐字一致。
+      // 注意保持 ES5 写法（本脚本不经构建转换，iOS 14.8 首帧即执行）。
+      (function () {
+        var mode = 'system'
+        try {
+          mode = localStorage.getItem('fambean.theme.mode') || 'system'
+          if (mode !== 'light' && mode !== 'dark' && mode !== 'system') {
+            var legacy = localStorage.getItem('fambean.theme')
+            if (legacy === 'night' || legacy === 'paper') {
+              mode = legacy === 'night' ? 'dark' : 'light'
+              try {
+                localStorage.setItem('fambean.theme.mode', mode)
+                localStorage.removeItem('fambean.theme')
+              } catch (e) {}
+            } else {
+              mode = 'system'
+            }
+          }
+        } catch (e) {
+          mode = 'system'
+        }
+        var dark = false
+        if (mode === 'dark') {
+          dark = true
+        } else if (mode === 'system' && window.matchMedia) {
+          dark = window.matchMedia('(prefers-color-scheme: dark)').matches
+        }
+        document.documentElement.setAttribute('data-theme', dark ? 'night' : '')
+        var meta = document.querySelector('meta[name="theme-color"]')
+        if (meta) {
+          meta.setAttribute('content', dark ? '#121512' : '#20352c')
+        }
+      })()
+    </script>
 
     <!-- iOS PWA 元信息（逐条搬运自 frontend/web/index.html） -->
     <meta name="mobile-web-app-capable" content="yes" />

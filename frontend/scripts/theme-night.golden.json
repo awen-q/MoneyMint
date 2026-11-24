@@ -41,6 +41,9 @@
     "--fb-chart-10": "#c98a76",
     "--fb-brand": "var(--fb-blue)",
     "--fb-primary": "var(--fb-blue)",
-    "--fb-primary-soft": "var(--fb-blue-soft)"
+    "--fb-primary-soft": "var(--fb-blue-soft)",
+    "--fb-skeleton-base": "#2e2c26",
+    "--fb-skeleton-sheen-soft": "#3a382f",
+    "--fb-skeleton-sheen": "#45423a"
   }
 }

@@ -119,6 +119,14 @@
   --fb-chart-9: #4a7b95;
   --fb-chart-10: #a05d4a;
 
+  /* 骨架屏三色（SkeletonBlock，骨架屏批）：块底色 + shimmer 扫光两色（过渡档 / 高光档）。
+     浅纸：底色比卡面深一档（暖米），扫光向更亮扫出；夜纸：底色比卡面亮一档、高光继续
+     提亮 —— 「扫过变亮」的语义两态一致。对比度断言见 tokens.contrast.test.ts 的
+     骨架屏段；唯一色值源纪律不变（组件内只 var() 引用，无字面量）。 */
+  --fb-skeleton-base: #efe9db;
+  --fb-skeleton-sheen-soft: #f4efe2;
+  --fb-skeleton-sheen: #faf7ed;
+
   /* 阶段 0 护栏收编 token：阶段 1 改为暖纸 / 暖褐，消除蓝色孤岛。 */
   --fb-primary: #2f5d4e;
   --fb-primary-soft: var(--fb-brand-soft);
@@ -316,6 +324,11 @@ body {
   --fb-chart-8: #b39ac6;
   --fb-chart-9: #8fb4cc;
   --fb-chart-10: #c98a76;
+
+  /* 骨架屏三色（夜纸）：底色 / 过渡档 / 高光档相对卡面依次提亮，扫光语义与浅纸一致。 */
+  --fb-skeleton-base: #2e2c26;
+  --fb-skeleton-sheen-soft: #3a382f;
+  --fb-skeleton-sheen: #45423a;
 
   /* 别名族：显式跟随夜纸主色，避免 var 链仍指向浅纸值 */
   --fb-brand: var(--fb-blue);
