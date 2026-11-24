@@ -51,7 +51,7 @@ import {
   type RecordForm,
   type RecordKind,
 } from '@/core/record'
-import { recordFundAccounts } from '@/core/accounts'
+import { catIcon, recordFundAccounts } from '@/core/accounts'
 import { buildBeanSnippet } from '@/core/bean'
 import { clearDraft, readDefaultAccounts, readDraft, setDefaultAccount, writeDraft, type DefaultAccountKind } from '@/core/storage'
 import { usePrivacyStore } from '@/stores/privacy'
@@ -1291,10 +1291,6 @@ function balanceText(account: AccountView): string {
   }
   const value = balances[session.defaultCommodity]
   return formatMoney(value === undefined ? '0.00' : value, session.defaultCommodity)
-}
-
-function catIcon(account: AccountView): string {
-  return account.icon !== undefined && account.icon !== '' ? account.icon : '📁'
 }
 
 function isThirdLevel(account: AccountView): boolean {

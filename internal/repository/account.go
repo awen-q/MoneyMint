@@ -181,6 +181,46 @@ func updateAccountSortOrderOn(tx *sql.Tx, ledgerID int64, uuid string, order int
 	return n, nil
 }
 
+// UpdateAccountVisual 在单事务内更新账户的三个展示字段（批 II）并追加 sync_log(op=update)。
+//
+// 三个列一次 UPDATE 全量覆写：调用方（service）必须先把「键缺失」的字段回填为
+// 当前值，否则会把未提交的字段静默清空——那是一条数据破坏路径，绝不能交给调用方自觉。
+//
+// 仅排除软删行（deleted_at IS NULL），**不排除已关户账户**：icon/color/display_name
+// 是纯展示字段，关户后仍可改。RowsAffected==0（不存在 / 跨账本 / 已软删）回滚并返回
+// false，不写 sync_log；由 service 层映射 404 account_not_found。
+func (s *Store) UpdateAccountVisual(ledgerID int64, uuid, displayName, icon, color string) (bool, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.Exec(
+		`UPDATE accounts SET display_name=NULLIF(?,''), icon=NULLIF(?,''), color=NULLIF(?,''),
+		        updated_at=datetime('now')
+		 WHERE ledger_id=? AND uuid=? AND deleted_at IS NULL`,
+		displayName, icon, color, ledgerID, uuid,
+	)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if n == 0 {
+		return false, nil
+	}
+	if _, err := appendSyncLogOn(tx, ledgerID, domain.EntityAccount, uuid, domain.OpUpdate); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // UpdateAccountSortOrder 更新账户自定义排序序号（0.4-C 分类拖拽排序）。
 // op=update 写入 sync_log，使其他端经 pull 收到更新事件并重排。
 // 账户不存在或无变动时不写 sync_log（幂等）。

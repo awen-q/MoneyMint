@@ -18,12 +18,13 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { accountApi, openingApi } from '@/api/client'
 import { ApiError } from '@/api/errors'
 import type { AccountView, OpeningDirection, OpeningView } from '@/api/types'
-import { buildAccountTree, flattenAccountTree, isClosed } from '@/core/accounts'
+import { buildAccountTree, flattenAccountTree, isClosed, validateIconCodePoints } from '@/core/accounts'
 import { validateOpeningForm } from '@/core/opening'
 import { accountOptionLabel, indentOptionLabel, todayString } from '@/core/record'
 import { markDirty } from '@/stores/dataFreshness'
 import { useSessionStore } from '@/stores/session'
 import MoneyText from '@/components/MoneyText.vue'
+import IconPicker from '@/components/IconPicker.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -56,6 +57,8 @@ const accountType = ref<'Assets' | 'Liabilities' | 'Expenses' | 'Income' | 'Equi
 const displayName = ref('')
 /** owner 可选的 ASCII 账号段；留空维持 ItemN 自动生成。 */
 const customAscii = ref('')
+/** 批 II：create 可选图标；空串 = 不发键（缺省语义交给后端落 NULL）。 */
+const icon = ref('')
 const openDate = ref(todayString())
 
 // 批 2.5 修 2c / 0.6.0 S2：父账户选择（create 模式，可选）。
@@ -304,6 +307,12 @@ async function submit(): Promise<void> {
       }
       const parent = resolveParent()
       const fullName = makeAsciiName(parent, accountType.value, customAscii.value)
+      // 批 II：图标非空才发键（缺省不发键 → 后端落 NULL）；码位校验同后端口径。
+      const selectedIcon = icon.value.trim()
+      if (selectedIcon !== '' && !validateIconCodePoints(selectedIcon)) {
+        submitError.value = '图标需不超过 8 个字符的 emoji，请删减后重试'
+        return
+      }
       const created = await accountApi.create({
         name: fullName,
         display_name: label,
@@ -311,6 +320,7 @@ async function submit(): Promise<void> {
         open_date: openDate.value,
         // 0.6.0 S2：显式空串表示根账户（JSON 键缺失会被后端 400 拒绝）。
         parent_uuid: parent !== null ? parent.uuid : '',
+        ...(selectedIcon !== '' ? { icon: selectedIcon } : {}),
       })
       markDirty('local-write')
       if (isFundType.value && openingAmount.value.trim() !== '') {
@@ -398,6 +408,10 @@ onMounted(() => {
             <span>显示名（中文，如：招商储蓄 / 早餐）</span>
             <input class="fb-input" v-model="displayName" placeholder="如：招商储蓄 / 早餐" />
           </label>
+          <div class="af-field">
+            <span>图标（可选）</span>
+            <IconPicker v-model="icon" />
+          </div>
           <p class="af-hint">系统自动生成 Beancount 合法的英文账户全名，中文只作为显示名；无需手工拼冒号层级。</p>
           <label v-if="session.isOwner" class="af-field">
             <span>英文账号（可选，留空自动生成）</span>

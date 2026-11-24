@@ -263,6 +263,27 @@ export interface CreateAccountRequest {
   sub_type?: string
 }
 
+/** PATCH /api/accounts/{uuid}（批 II）请求体：三键均可选，省略 = 不改该字段。 */
+export interface UpdateAccountRequest {
+  /** 键存在即应用：trim 后空串表示清除显示名。 */
+  display_name?: string
+  /** 空串表示清除图标；非空须 ≤ 8 个码点（与后端 rune 计数同口径）。 */
+  icon?: string
+  /** 空串表示清除颜色；非空须为 #RRGGBB。 */
+  color?: string
+}
+
+/** PATCH /api/accounts/{uuid}（批 II）响应体：最小回显，页面走 markDirty→reload 收敛。 */
+export interface UpdateAccountResponse {
+  ok: boolean
+  account: {
+    uuid: string
+    display_name?: string
+    icon?: string
+    color?: string
+  }
+}
+
 /** DELETE /api/accounts/{uuid}（Beancount close 语义）。 */
 export interface OkResponse {
   ok: boolean

@@ -42,7 +42,7 @@ export const API_ROUTES = {
   accountOpening: '/api/accounts/{uuid}/opening',
   /** GET /api/accounts/{uuid}/balance · POST /api/accounts/{uuid}/balance（0.6.0 S4 余额校准） */
   accountBalance: '/api/accounts/{uuid}/balance',
-  /** DELETE /api/accounts/{uuid} */
+  /** DELETE /api/accounts/{uuid}（Beancount close）· PATCH 同路径（批 II：展示字段修改，复用本常量零新增） */
   accountByUuid: '/api/accounts/{uuid}',
   /** GET /api/assets/series（B6 资产统计：年度余额时序，月末末值） */
   assetsSeries: '/api/assets/series',

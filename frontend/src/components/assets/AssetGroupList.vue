@@ -13,6 +13,7 @@
  *    账户个数**（一个账户可能有主币种 + 外币两行，数行数会多数），外币金额来自
  *    `core/assets.ts` 的 `foreignSubtotals`，本组件只是搬上屏。
  */
+import { catIcon } from '@/core/accounts'
 import type { AssetGroup, AssetRow } from '@/core/assets'
 import MoneyText from '@/components/MoneyText.vue'
 
@@ -77,6 +78,7 @@ function accountCount(group: AssetGroup): number {
         <!-- 主币种行：币种 chip 紧跟名称之后（设计 `.a-name` 内含 `.cur-chip`，A-04） -->
         <li v-for="row in group.rows" :key="`${row.accountId}-${row.commodity}`" class="asset-row">
           <span class="asset-row__name">
+            <span class="asset-row__icon" aria-hidden="true">{{ catIcon(row) }}</span>
             {{ row.label }}
             <span v-if="row.closed" class="asset-row__badge">已关户</span>
             <span class="asset-row__code">{{ row.commodity }}</span>
@@ -92,6 +94,7 @@ function accountCount(group: AssetGroup): number {
           class="asset-row asset-row--foreign"
         >
           <span class="asset-row__name">
+            <span class="asset-row__icon" aria-hidden="true">{{ catIcon(row) }}</span>
             {{ row.label }}
             <span v-if="row.closed" class="asset-row__badge">已关户</span>
             <span class="asset-row__code asset-row__code--foreign">{{ row.commodity }}</span>
@@ -194,6 +197,14 @@ function accountCount(group: AssetGroup): number {
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 批 II 行首图标：与分类页同一 catIcon 单一来源（缺省兜底 📁）。 */
+.asset-row__icon {
+  display: inline-block;
+  margin-right: 4px;
+  font-size: 13px;
+  line-height: 1;
 }
 
 .asset-row__amount {

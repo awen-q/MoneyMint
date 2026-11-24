@@ -119,6 +119,8 @@ const CODE_MESSAGES: Readonly<Record<string, string>> = {
   account_name_exists: '该账户名已被占用，请换一个名称',
   parent_not_found: '父账户不存在或属于其他账本',
   parent_type_mismatch: '父账户类型与子账户不匹配',
+  // ---- 批 II 账户展示字段（PATCH / create 共用）----
+  account_visual_invalid: '图标需不超过 8 个字符的 emoji，颜色需为 #RRGGBB 格式',
   commodity_exists: '该币种已存在',
   commodity_in_use: '该币种已被账户、交易或价格引用，不能删除',
   // ---- 0.6.0 余额校准（S4）----

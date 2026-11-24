@@ -272,6 +272,12 @@ python -m pip install beancount    # 激活 .venv 后执行
 |---|---|---|---|
 | `/api/accounts/sort-order` | PATCH | 登录+成员（非 viewer） | 批量提交分类排序：Body `{orders:[{uuid,sort_order}]}`，uuid 为跨端同步身份（非自增 id），sort_order 为 0-based 连续序号；按 type 分组整组提交。事务内逐条 UPDATE + `sync_log op=update`，全成全败，返回 `200 {ok:true,updated:N}`。400：`orders` 空 / uuid 空 / sort_order<0 / 同批 uuid 重复 / 非本账本 uuid（含已软删）；错误走统一 `{error,code?}` 结构。字面量路径优先于 `/api/accounts/{uuid}`，不影响后者 DELETE；无需迁移、不改同步协议。 |
 
+### 批 II 新增端点（账户展示字段，按 Q-10 顺延）
+
+| 端点 | 方法 | 鉴权 | 说明 |
+|---|---|---|---|
+| `/api/accounts/{uuid}` | PATCH | 登录+成员（非 viewer；viewer 由 middleware 403） | 批 II：修改账户展示字段（与既有 DELETE 同路径新增方法），Body 白名单 `{display_name?, icon?, color?}`，指针语义区分「键缺失 = 不改」与「显式空串 = 清除」；display_name trim 后空串 = 清除、**无重名判定**（重名判定是 name 字段规则且本端点不改 name）；icon 非空按 rune 计数 ≤8、color 非空须匹配 `^#[0-9A-Fa-f]{6}$`，违反 → `400 account_visual_invalid`（create 路径同步接入该校验）；白名单外键出现 → 400 并列明拒绝字段（防夹带改 name/sort_order）；全 nil → 400；已关户账户可改。单事务 UPDATE 三列 + `sync_log op=update`（同值更新也写一条）；软删 / 跨账本 / 不存在 → 回滚并 `404 account_not_found`；响应 `200 {ok:true, account:{uuid, display_name, icon, color}}`（最小回显，前端走 markDirty→reload 收敛）。三字段不进 .beancount 导出；无需迁移、不改同步协议（pull 载荷本就含三字段）。 |
+
 ---
 
 ## 8. 约定与惯例（给 AI 的硬约束）

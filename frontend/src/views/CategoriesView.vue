@@ -17,6 +17,7 @@ import type { AccountView } from '@/api/types'
 import {
   balanceOf,
   buildAccountTree,
+  catIcon,
   flattenAccountTree,
   groupAccountsByType,
   isClosed,
@@ -27,6 +28,7 @@ import { readCategoryOrder, writeCategoryOrder } from '@/core/storage'
 import { markDirty } from '@/stores/dataFreshness'
 import { useSessionStore } from '@/stores/session'
 import MoneyText from '@/components/MoneyText.vue'
+import AccountEditSheet from '@/components/AccountEditSheet.vue'
 
 const session = useSessionStore()
 
@@ -48,6 +50,24 @@ const newName = ref('')
 const customAscii = ref('')
 const creating = ref(false)
 const deleteTarget = ref<AccountView | null>(null)
+
+// 批 II：行操作「编辑」入口 → AccountEditSheet（展示字段在线-only；viewer 不渲染）。
+const editTarget = ref<AccountView | null>(null)
+
+function askEdit(account: AccountView): void {
+  if (session.isViewer) {
+    notice.value = '只读成员不能修改账户'
+    return
+  }
+  notice.value = ''
+  editTarget.value = account
+}
+
+/** 编辑保存成功：markDirty 由 AccountEditSheet 调用；这里收敛本页列表。 */
+async function onEditSaved(): Promise<void> {
+  editTarget.value = null
+  await load()
+}
 
 /**
  * 批 2.5 修 2b：树形渲染（parent_uuid / 冒号兜底；子随父、缩进展示）。
@@ -488,6 +508,11 @@ onMounted(() => {
             @drop="onDrop(group.type, index)"
           >
             <span class="cats__drag" aria-hidden="true">⋮⋮</span>
+            <span
+              class="cats__icon"
+              :style="row.account.color ? { color: row.account.color } : undefined"
+              aria-hidden="true"
+            >{{ catIcon(row.account) }}</span>
             <span class="cats__info">
               <span class="cats__name">
                 {{ accountLabel(row.account) }}
@@ -499,6 +524,13 @@ onMounted(() => {
               </span>
             </span>
             <button
+              v-if="!session.isViewer"
+              type="button"
+              class="cats__edit"
+              :disabled="busyUuid !== null"
+              @click="askEdit(row.account)"
+            >编辑</button>
+            <button
               type="button"
               class="cats__delete"
               :disabled="busyUuid !== null || session.isViewer"
@@ -509,6 +541,13 @@ onMounted(() => {
       </div>
 
       <p v-if="notice" class="cats__notice" role="status">{{ notice }}</p>
+
+      <AccountEditSheet
+        v-if="editTarget !== null"
+        :account="editTarget"
+        @close="editTarget = null"
+        @saved="onEditSaved"
+      />
 
       <div v-if="deleteTarget !== null" class="cats__mask" @click.self="deleteTarget = null">
         <div class="cats__confirm">
@@ -617,6 +656,13 @@ onMounted(() => {
   flex-shrink: 0;
 }
 
+/* 批 II 行首图标：预设色优先（icon 用账户 color 染色，缺省墨色）。 */
+.cats__icon {
+  flex-shrink: 0;
+  font-size: 16px;
+  line-height: 1;
+}
+
 .cats__info {
   flex: 1;
   min-width: 0;
@@ -650,6 +696,23 @@ onMounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.cats__edit {
+  flex-shrink: 0;
+  border: 1px solid var(--fb-line);
+  background: var(--fb-card);
+  color: var(--fb-blue);
+  border-radius: var(--fb-radius-input);
+  padding: 6px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.cats__edit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .cats__delete {

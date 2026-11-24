@@ -39,6 +39,8 @@ export interface AssetRow {
   isForeign: boolean
   /** 是否已关户（仍列出，仅标注）。 */
   closed: boolean
+  /** 展示图标（批 II；缺失 / 空串由 catIcon 兜底 📁）。 */
+  icon?: string
 }
 
 /** 外币小计：**按币种各算各的**，供组头「另有 $X（USD）」一句展示。 */
@@ -171,6 +173,7 @@ export function buildAssetBreakdown(
           commodity,
           isForeign: false,
           closed,
+          icon: account.icon,
         })
         rowCount += 1
         continue
@@ -196,6 +199,7 @@ export function buildAssetBreakdown(
           commodity: code,
           isForeign,
           closed,
+          icon: account.icon,
         }
         if (isForeign) {
           foreignRows.push(row)

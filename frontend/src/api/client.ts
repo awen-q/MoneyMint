@@ -73,6 +73,8 @@ import type {
   TransactionListResponse,
   TransactionUpdated,
   TrashListResponse,
+  UpdateAccountRequest,
+  UpdateAccountResponse,
   UpdateLedgerRequest,
   UpdateMemberRequest,
   UpdateMemberResponse,
@@ -562,6 +564,18 @@ export const accountApi = {
    */
   updateSortOrders(body: BatchSortRequest): Promise<BatchSortResponse> {
     return api.patch<BatchSortResponse>(API_ROUTES.accountSortOrder, body)
+  },
+  /**
+   * 修改账户展示字段（批 II）：PATCH /api/accounts/{uuid}，白名单
+   * {display_name?, icon?, color?}，键省略 = 不改、空串 = 清除。
+   * **在线-only**：push 的账户 op=update 只认 sort_order，误入离线队列会
+   * 覆盖真实排序 —— 调用方必须先判在线态，绝不入队。
+   */
+  update(accountUuid: string, body: UpdateAccountRequest): Promise<UpdateAccountResponse> {
+    return api.patch<UpdateAccountResponse>(
+      formatApiPath(API_ROUTES.accountByUuid, { uuid: accountUuid }),
+      body,
+    )
   },
   /** 关闭账户（Beancount close 语义；余额非 0 时 409 + balances 差额明细）。 */
   close(accountUuid: string): Promise<OkResponse> {

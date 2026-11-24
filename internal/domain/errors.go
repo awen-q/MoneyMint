@@ -87,6 +87,10 @@ const (
 	CodeTxnPurgeNotDeleted      = "txn_purge_not_deleted"
 	CodeTxnPurgeNotAllowed      = "txn_purge_not_allowed"
 	CodeTxnNotFound             = "txn_not_found"
+
+	// 账户图标 / 颜色（批 II）：PATCH /api/accounts/{uuid} 与 create 路径共用的
+	// 视觉字段校验失败码（icon 超长 / color 非 #RRGGBB）。
+	CodeAccountVisualInvalid = "account_visual_invalid"
 )
 
 // CodedError 是携带稳定错误码与结构化明细的业务错误。

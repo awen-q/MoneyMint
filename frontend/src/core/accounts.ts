@@ -15,6 +15,30 @@ export function isClosed<T extends SummaryAccount>(account: T): boolean {
   return account.close_date !== undefined && account.close_date !== ''
 }
 
+/** 账户图标预设（批 II IconPicker 宫格；20 个覆盖常见记账场景的 emoji）。 */
+export const ACCOUNT_ICON_PRESETS: readonly string[] = [
+  '🏦', '💳', '🍖', '🚌', '🏠', '🏥', '🎮', '☕', '🛒', '📱',
+  '💻', '✈️', '🎓', '🐱', '🐶', '🎁', '💊', '🛠️', '📷', '🎯',
+]
+
+/** 账户图标缺省兜底：icon 缺失 / 空串统一显示 📁（唯一来源，勿在组件里再写三元）。 */
+export function catIcon(account: { icon?: string }): string {
+  return account.icon !== undefined && account.icon !== '' ? account.icon : '📁'
+}
+
+/**
+ * 图标码位校验（与后端 Go `utf8.RuneCountInString` 同口径）：
+ * 用 `Array.from` 拆成码位序列计数（Safari 14.1 无 Intl.Segmenter，码位口径
+ * 已足够——ZWJ 家族 emoji 按 2~4 码位计数，与后端 rune 一致，两端永不漂移）。
+ * 空串放行（语义是「清除」），非空超 8 码位返回 false。
+ */
+export function validateIconCodePoints(icon: string): boolean {
+  if (icon === '') {
+    return true
+  }
+  return Array.from(icon).length <= 8
+}
+
 export function openAccounts<T extends SummaryAccount>(accounts: readonly T[]): T[] {
   return accounts.filter((account) => !isClosed(account))
 }

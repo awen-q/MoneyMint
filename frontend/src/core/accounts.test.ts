@@ -4,14 +4,17 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  ACCOUNT_ICON_PRESETS,
   affectedTransactionCount,
   balanceOf,
   buildAccountTree,
+  catIcon,
   flattenAccountTree,
   groupAccountsByType,
   isClosed,
   openAccounts,
   recordFundAccounts,
+  validateIconCodePoints,
 } from './accounts'
 import type { SummaryAccount } from './record'
 
@@ -113,6 +116,34 @@ describe('受影响交易笔数（AC-29）', () => {
     expect(affectedTransactionCount(4, txns)).toBe(2)
     expect(affectedTransactionCount(3, txns)).toBe(1)
     expect(affectedTransactionCount(999, txns)).toBe(0)
+  })
+})
+
+describe('账户图标单一来源（批 II）', () => {
+  it('catIcon：icon 缺失 / 空串兜底 📁，非空原样返回', () => {
+    expect(catIcon({})).toBe('📁')
+    expect(catIcon({ icon: '' })).toBe('📁')
+    expect(catIcon({ icon: '🏦' })).toBe('🏦')
+  })
+
+  it('validateIconCodePoints：8 码位边界放行、9 码位拒绝、空串（清除）放行', () => {
+    expect(validateIconCodePoints('')).toBe(true)
+    expect(validateIconCodePoints('12345678')).toBe(true)
+    expect(validateIconCodePoints('🍖🍖🍖🍖🍖🍖🍖🍖')).toBe(true)
+    expect(validateIconCodePoints('123456789')).toBe(false)
+    expect(validateIconCodePoints('🍖🍖🍖🍖🍖🍖🍖🍖🍖')).toBe(false)
+  })
+
+  it('validateIconCodePoints 与后端 Go rune 计数同口径（ZWJ 家族按码位数）', () => {
+    // 👨‍👩‍👧 = 5 个码位（3 个 emoji + 2 个 ZWJ），后端 rune 计数同为 5。
+    expect(validateIconCodePoints('\u{1F468}\u200D\u{1F469}\u200D\u{1F467}')).toBe(true)
+  })
+
+  it('预设图标恰 20 个且全部通过码位校验', () => {
+    expect(ACCOUNT_ICON_PRESETS.length).toBe(20)
+    for (const icon of ACCOUNT_ICON_PRESETS) {
+      expect(validateIconCodePoints(icon)).toBe(true)
+    }
   })
 })
 

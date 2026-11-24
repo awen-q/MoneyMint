@@ -34,6 +34,8 @@ export interface SummaryAccount {
   uuid?: string
   /** 父账户 uuid（三级分类结构；批 2.5 账户层级树用）。 */
   parent_uuid?: string
+  /** 展示图标（批 II；缺失 / 空串按 catIcon 兜底 📁）。 */
+  icon?: string
 }
 
 /** 记账类型（C-01 三 Tab）。 */

@@ -19,7 +19,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { accountApi, balanceApi, transactionApi } from '@/api/client'
 import { ApiError, codeMessage } from '@/api/errors'
 import type { AccountView, BalancePreview, BalanceResult, TransactionView } from '@/api/types'
-import { affectedTransactionCount, balanceOf, isClosed } from '@/core/accounts'
+import { affectedTransactionCount, balanceOf, catIcon, isClosed } from '@/core/accounts'
 import { balanceDiff, hasTransactionsAfter, isPlainDecimal, previewText } from '@/core/balance'
 import { Money } from '@/core/Money'
 import {
@@ -33,6 +33,7 @@ import { markDirty } from '@/stores/dataFreshness'
 import { useSessionStore } from '@/stores/session'
 import MoneyText from '@/components/MoneyText.vue'
 import AccountForm from '@/components/AccountForm.vue'
+import AccountEditSheet from '@/components/AccountEditSheet.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -46,6 +47,8 @@ const notice = ref('')
 const closing = ref(false)
 const showCloseConfirm = ref(false)
 const showOpeningForm = ref(false)
+// 批 II：展示字段编辑入口（账户详情页 + 分类页行操作双入口之一）。
+const showEditSheet = ref(false)
 const closeError = ref('')
 const closeBalances = ref<Array<{ commodity: string; amount: string }>>([])
 
@@ -118,6 +121,23 @@ const closed = computed(() => account.value !== null && isClosed(account.value))
 const canManage = computed(
   () => account.value !== null && !closed.value && !session.isViewer,
 )
+
+/** 展示字段编辑（批 II）：已关户也可改（纯展示字段），viewer 隐藏入口。 */
+const canEditVisual = computed(() => !session.isViewer)
+
+function openEditSheet(): void {
+  if (!canEditVisual.value) {
+    return
+  }
+  notice.value = ''
+  showEditSheet.value = true
+}
+
+/** 编辑保存成功：markDirty 由 AccountEditSheet 调用；这里收敛本页数据。 */
+async function onEditSaved(): Promise<void> {
+  showEditSheet.value = false
+  await load()
+}
 
 /** 校准仅对未关户的 Assets / Liabilities / Equity 开放（AC-3.1）。 */
 const canCalibrate = computed(() => {
@@ -428,7 +448,14 @@ onMounted(() => {
       <button type="button" class="acctd__back" @click="goBack">‹ 返回</button>
       <div v-if="account !== null" class="acctd__hero-body">
         <div class="acctd__label">{{ account.type }} · 开户 {{ account.open_date }}<template v-if="closed"> · 已关户（{{ account.close_date }}）</template></div>
-        <h1 class="acctd__name">{{ accountLabel(account) }}</h1>
+        <h1 class="acctd__name">
+          <span
+            class="acctd__icon"
+            :style="account.color ? { color: account.color } : undefined"
+            aria-hidden="true"
+          >{{ catIcon(account) }}</span>
+          {{ accountLabel(account) }}
+        </h1>
         <ul class="acctd__balances">
           <li v-for="code in balanceCodes" :key="code" class="acctd__balance">
             <span>{{ code }}</span>
@@ -449,6 +476,7 @@ onMounted(() => {
         <button type="button" class="acctd__action" :disabled="!canManage" @click="openOpening">期初余额设置</button>
         <button type="button" class="acctd__action acctd__action--ghost" :disabled="!canCalibrate" @click="openBalancePanel">余额校准</button>
         <button type="button" class="acctd__action acctd__action--ghost" @click="openInGlobalTxns">在全局流水中查看本账户</button>
+        <button v-if="canEditVisual" type="button" class="acctd__action acctd__action--ghost" @click="openEditSheet">编辑展示（显示名 / 图标 / 颜色）</button>
         <button type="button" class="acctd__action acctd__action--danger" :disabled="!canManage" @click="openCloseConfirm">
           关闭账户（Beancount close）
         </button>
@@ -604,6 +632,14 @@ onMounted(() => {
       @close="showOpeningForm = false"
       @saved="onOpeningSaved"
     />
+
+    <!-- 批 II：展示字段编辑弹层（在线-only；离线态由弹层内置灰） -->
+    <AccountEditSheet
+      v-if="showEditSheet && account !== null"
+      :account="account"
+      @close="showEditSheet = false"
+      @saved="onEditSaved"
+    />
   </section>
 </template>
 
@@ -641,6 +677,14 @@ onMounted(() => {
   margin: 6px 0 0;
   font-size: 20px;
   font-weight: 800;
+}
+
+/* 批 II 页头图标：行内展示，随账户 color 染色（缺省继承墨色）。 */
+.acctd__icon {
+  display: inline-block;
+  margin-right: 8px;
+  font-size: 20px;
+  line-height: 1;
 }
 
 .acctd__balances {

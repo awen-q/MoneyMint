@@ -27,6 +27,7 @@ const h = vi.hoisted(() => ({
   accountList: vi.fn(),
   accountCreate: vi.fn(),
   txnList: vi.fn(),
+  txnListPage: vi.fn(),
   me: vi.fn(),
   ledgerList: vi.fn(),
   login: vi.fn(),
@@ -46,7 +47,8 @@ vi.mock('vue-router', () => ({
 vi.mock('@/api/client', () => ({
   accountApi: { list: h.accountList, create: h.accountCreate },
   openingApi: { get: vi.fn(), set: vi.fn() },
-  transactionApi: { list: h.txnList },
+  // 批 I 两段加载：ensure() 首段走 listPage（窗口腿）、补齐段走 list
+  transactionApi: { list: h.txnList, listPage: h.txnListPage },
   authApi: {
     me: h.me,
     login: h.login,
@@ -91,12 +93,20 @@ async function mountView(): Promise<ReturnType<typeof mount>> {
   return wrapper
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  // 排空上一用例遗留的补齐段定时器（批 I）：必须排在 mockReset 之前
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, 0)
+  })
+  await Promise.resolve()
   setActivePinia(createPinia())
   h.accountList.mockReset()
   h.txnList.mockReset()
+  h.txnListPage.mockReset()
   h.accountList.mockResolvedValue({ accounts: ACCOUNTS })
   h.txnList.mockResolvedValue({ transactions: [] })
+  // 批 I：首段窗口腿默认空窗口
+  h.txnListPage.mockResolvedValue({ transactions: [] })
   // ledgerData 需要账本上下文才发请求
   useSessionStore().ledgerId = 7
 })

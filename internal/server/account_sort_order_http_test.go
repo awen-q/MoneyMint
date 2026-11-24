@@ -3,7 +3,7 @@ package server
 // 分类排序端点的 HTTP 层回归（P0）：
 //   - PATCH /api/accounts/sort-order 命中字面量路由，不被 {uuid} 吞掉；
 //   - 方法限制（GET/PUT/DELETE 本端点 → 405），既有 /api/accounts/{uuid}
-//     的 DELETE 仍 200、PATCH 仍 405（没有被新路由抢走）；
+//     的 DELETE 仍 200、PATCH 自批 II 起归展示字段端点（空体 400，非 405）；
 //   - 400 校验经统一错误结构返回；viewer 由 middleware 拦截为 403。
 //
 // 与 internal/handler/account_test.go 的分工：那里测 handler 契约与事务回滚，
@@ -93,10 +93,13 @@ func TestAccountSortOrderHTTPContract(t *testing.T) {
 		}
 	}
 
-	// 新字面量路由不得影响 /api/accounts/{uuid}：DELETE 仍成功，PATCH 仍 405。
+	// 字面量路由不得影响 /api/accounts/{uuid}：DELETE 仍成功；
+	// 批 II 起 PATCH /api/accounts/{uuid} 已注册为展示字段修改——空体 {} 全 nil
+	// 落 400（不再是 405），证明请求进的是新 handler 而非被 sort-order 吞掉；
+	// sort-order 的 PATCH 在上方已 200（字面量恒优先，没有被 {uuid} 吞）。
 	st, _, raw = e.do(http.MethodPatch, "/api/accounts/"+a, map[string]any{}, "1", e.token)
-	if st != http.StatusMethodNotAllowed {
-		t.Fatalf("PATCH /api/accounts/{uuid} 应仍 405，实际 %d: %s", st, raw)
+	if st != http.StatusBadRequest {
+		t.Fatalf("PATCH /api/accounts/{uuid} 空体应 400（新展示字段端点全 nil 校验），实际 %d: %s", st, raw)
 	}
 	st, _, raw = e.do(http.MethodDelete, "/api/accounts/"+a, nil, "1", e.token)
 	if st != http.StatusOK {

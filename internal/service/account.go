@@ -2,9 +2,11 @@ package service
 
 import (
 	"errors"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"familyledger/internal/domain"
 	"familyledger/internal/repository"
@@ -15,6 +17,45 @@ import (
 // AccountSortOrderItem 是批量排序提交的单项（跨端一律用 uuid 互引，§8）。
 // 直接复用 repository 的载体，避免两层重复定义与字段漂移。
 type AccountSortOrderItem = repository.AccountSortOrderItem
+
+// AccountVisualUpdate 是 PATCH /api/accounts/{uuid}（批 II）的载荷。
+// 三个指针字段区分「JSON 键缺失（nil = 不改）」与「显式空串（= 清除）」，
+// 手法与 create 的 parent_uuid 一致。
+type AccountVisualUpdate struct {
+	DisplayName *string `json:"display_name"`
+	Icon        *string `json:"icon"`
+	Color       *string `json:"color"`
+}
+
+// AccountVisualUpdated 是账户展示字段修改的响应（最小回显）；
+// 前端拿到 200 后走 markDirty('local-write') → reload 收敛，不再自拼视图。
+type AccountVisualUpdated struct {
+	UUID        string `json:"uuid"`
+	DisplayName string `json:"display_name,omitempty"`
+	Icon        string `json:"icon,omitempty"`
+	Color       string `json:"color,omitempty"`
+}
+
+// accountColorRe 限定账户颜色为 #RRGGBB 六位十六进制（与前端 core 校验同口径）。
+var accountColorRe = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
+
+// validateAccountVisual 校验账户视觉字段（批 II 纯函数，create 与 PATCH 共用）：
+//   - icon 非空时按 rune 计数不得超过 8（与前端 Array.from 码位口径一致，
+//     ZWJ emoji 家族按 1 个字符计）；
+//   - color 非空时必须匹配 #RRGGBB。
+//
+// 空串一律放行（语义是「清除」）。失败返回 400 account_visual_invalid。
+func validateAccountVisual(icon, color string) error {
+	if icon != "" && utf8.RuneCountInString(icon) > 8 {
+		return domain.Codedf(domain.ErrInvalid, domain.CodeAccountVisualInvalid,
+			"账户图标过长（最多 8 个字符），当前 %d 个", utf8.RuneCountInString(icon))
+	}
+	if color != "" && !accountColorRe.MatchString(color) {
+		return domain.Codedf(domain.ErrInvalid, domain.CodeAccountVisualInvalid,
+			"账户颜色需为 #RRGGBB 六位十六进制格式（如 #1F7A4D），当前 %q", color)
+	}
+	return nil
+}
 
 
 // AccountView 是账户列表项的返回视图（含按币种余额）。
@@ -187,6 +228,11 @@ func (s *Service) CreateAccount(ledgerID int64, name, displayName, atype, openDa
 	if err := ValidateAccountName(name, atype); err != nil {
 		return AccountCreated{}, err
 	}
+	// 批 II：create 路径同步接入视觉字段校验（此前 icon/color 不设防）。
+	// 冒烟脚本不传 icon/color 不受影响；seed 默认账户走 repository 直插，同样不受影响。
+	if err := validateAccountVisual(icon, color); err != nil {
+		return AccountCreated{}, err
+	}
 	// 重名含已关闭账户：repository.AccountNameExists 只排除软删行，
 	// close 后的同名账户仍占用全局唯一名（C-04，close 后不可重建同名）。
 	if existing, err := s.repo.AccountNameExists(ledgerID, name); err != nil {
@@ -254,6 +300,61 @@ func (s *Service) CreateAccount(ledgerID int64, name, displayName, atype, openDa
 		ID: id, UUID: a.UUID, Name: name, DisplayName: displayName, Type: atype,
 		OpenDate: openDate, Icon: icon, Color: color, ParentUUID: parentUUID, SubType: subType,
 	}, nil
+}
+
+// UpdateAccountVisual 修改账户展示字段（批 II：PATCH /api/accounts/{uuid}）。
+//
+// 语义：
+//   - 三个键全缺失 → 400（绝不把「空请求」当成「无操作成功」）；
+//   - 键存在即应用：display_name trim 后空串 = 清除；icon/color 空串 = 清除；
+//   - 键缺失 = 保持现值（先读回当前账户再回填，repository 是三列全量 UPDATE）；
+//   - 无重名判定（display_name 无唯一约束，seed 多个「其他」共用；重名判定是
+//     name 字段的规则且本端点不改 name）；
+//   - 已关户账户可改（纯展示字段）；软删 / 跨账本 / 不存在 → 404 account_not_found。
+//
+// UPDATE 与 sync_log(op=update) 同事务（repository 保证），其他端 pull 后展示一致。
+// 导出器不含三字段，.beancount 字节不变。
+func (s *Service) UpdateAccountVisual(ledgerID int64, uuid string, req AccountVisualUpdate) (AccountVisualUpdated, error) {
+	if req.DisplayName == nil && req.Icon == nil && req.Color == nil {
+		return AccountVisualUpdated{}, domain.Invalidf(
+			"请求体为空：display_name / icon / color 至少提供一个字段（空串表示清除）")
+	}
+	// 先读当前账户：键缺失字段要回填现值；顺带把 404 在这里判掉（行不存在 /
+	// 跨账本 / 已软删时 AccountByUUID 返回 ErrNotFound）。
+	current, err := s.repo.AccountByUUID(ledgerID, uuid)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return AccountVisualUpdated{}, domain.Codedf(domain.ErrNotFound, domain.CodeAccountNotFound,
+				"账户不存在或已删除（uuid=%s）", uuid)
+		}
+		return AccountVisualUpdated{}, err
+	}
+	displayName := current.DisplayName
+	if req.DisplayName != nil {
+		displayName = strings.TrimSpace(*req.DisplayName)
+	}
+	icon := current.Icon
+	if req.Icon != nil {
+		// trim 防误粘首尾空白挤占 8 字符码位配额（emoji 本身不含空白）。
+		icon = strings.TrimSpace(*req.Icon)
+	}
+	color := current.Color
+	if req.Color != nil {
+		color = strings.TrimSpace(*req.Color)
+	}
+	if err := validateAccountVisual(icon, color); err != nil {
+		return AccountVisualUpdated{}, err
+	}
+	updated, err := s.repo.UpdateAccountVisual(ledgerID, uuid, displayName, icon, color)
+	if err != nil {
+		return AccountVisualUpdated{}, err
+	}
+	if !updated {
+		// 理论上先读后写在 MaxOpenConns=1 下不会竞态；兜底同样映射 404。
+		return AccountVisualUpdated{}, domain.Codedf(domain.ErrNotFound, domain.CodeAccountNotFound,
+			"账户不存在或已删除（uuid=%s）", uuid)
+	}
+	return AccountVisualUpdated{UUID: uuid, DisplayName: displayName, Icon: icon, Color: color}, nil
 }
 
 // DeleteAccount 关闭账户（Beancount close 语义，0.4-A 起）。

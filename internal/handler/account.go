@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 
 	"familyledger/internal/auth"
@@ -118,6 +120,77 @@ func (h *Handler) HandleCreateAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, created)
+}
+
+// HandleUpdateAccountVisual 修改账户展示字段（批 II）：Body 白名单
+// {display_name?, icon?, color?}，指针区分「键缺失 = 不改」与「显式空串 = 清除」。
+//
+// 白名单外键出现 → 400 并列明拒绝字段（绝不静默忽略，防夹带改 name/sort_order）；
+// 全 nil → 400。viewer 只读由 authMiddleware（非 GET 一律 403）兜住，不重复判定。
+func (h *Handler) HandleUpdateAccountVisual(w http.ResponseWriter, r *http.Request) {
+	ledgerID, ok := auth.LedgerID(r.Context())
+	if !ok {
+		writeError(w, domain.ErrForbidden)
+		return
+	}
+	// 先解成 RawMessage 映射做键白名单审查，再逐键解析成 *string：
+	// 这样既能列出被拒绝的字段名（DisallowUnknownFields 的英文报错做不到），
+	// 又能对值类型显式报错（icon: 123 之类直接 400，不静默转义）。
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		writeError(w, domain.Invalidf("请求体需为 JSON 对象（键：display_name / icon / color，均可选）"))
+		return
+	}
+	allowed := map[string]bool{"display_name": true, "icon": true, "color": true}
+	rejected := make([]string, 0, len(raw))
+	for key := range raw {
+		if !allowed[key] {
+			rejected = append(rejected, key)
+		}
+	}
+	if len(rejected) > 0 {
+		sort.Strings(rejected)
+		writeError(w, domain.Invalidf(
+			"不支持修改字段：%s（本端点仅允许 display_name / icon / color）",
+			strings.Join(rejected, "、")))
+		return
+	}
+	req := service.AccountVisualUpdate{}
+	// readString 解析单个键：键缺失返回 present=false；键存在但值非字符串 → 400。
+	readString := func(key string) (string, bool, error) {
+		value, present := raw[key]
+		if !present {
+			return "", false, nil
+		}
+		var s string
+		if err := json.Unmarshal(value, &s); err != nil {
+			return "", true, domain.Invalidf("字段 %s 的值需为字符串", key)
+		}
+		return s, true, nil
+	}
+	for _, item := range []struct {
+		key string
+		dst **string
+	}{
+		{"display_name", &req.DisplayName},
+		{"icon", &req.Icon},
+		{"color", &req.Color},
+	} {
+		value, present, err := readString(item.key)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if present {
+			*item.dst = &value
+		}
+	}
+	updated, err := h.svc.UpdateAccountVisual(ledgerID, r.PathValue("uuid"), req)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "account": updated})
 }
 
 // HandleDeleteAccount 按 uuid 关闭账户（Beancount close 语义，0.4-A 起）。

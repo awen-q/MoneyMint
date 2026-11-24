@@ -66,8 +66,9 @@ func newRouter(h *handler.Handler, svc *service.Service, webRoot string, corsCfg
 		http.MethodPost: h.HandleCreateAccount,
 	}))
 	// 分类拖拽排序批量提交（P0）：字面量路径比 `/api/accounts/{uuid}` 更具体，
-	// Go 1.22 ServeMux 优先命中本条；PATCH /api/accounts/{uuid} 本身未注册，
-	// 不会被本条吞掉（详见 accounts_sort_order_http_test.go 的路由回归）。
+	// Go 1.22 ServeMux 优先命中本条（注册顺序无关）；批 II 起 `/api/accounts/{uuid}`
+	// 也注册了 PATCH（展示字段修改），两者不冲突——字面量更具体恒胜出
+	// （详见 accounts_sort_order_http_test.go / account_visual_http_test.go 的路由回归）。
 	mux.HandleFunc("/api/accounts/sort-order", methodSwitch(map[string]http.HandlerFunc{
 		http.MethodPatch: h.HandleUpdateAccountSortOrder,
 	}))
@@ -80,7 +81,10 @@ func newRouter(h *handler.Handler, svc *service.Service, webRoot string, corsCfg
 		http.MethodGet:  h.HandleGetBalance,
 		http.MethodPost: h.HandleSetBalance,
 	}))
+	// 批 II：PATCH = 修改展示字段（display_name / icon / color 白名单），
+	// 与既有 DELETE（Beancount close）同路径不同方法；viewer 由 middleware 403。
 	mux.HandleFunc("/api/accounts/{uuid}", methodSwitch(map[string]http.HandlerFunc{
+		http.MethodPatch:  h.HandleUpdateAccountVisual,
 		http.MethodDelete: h.HandleDeleteAccount,
 	}))
 	// 币种管理（0.6.0 S2：GET/POST 列表与新建；DELETE 软删）。
