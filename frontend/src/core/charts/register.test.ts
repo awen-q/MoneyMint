@@ -81,7 +81,9 @@ function createHost(width = 320, height = 200): HTMLDivElement {
 }
 
 describe('register.ts 注册表（真实 echarts）', () => {
-  it('initChart 返回实例，三种图都能渲染出 SVG 节点', async () => {
+  // 真实 echarts 在 jsdom 渲染三张图实测 ~4.1s，对默认 5000ms 余量不足 1s，
+  // 并行构建/全量测试压测下会偶发超时（QA 第 1 轮实测翻车）。放宽到 30s。
+  it('initChart 返回实例，三种图都能渲染出 SVG 节点', { timeout: 30000 }, async () => {
     resetLiveChartCount()
 
     const cases = [
