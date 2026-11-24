@@ -4,6 +4,10 @@
  *
  * 四个态：loading / error / empty / ready。
  *
+ * loading 骨架模式（骨架屏批）：`loading-skeleton` 显式开启后，loading 态从
+ * 「文案 + 呼吸点」换成「卡块 + 文本条」组合骨架（SkeletonBlock），适合
+ * 结构固定区域的等待；默认关闭，既有调用点零感知。
+ *
  * **红线：error 态绝不渲染任何金额。**
  * 报表接口失败时若照常渲染 `¥0.00`，用户会读成「这个月没花钱」——
  * 这是「静默错账」里最危险的一种。所以错误分支里连 0 值兜底都不给，
@@ -15,6 +19,10 @@
  */
 import { computed } from 'vue'
 
+import { t } from '@/i18n'
+
+import SkeletonBlock from './SkeletonBlock.vue'
+
 const props = withDefaults(
   defineProps<{
     /** 当前态。ready 时渲染默认插槽，其余三态渲染内置占位。 */
@@ -23,8 +31,13 @@ const props = withDefaults(
     title?: string
     /** 一句话说明；不传则不渲染。 */
     desc?: string
-    /** loading 态文案；不传时用默认「正在加载…」（批 I：账单页聚合等待用「正在聚合当月数据…」）。 */
+    /** loading 态文案；不传时用默认「正在加载…」（骨架模式下作为读屏文案渲染）。 */
     loadingText?: string
+    /**
+     * loading 态是否渲染骨架块（骨架屏批）：默认 false 保持「文案 + 呼吸点」旧文字档，
+     * 五视图既有调用点零感知；显式开启后渲染组合骨架（当前接入点：资产统计页）。
+     */
+    loadingSkeleton?: boolean
     /** 动作按钮文案；error 态不传时默认「重试」，empty 态不传则不显示按钮。 */
     actionText?: string
     /** 动作按钮禁用（如无权限 / 正在重试）。 */
@@ -34,6 +47,7 @@ const props = withDefaults(
     title: '',
     desc: '',
     loadingText: '',
+    loadingSkeleton: false,
     actionText: '',
     actionDisabled: false,
   },
@@ -49,10 +63,10 @@ const resolvedTitle = computed(() => {
     return props.title
   }
   if (props.state === 'error') {
-    return '加载失败'
+    return t('common.error')
   }
   if (props.state === 'empty') {
-    return '暂无数据'
+    return t('common.empty')
   }
   return ''
 })
@@ -61,12 +75,12 @@ const resolvedActionText = computed(() => {
   if (props.actionText !== '') {
     return props.actionText
   }
-  return props.state === 'error' ? '重试' : ''
+  return props.state === 'error' ? t('common.retry') : ''
 })
 
 /** loading 文案：显式传入优先，否则保持默认（既有页面零感知）。 */
 const resolvedLoadingText = computed(() =>
-  props.loadingText !== '' ? props.loadingText : '正在加载…',
+  props.loadingText !== '' ? props.loadingText : t('common.loading'),
 )
 
 const showAction = computed(
@@ -80,8 +94,26 @@ function onAction(): void {
 
 <template>
   <section class="sc" :class="`sc--${state}`">
+    <!-- loading（骨架模式）：结构固定区域的等待 —— 卡块 + 三条文本条组合。
+         读屏文案沿用 resolvedLoadingText，role=status / aria-live 语义与文字档一致；
+         骨架块是纯装饰（SkeletonBlock 自带 aria-hidden）。 -->
+    <div
+      v-if="state === 'loading' && loadingSkeleton"
+      class="sc-skel"
+      role="status"
+      aria-live="polite"
+    >
+      <span class="sc-skel__sr">{{ resolvedLoadingText }}</span>
+      <SkeletonBlock variant="card" height="140px" />
+      <div class="sc-skel__lines">
+        <SkeletonBlock variant="line" width="86%" />
+        <SkeletonBlock variant="line" width="64%" />
+        <SkeletonBlock variant="line" width="78%" />
+      </div>
+    </div>
+
     <!-- loading：一行「正在加载…」+ 三个呼吸点，不放任何占位金额 -->
-    <p v-if="state === 'loading'" class="sc-loading" role="status" aria-live="polite">
+    <p v-else-if="state === 'loading'" class="sc-loading" role="status" aria-live="polite">
       <span class="sc-loading__dots" aria-hidden="true">
         <i /><i /><i />
       </span>
@@ -164,6 +196,36 @@ function onAction(): void {
 
 .sc-loading__text {
   font-variant-numeric: var(--fb-font-numeric);
+}
+
+/* loading 骨架模式（骨架屏批）：色值只走 --fb-skeleton-*（SkeletonBlock 内部），
+   这里只管排版。sr 文案视觉隐藏但保留 aria-live 播报。 */
+.sc-skel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--fb-space-3);
+  padding: var(--fb-space-4);
+  border: 1px dashed var(--fb-line);
+  border-radius: var(--fb-radius-card);
+  background: var(--fb-card);
+}
+
+.sc-skel__lines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--fb-space-2);
+}
+
+.sc-skel__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .sc-box {

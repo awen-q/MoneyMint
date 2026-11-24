@@ -98,3 +98,31 @@ describe('StateCard：ready', () => {
     expect(wrapper.find('.sc-loading').exists()).toBe(false)
   })
 })
+
+describe('StateCard：loading 骨架模式（骨架屏批）', () => {
+  it('loadingSkeleton=true：渲染骨架块组合，不再渲染呼吸点文字档', () => {
+    const wrapper = mount(StateCard, { props: { state: 'loading', loadingSkeleton: true } })
+    expect(wrapper.find('.sc-skel').exists()).toBe(true)
+    expect(wrapper.find('.sc-loading').exists()).toBe(false)
+    // 骨架块来自 SkeletonBlock（card 卡块 + 3 条 line 文本条）
+    expect(wrapper.find('.skel--card').exists()).toBe(true)
+    expect(wrapper.findAll('.skel--line')).toHaveLength(3)
+    // role=status 语义不丢，读屏文案仍是默认「正在加载…」
+    expect(wrapper.find('[role="status"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('正在加载')
+  })
+
+  it('默认关闭：loading 态保持旧文字档（既有调用点零感知）', () => {
+    const wrapper = mount(StateCard, { props: { state: 'loading' } })
+    expect(wrapper.find('.sc-loading').exists()).toBe(true)
+    expect(wrapper.find('.sc-skel').exists()).toBe(false)
+  })
+
+  it('骨架模式下 loadingText 自定义文案进入读屏文案', () => {
+    const wrapper = mount(StateCard, {
+      props: { state: 'loading', loadingSkeleton: true, loadingText: '正在聚合数据…' },
+    })
+    expect(wrapper.text()).toContain('正在聚合数据…')
+    expect(wrapper.find('.sc-skel').exists()).toBe(true)
+  })
+})

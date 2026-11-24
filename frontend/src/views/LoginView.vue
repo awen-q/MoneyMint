@@ -14,6 +14,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { authApi, settingsApi } from '@/api/client'
 import { ApiError } from '@/api/errors'
+import { t } from '@/i18n'
 import PasswordInput from '@/components/PasswordInput.vue'
 import { useSessionStore } from '@/stores/session'
 
@@ -47,7 +48,7 @@ function switchMode(): void {
   error.value = ''
   if (mode.value === 'login') {
     if (registrationAllowed.value === false) {
-      error.value = '注册已关闭，请联系管理员在设置中开放，或由 owner 邀请加入'
+      error.value = t('login.errRegistrationClosed')
       return
     }
     mode.value = 'register'
@@ -77,11 +78,11 @@ async function submit(): Promise<void> {
   error.value = ''
   const name = username.value.trim()
   if (name === '' || password.value === '') {
-    error.value = '请输入用户名和密码'
+    error.value = t('login.errRequired')
     return
   }
   if (mode.value === 'register' && password.value.length < 6) {
-    error.value = '注册密码至少 6 位'
+    error.value = t('login.errPasswordTooShort')
     return
   }
   busy.value = true
@@ -100,7 +101,7 @@ async function submit(): Promise<void> {
     password.value = ''
     await redirectAfterLogin()
   } catch (err) {
-    error.value = err instanceof ApiError ? err.message : '操作失败，请稍后重试'
+    error.value = err instanceof ApiError ? err.message : t('login.errGeneric')
   } finally {
     busy.value = false
   }
@@ -121,55 +122,60 @@ onMounted(() => { void loadRegistration() })
         loading="eager"
       />
       <h1>FamBean</h1>
-      <p>家庭记账 · 每一笔都清清楚楚</p>
+      <p>{{ t('login.heroTagline') }}</p>
     </div>
 
     <form class="fb-card auth__card" @submit.prevent="submit">
       <label class="auth__field">
-        <span>用户名</span>
+        <span>{{ t('login.username') }}</span>
         <input
           class="fb-input"
           v-model="username"
           type="text"
           autocomplete="username"
-          placeholder="用户名"
+          :placeholder="t('login.username')"
         />
       </label>
       <label v-if="mode === 'register'" class="auth__field">
-        <span>显示名（可选）</span>
-        <input class="fb-input" v-model="displayName" type="text" placeholder="如 阿文" />
+        <span>{{ t('login.displayName') }}</span>
+        <input
+          class="fb-input"
+          v-model="displayName"
+          type="text"
+          :placeholder="t('login.displayNamePlaceholder')"
+        />
       </label>
       <label class="auth__field">
-        <span>密码</span>
+        <span>{{ t('login.password') }}</span>
         <PasswordInput
           v-model="password"
           :autocomplete="mode === 'register' ? 'new-password' : 'current-password'"
-          placeholder="密码"
+          :placeholder="t('login.password')"
         />
       </label>
 
       <p v-if="mode === 'register'" class="auth__hint" :class="{ 'auth__hint--warn': registrationAllowed === false }">
         <template v-if="registrationAllowed === false">
-          注册已关闭：请由管理员在「设置 → 开放注册」中开启，或由账本 owner 通过成员管理邀请你加入。
+          {{ t('login.hintRegistrationClosed') }}
         </template>
         <template v-else>
-          首个注册的账号自动成为系统管理员并创建默认账本；之后的账号需管理员开放注册或由 owner 邀请加入账本。
+          {{ t('login.hintRegistrationOpen') }}
         </template>
       </p>
 
       <p v-if="error" class="auth__error" role="alert">{{ error }}</p>
 
       <button class="fb-btn-primary auth__submit" type="submit" :disabled="busy">
-        {{ busy ? '处理中…' : mode === 'register' ? '注 册' : '登 录' }}
+        {{ busy ? t('login.working') : mode === 'register' ? t('login.register') : t('login.login') }}
       </button>
 
       <button class="auth__switch" type="button" @click="switchMode">
-        {{ mode === 'login' ? '没有账号？注册' : '已有账号？返回登录' }}
+        {{ mode === 'login' ? t('login.switchToRegister') : t('login.switchToLogin') }}
       </button>
 
       <p class="auth__note">
-        忘记密码？请联系管理员（owner）在成员管理中重置。<br />
-        新账号需由 owner 邀请加入账本后才能记账。
+        {{ t('login.noteResetPassword') }}<br />
+        {{ t('login.noteInviteOnly') }}
       </p>
     </form>
   </div>

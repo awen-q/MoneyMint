@@ -114,10 +114,9 @@ jobs:
         env:
           # 两个下限都必填：用例下限防「静默少收集」，文件下限防「删一个文件」。
           # 只增不减；每次加测试后按实测值上调（验收时统一抬）。
-          # 记账页资金账户记忆 + 快捷日期条落地后实测：107 文件 / 1059 用例 / 0 skip / 0 失败
-          # 当前实测：116 文件 / 1106 用例（含版本号展示、小票分享图、构建元数据链路、日历收入行、遮挡态中性化）
-          TEST_FLOOR: '1106'       # 有效用例数（已扣除 skip/todo）；下限 == 实测值时，少一条即红
-          TEST_FILE_FLOOR: '116'   # 测试文件数；用例下限对「删一个文件」几乎无感，靠这条兜
+          # 当前实测：128 文件 / 1292 用例（i18n 阶段 0 试点 +20、QA 修复轮 +1：navItems getter 生产时序回归）
+          TEST_FLOOR: '1292'       # 有效用例数（已扣除 skip/todo）；下限 == 实测值时，少一条即红
+          TEST_FILE_FLOOR: '128'   # 测试文件数；用例下限对「删一个文件」几乎无感，靠这条兜
         run: |
           npx vitest run --reporter=default --reporter=json --outputFile=vitest-report.json
           node ../scripts/check-test-floor.mjs vitest-report.json "$TEST_FLOOR" "$TEST_FILE_FLOOR"
