@@ -27,6 +27,7 @@ import { useRouter } from 'vue-router'
 
 import { buildAssetBreakdown, type AssetBreakdown } from '@/core/assets'
 import { computeBalanceSummary, type BalanceSummary } from '@/core/record'
+import { t } from '@/i18n'
 import { useLedgerDataStore } from '@/stores/ledgerData'
 import { usePeriodStore } from '@/stores/period'
 import { usePrivacyStore } from '@/stores/privacy'
@@ -35,9 +36,6 @@ import AccountForm from '@/components/AccountForm.vue'
 import AssetGroupList from '@/components/assets/AssetGroupList.vue'
 import AssetHero from '@/components/assets/AssetHero.vue'
 import StateCard from '@/components/shell/StateCard.vue'
-
-/** 刷新失败但仍有旧快照时的内联提示（四页逐字统一）。 */
-const STALE_NOTICE = '刷新失败，当前显示的是上次数据'
 
 const data = useLedgerDataStore()
 const period = usePeriodStore()
@@ -73,7 +71,10 @@ const foreignNote = computed(() => {
   if (codes.length === 0) {
     return ''
   }
-  return `外币账户（${codes.join('、')}）按自身币种展示，不计入 ${breakdown.value.commodity} 合计`
+  return t('assets.foreignNote', {
+    codes: codes.join('、'),
+    commodity: breakdown.value.commodity,
+  })
 })
 
 /** 整页四态（v3.2 冻结判据）。 */
@@ -99,10 +100,10 @@ const staleError = computed(() => (data.error !== '' && data.loaded ? data.error
  */
 const cardDesc = computed(() => {
   if (pageState.value === 'error') {
-    return '请检查网络后重试。'
+    return t('common.networkRetry')
   }
   if (pageState.value === 'empty') {
-    return `还没有资产或负债账户，请由账本所有者先在账户管理里创建（当前 ${commodity.value} 口径）。`
+    return t('assets.emptyDesc', { commodity: commodity.value })
   }
   return ''
 })
@@ -135,7 +136,7 @@ function closeCreateForm(): void {
  * StateCard 默认「重试」。空态文案保持既有不动（按钮直达已解决可达性）。
  */
 const stateActionText = computed(() =>
-  pageState.value === 'empty' && !session.isViewer ? '＋ 新建账户' : '',
+  pageState.value === 'empty' && !session.isViewer ? t('accounts.create') : '',
 )
 
 function onStateAction(): void {
@@ -162,7 +163,7 @@ const closedNote = computed(() => {
   if (count === 0) {
     return ''
   }
-  return `含 ${count} 个已关户账户（仍列出，历史余额可核对）`
+  return t('assets.closedNote', { count: String(count) })
 })
 </script>
 
@@ -170,24 +171,24 @@ const closedNote = computed(() => {
   <section class="assets">
     <!-- ① hero：页名 + 一句话说明 -->
     <header class="assets__hero">
-      <h1 class="assets__title">资产</h1>
+      <h1 class="assets__title">{{ t('shell.nav.assets') }}</h1>
     </header>
 
     <!-- ② 工具行卡：标题 + 创建入口（非 viewer）+「资产统计 ›」入口（与 /assets/stats 路由同批落地，见脚本注释 5） -->
     <section class="assets__card assets__card--tool">
       <div class="assets__tool-row">
-        <h2 class="assets__card-title">资产总览</h2>
+        <h2 class="assets__card-title">{{ t('assets.overview') }}</h2>
         <div class="assets__tool-actions">
-          <button v-if="!session.isViewer" type="button" class="assets__create" @click="openCreate">＋ 新建账户</button>
-          <button type="button" class="assets__link" @click="goAssetStats">资产统计 ›</button>
+          <button v-if="!session.isViewer" type="button" class="assets__create" @click="openCreate">{{ t('accounts.create') }}</button>
+          <button type="button" class="assets__link" @click="goAssetStats">{{ t('shell.nav.assetStats') }} ›</button>
         </div>
       </div>
     </section>
 
     <!-- 刷新失败但有旧快照：留在 ready，只出内联提示条 -->
     <p v-if="staleError !== ''" class="assets__stale" role="status">
-      <span class="assets__stale-text">{{ STALE_NOTICE }}</span>
-      <button type="button" class="assets__stale-btn" @click="reload">重试</button>
+      <span class="assets__stale-text">{{ t('common.staleNotice') }}</span>
+      <button type="button" class="assets__stale-btn" @click="reload">{{ t('common.retry') }}</button>
     </p>
 
     <!-- ③ 净资产总计：四态之外（空态也不能把这块答案藏起来） -->
@@ -196,8 +197,8 @@ const closedNote = computed(() => {
     <!-- ④ 资产列表：四态承载内容区 -->
     <section class="assets__card">
       <div class="assets__card-head">
-        <h2 class="assets__card-title">资产列表</h2>
-        <span class="assets__card-note">名称 · 金额 · 货币</span>
+        <h2 class="assets__card-title">{{ t('assets.listTitle') }}</h2>
+        <span class="assets__card-note">{{ t('assets.listNote') }}</span>
       </div>
       <StateCard :state="pageState" :desc="cardDesc" :action-text="stateActionText" @action="onStateAction">
         <AssetGroupList
@@ -206,9 +207,7 @@ const closedNote = computed(() => {
           :masked="privacy.enabled"
         />
         <p v-if="closedNote !== ''" class="assets__hint">{{ closedNote }}</p>
-        <p class="assets__hint">
-          外币账户按自身币种展示并打币种 chip，不计入 {{ breakdown.commodity }} 合计；负债行负号保留
-        </p>
+        <p class="assets__hint">{{ t('assets.listHint', { commodity: breakdown.commodity }) }}</p>
       </StateCard>
     </section>
 

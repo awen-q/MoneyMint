@@ -15,6 +15,7 @@ import { computed } from 'vue'
 
 import { Money } from '@/core/Money'
 import type { BalanceSummary } from '@/core/record'
+import { t } from '@/i18n'
 import MoneyText from '@/components/MoneyText.vue'
 
 const props = defineProps<{
@@ -43,10 +44,8 @@ const netNegative = computed(() => {
 </script>
 
 <template>
-  <section class="asset-hero" aria-label="资产总计">
-    <p class="asset-hero__label">
-      净资产 · ΣAssets + ΣLiabilities（{{ commodity }} 口径）
-    </p>
+  <section class="asset-hero" :aria-label="t('assets.netWorth')">
+    <p class="asset-hero__label">{{ t('assets.netWorthLabel', { commodity }) }}</p>
     <div class="asset-hero__net">
       <MoneyText
         :amount="summary.netWorthTotal"
@@ -56,12 +55,10 @@ const netNegative = computed(() => {
       />
     </div>
     <!-- 负净资产：如实保留负号，并解释为什么是负的（不隐藏、不 abs） -->
-    <p v-if="netNegative" class="asset-hero__neg-note">
-      净资产为负：负债（房贷）高于金融资产，负号如实保留（不 abs、不隐藏）
-    </p>
+    <p v-if="netNegative" class="asset-hero__neg-note">{{ t('assets.negNote') }}</p>
     <div class="asset-hero__row">
       <div class="asset-hero__metric">
-        <span>总资产</span>
+        <span>{{ t('assets.totalAssets') }}</span>
         <MoneyText
           :amount="summary.assetTotal"
           :commodity="commodity"
@@ -71,7 +68,7 @@ const netNegative = computed(() => {
       </div>
       <div class="asset-hero__vline" aria-hidden="true"></div>
       <div class="asset-hero__metric">
-        <span>总负债</span>
+        <span>{{ t('assets.totalLiabilities') }}</span>
         <MoneyText
           :amount="summary.liabilityTotal"
           :commodity="commodity"

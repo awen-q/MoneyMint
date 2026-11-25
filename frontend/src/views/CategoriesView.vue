@@ -247,17 +247,6 @@ const noParentOptionText = computed(() =>
   t('categories.noParentOption', { type: newType.value }),
 )
 
-/** 分组标题的本地化（core GROUP_LABELS 是中文，视图内等价映射，待 core 子批收敛）。 */
-function groupLabel(type: string): string {
-  if (type === 'Expenses') {
-    return t('categories.groupExpenses')
-  }
-  if (type === 'Income') {
-    return t('categories.groupIncome')
-  }
-  return type
-}
-
 function onNewNameChange(event: Event): void {
   newName.value = (event.target as HTMLInputElement).value
 }
@@ -508,8 +497,8 @@ onMounted(() => {
       </div>
 
       <div v-for="group in groups" :key="group.type" class="fb-card cats__card">
-        <h3>{{ t('categories.groupHeading', { label: groupLabel(group.type), n: String(group.rows.length) }) }}</h3>
-        <p v-if="group.rows.length === 0" class="cats__empty">{{ t('categories.emptyGroup', { label: groupLabel(group.type) }) }}</p>
+        <h3>{{ t('categories.groupHeading', { label: group.label, n: String(group.rows.length) }) }}</h3>
+        <p v-if="group.rows.length === 0" class="cats__empty">{{ t('categories.emptyGroup', { label: group.label }) }}</p>
         <ul v-else class="cats__list">
           <li
             v-for="(row, index) in group.rows"

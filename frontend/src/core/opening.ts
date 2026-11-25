@@ -7,6 +7,7 @@
  * - 落库符号由方向决定：持有 = 正、欠款 = 负（FR-05），前端只上送绝对值与方向。
  */
 import { Money } from './Money'
+import { t } from '../i18n'
 
 export type OpeningDirection = 'hold' | 'owe'
 
@@ -39,40 +40,43 @@ export function validateOpeningForm(input: OpeningFormInput): OpeningValidation 
   let absAmount: string | null = null
 
   if (input.accountType !== 'Assets' && input.accountType !== 'Liabilities') {
-    errors.push('仅资产 / 负债账户可设置期初余额')
+    errors.push(t('core.opening.errTypeNotSupported'))
   }
   if (!DATE_RE.test(input.ledgerOpeningDate)) {
-    errors.push('账本期初日期格式不合法')
+    errors.push(t('core.opening.errLedgerDateInvalid'))
   }
   if (!DATE_RE.test(input.accountOpenDate)) {
-    errors.push('账户开户日格式不合法')
+    errors.push(t('core.opening.errAccountDateInvalid'))
   } else if (
     DATE_RE.test(input.ledgerOpeningDate) &&
     input.accountOpenDate > input.ledgerOpeningDate
   ) {
     errors.push(
-      `账户开户日（${input.accountOpenDate}）不得晚于账本期初日期（${input.ledgerOpeningDate}）`,
+      t('core.opening.errOpenAfterLedger', {
+        account: input.accountOpenDate,
+        ledger: input.ledgerOpeningDate,
+      }),
     )
   }
 
   const raw = input.amount.trim()
   if (raw === '') {
-    errors.push('请输入期初金额')
+    errors.push(t('core.opening.errAmountRequired'))
   } else {
     try {
       const value = Money.from(raw)
       if (value.isNegative()) {
-        errors.push('期初金额必须为非负数，方向请用「持有 / 欠款」表达')
+        errors.push(t('core.opening.errAmountNegative'))
       } else {
         absAmount = value.toString()
       }
     } catch {
-      errors.push('期初金额格式不正确（只接受普通十进制数字）')
+      errors.push(t('core.opening.errAmountInvalid'))
     }
   }
 
   if (input.direction !== 'hold' && input.direction !== 'owe') {
-    errors.push('期初方向必须是「持有」或「欠款」')
+    errors.push(t('core.opening.errDirectionInvalid'))
   }
 
   return { ok: errors.length === 0, errors, absAmount }

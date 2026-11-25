@@ -14,6 +14,8 @@
  */
 import { onBeforeUnmount, ref, watch } from 'vue'
 
+import { t } from '@/i18n'
+
 const props = withDefaults(
   defineProps<{
     /** 当前关键词（受控）。 */
@@ -107,12 +109,12 @@ onBeforeUnmount(() => {
         v-model="local"
         type="search"
         class="search-bar__input"
-        placeholder="搜索备注 / 分类 / 账户 / 成员 / 标签…"
-        aria-label="搜索关键词"
+        :placeholder="t('search.placeholder')"
+        :aria-label="t('search.keywordLabel')"
         @input="onInput"
         @keydown.enter.prevent="submit"
       />
-      <button type="button" class="search-bar__submit" @click="submit">搜索</button>
+      <button type="button" class="search-bar__submit" @click="submit">{{ t('search.submit') }}</button>
     </div>
 
     <div v-if="chips.length > 0" class="search-bar__chips" aria-live="polite">
@@ -121,7 +123,7 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="search-bar__chip-x"
-          :aria-label="`移除筛选：${chip.label}`"
+          :aria-label="t('search.removeChip', { label: chip.label })"
           @click="removeChip(chip.key)"
         >✕</button>
       </span>
@@ -134,7 +136,7 @@ onBeforeUnmount(() => {
       :aria-controls="moreId"
       @click="toggleMore"
     >
-      更多筛选 <span aria-hidden="true">{{ moreOpen ? '▴' : '▾' }}</span>
+      {{ t('search.moreFilters') }} <span aria-hidden="true">{{ moreOpen ? '▴' : '▾' }}</span>
     </button>
 
     <div v-show="moreOpen" :id="moreId" class="search-bar__more">
@@ -142,7 +144,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="chips.length > 0" class="search-bar__reset">
-      <button type="button" class="search-bar__reset-btn" @click="emit('clear')">清除全部条件</button>
+      <button type="button" class="search-bar__reset-btn" @click="emit('clear')">{{ t('search.clearAll') }}</button>
     </div>
   </div>
 </template>

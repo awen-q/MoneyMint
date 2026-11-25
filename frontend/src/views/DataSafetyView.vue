@@ -12,10 +12,8 @@
  * 新版导出前先跑 `GET /api/identity/check`，不平即**阻断**并列出按币种差额。
  * 导出成功后仍读 `X-Ledger-*` 响应头做二次提示（双保险）。
  *
- * i18n 阶段 2 子批 3（数据域）：用户可见文案走字典。**待收敛**：以下文案
- * 原本由 `core/batch3` 输出中文，本视图内做了等价映射（core 未改动）：
- * `mapBackupError` 的错误文案、`formatIdentityDiffs` 的“、”分隔符；
- * `relativeTime` / `formatBackupSize` 属日期/体积格式化，按约定不动。
+ * i18n 阶段 2 子批 5a：备份错误文案与差额拼接改为直接消费 `core/batch3`
+ * （`mapBackupError` / `formatIdentityDiffs`），视图内不再保留等价映射。
  */
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -28,11 +26,12 @@ import {
   downloadBlob,
   downloadText,
   formatBackupSize,
+  formatIdentityDiffs,
   fromIdentityDiffs,
+  mapBackupError,
   relativeTime,
 } from '@/core/batch3'
 import { buildCsvRowsFromTransactions, buildTransactionsCsv } from '@/core/csv'
-import { formatAmount } from '@/core/Money'
 import { t } from '@/i18n'
 import { useSessionStore } from '@/stores/session'
 
@@ -65,35 +64,6 @@ function messageOf(err: unknown): string {
   return err instanceof ApiError ? err.message : t('dataSafety.errGeneric')
 }
 
-/** 备份错误码 → 文案（core/batch3.mapBackupError 的视图内等价映射，待收敛）。 */
-function backupErrorText(status: number, message: string): string {
-  switch (status) {
-    case 401:
-      return t('dataSafety.errLogin')
-    case 403:
-      return t('dataSafety.errForbidden')
-    case 409:
-      return t('dataSafety.errConflict')
-    case 503:
-      return t('dataSafety.errDisabled')
-    case 0:
-      return t('dataSafety.errNetwork')
-    default:
-      return message === '' ? t('dataSafety.errGeneric') : message
-  }
-}
-
-/** 差额明细文案（core/batch3.formatIdentityDiffs 的视图内等价映射，待收敛）。 */
-function identityDiffText(diffs: Array<{ commodity: string; amount: string }>): string {
-  const parts: string[] = []
-  for (const diff of diffs) {
-    const text = formatAmount(diff.amount)
-    const sign = text.charAt(0) === '-' || text === '0.00' ? '' : '+'
-    parts.push(`${diff.commodity} ${sign}${text}`)
-  }
-  return parts.join(t('dataSafety.diffSeparator'))
-}
-
 /** M2（P-19 / P-20）：导入 / 恢复向导页入口。 */
 function goImport(): void {
   void router.push({ name: 'import' })
@@ -113,7 +83,7 @@ async function loadBackups(): Promise<void> {
     items.value = Array.isArray(res.items) ? res.items : []
   } catch (err) {
     backupError.value =
-      err instanceof ApiError ? backupErrorText(err.status, err.message) : backupErrorText(0, '')
+      err instanceof ApiError ? mapBackupError(err.status, err.message) : mapBackupError(0, '')
   } finally {
     backupLoading.value = false
   }
@@ -132,7 +102,7 @@ async function runBackup(): Promise<void> {
     await loadBackups()
   } catch (err) {
     backupError.value =
-      err instanceof ApiError ? backupErrorText(err.status, err.message) : backupErrorText(0, '')
+      err instanceof ApiError ? mapBackupError(err.status, err.message) : mapBackupError(0, '')
   } finally {
     backupBusy.value = false
   }
@@ -146,7 +116,7 @@ async function downloadBackup(name: string): Promise<void> {
     notice.value = t('dataSafety.noticeDownloaded', { name })
   } catch (err) {
     backupError.value =
-      err instanceof ApiError ? backupErrorText(err.status, err.message) : backupErrorText(0, '')
+      err instanceof ApiError ? mapBackupError(err.status, err.message) : mapBackupError(0, '')
   }
 }
 
@@ -158,7 +128,7 @@ async function ensureBalanced(): Promise<boolean> {
     const res = await identityApi.check()
     if (!res.balanced) {
       unbalanced.value = true
-      diffText.value = identityDiffText(fromIdentityDiffs(res.diffs))
+      diffText.value = formatIdentityDiffs(fromIdentityDiffs(res.diffs))
       return false
     }
     unbalanced.value = false
@@ -184,7 +154,7 @@ async function exportFile(kind: 'beancount' | 'archive'): Promise<void> {
     const filename = kind === 'beancount' ? 'family.beancount' : 'ledger-beancount.zip'
     downloadBlob(filename, result.blob)
     if (!result.balanced) {
-      actionError.value = t('dataSafety.exportedUnbalanced', { diffs: identityDiffText(result.diffs) })
+      actionError.value = t('dataSafety.exportedUnbalanced', { diffs: formatIdentityDiffs(result.diffs) })
     } else {
       notice.value = t('dataSafety.noticeExported', { filename })
     }

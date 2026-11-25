@@ -13,6 +13,7 @@ import { computed } from 'vue'
 
 import type { CategoryShare } from '@/core/reports'
 import type { DailyRow } from '@/core/stats'
+import { t } from '@/i18n'
 import { getChartPalette, readThemeTokens, themeEpoch } from '@/styles/themeTokens'
 import BarChart from '@/components/charts/BarChart.vue'
 
@@ -75,15 +76,15 @@ const chartData = computed(() => {
 })
 
 const title = computed(() => {
-  const dirLabel = props.direction === 'income' ? '收入' : '支出'
+  const dirLabel = props.direction === 'income' ? t('common.income') : t('common.expense')
   if (!drilled.value) {
-    return `${dirLabel}分类统计`
+    return t('stats.barTitle', { dir: dirLabel })
   }
-  return `${props.drilledLabel} · 每日${dirLabel}`
+  return t('stats.barDrilledTitle', { label: props.drilledLabel, dir: dirLabel })
 })
 
 const emptyText = computed(() =>
-  drilled.value ? '该分类本月没有记录' : '本月没有该方向的记录',
+  drilled.value ? t('stats.barEmptyDrill') : t('stats.barEmpty'),
 )
 
 /** 点柱：全部分类时按索引下钻到对应分类；已下钻时不再响应（避免重复下钻）。 */
@@ -102,31 +103,31 @@ function onPick(index: number): void {
 <template>
   <section class="cat-bar">
     <header class="cat-bar__head">
-      <div class="cat-bar__seg" role="group" aria-label="柱状图收支方向">
+      <div class="cat-bar__seg" role="group" :aria-label="t('stats.barDirectionLabel')">
         <button
           type="button"
           class="cat-bar__seg-btn"
           :class="{ 'cat-bar__seg-btn--on': direction === 'expense' }"
           :aria-pressed="direction === 'expense'"
           @click="emit('select-direction', 'expense')"
-        >支出</button>
+        >{{ t('common.expense') }}</button>
         <button
           type="button"
           class="cat-bar__seg-btn"
           :class="{ 'cat-bar__seg-btn--on': direction === 'income' }"
           :aria-pressed="direction === 'income'"
           @click="emit('select-direction', 'income')"
-        >收入</button>
+        >{{ t('common.income') }}</button>
       </div>
       <span class="cat-bar__title">{{ title }}</span>
       <button v-if="drilled" type="button" class="cat-bar__back" @click="emit('drill', null)">
-        ‹ 返回全部分类
+        {{ t('stats.backAllCategories') }}
       </button>
     </header>
 
     <BarChart
       :title="title"
-      :chart-label="`${title}，${commodity} 口径`"
+      :chart-label="t('stats.barChartLabel', { title, commodity })"
       :data="chartData"
       :color="barColor"
       :masked="masked"

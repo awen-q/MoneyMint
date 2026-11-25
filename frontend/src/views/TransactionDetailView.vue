@@ -18,6 +18,7 @@ import { accountApi, transactionApi } from '@/api/client'
 import { ApiError } from '@/api/errors'
 import type { AccountView, TransactionView } from '@/api/types'
 import { buildBeanSnippet } from '@/core/bean'
+import { t } from '@/i18n'
 import {
   displayEntryOf,
   displayKindOf,
@@ -76,59 +77,67 @@ const entry = computed(() =>
     : displayEntryOf(txn.value.postings, accounts.value),
 )
 
-const KIND_LABELS: Record<TransactionKind, string> = {
-  expense: '支出 EXPENSE',
-  income: '收入 INCOME',
-  transfer: '转账 TRANSFER',
-  opening: '期初 OPENING',
+/** 票面类型徽标（随当前语言；在渲染/调用时求值，不做模块顶层快照）。 */
+function kindLabel(kind: TransactionKind): string {
+  switch (kind) {
+    case 'expense':
+      return t('txnDetail.kindExpense')
+    case 'income':
+      return t('txnDetail.kindIncome')
+    case 'transfer':
+      return t('txnDetail.kindTransfer')
+    default:
+      return t('txnDetail.kindOpening')
+  }
 }
 
 /** 票面印章：核对 / 待核对 / 已冲正 / 冲正（已冲正优先，与编辑入口判定同口径）。 */
 const stamp = computed<{ text: string; sub: string; tone: 'green' | 'amber' | 'blue' | 'red' }>(
   () => {
-    const t = txn.value
-    if (t !== null && (t.reversed_by ?? '') !== '') {
-      return { text: '已冲正', sub: 'REVERSED', tone: 'red' }
+    // 局部变量原名 t 会遮蔽 i18n 的 t()，改名 item。
+    const item = txn.value
+    if (item !== null && (item.reversed_by ?? '') !== '') {
+      return { text: t('txnDetail.stampReversed'), sub: 'REVERSED', tone: 'red' }
     }
-    if (t !== null && (t.reversal_of ?? '') !== '') {
-      return { text: '冲正', sub: 'REVERSAL', tone: 'blue' }
+    if (item !== null && (item.reversal_of ?? '') !== '') {
+      return { text: t('txnDetail.stampReversal'), sub: 'REVERSAL', tone: 'blue' }
     }
-    if (t !== null && t.flag === '!') {
-      return { text: '待核对', sub: 'UNCHECKED', tone: 'amber' }
+    if (item !== null && item.flag === '!') {
+      return { text: t('txnDetail.stampUnchecked'), sub: 'UNCHECKED', tone: 'amber' }
     }
-    return { text: '已核对', sub: 'VERIFIED', tone: 'green' }
+    return { text: t('txnDetail.stampVerified'), sub: 'VERIFIED', tone: 'green' }
   },
 )
 
 const rows = computed<Array<{ label: string; value?: string; tags?: string[] }>>(() => {
-  const t = txn.value
-  if (t === null) {
+  const item = txn.value
+  if (item === null) {
     return []
   }
   const list: Array<{ label: string; value?: string; tags?: string[] }> = [
-    { label: '日期', value: t.date },
-    { label: '备注', value: t.description },
+    { label: t('txnDetail.rowDate'), value: item.date },
+    { label: t('txnDetail.rowDescription'), value: item.description },
   ]
-  if (Array.isArray(t.tags) && t.tags.length > 0) {
-    list.push({ label: '标签', tags: t.tags })
+  if (Array.isArray(item.tags) && item.tags.length > 0) {
+    list.push({ label: t('txnDetail.rowTags'), tags: item.tags })
   }
   if (kind.value === 'transfer') {
-    list.push({ label: '转账', value: transferRoute(t.postings, accounts.value) })
+    list.push({ label: t('txnDetail.rowTransfer'), value: transferRoute(item.postings, accounts.value) })
   }
-  if ((t.created_by_name ?? '') !== '') {
-    list.push({ label: '记账人', value: t.created_by_name })
+  if ((item.created_by_name ?? '') !== '') {
+    list.push({ label: t('txnDetail.rowMember'), value: item.created_by_name })
   }
   return list
 })
 
 const postingRows = computed<Array<{ account: string; commodity: string; amount: string }>>(() => {
-  const t = txn.value
-  if (t === null) {
+  const item = txn.value
+  if (item === null) {
     return []
   }
   // 票面分录行刻意显示 Beancount 全名（而非 account_display_name）：
   // `.beancount` 可核对、可与导出文件逐行对照，这是小票的设计前提，不要改成展示名。
-  return t.postings.map((posting) => ({
+  return item.postings.map((posting) => ({
     account: posting.account,
     commodity: posting.commodity,
     amount: posting.amount,
@@ -145,16 +154,16 @@ const postingRows = computed<Array<{ account: string; commodity: string; amount:
  * 交易列表接口透出，故这里也不展示（不以描述文本反推语义）。
  */
 const beanSnippet = computed<string>(() => {
-  const t = txn.value
-  if (t === null) {
+  const item = txn.value
+  if (item === null) {
     return ''
   }
   return buildBeanSnippet({
-    date: t.date,
-    flag: t.flag === '!' ? '!' : '*',
-    description: t.description,
-    tags: Array.isArray(t.tags) ? t.tags : [],
-    postings: t.postings.map((posting) => ({
+    date: item.date,
+    flag: item.flag === '!' ? '!' : '*',
+    description: item.description,
+    tags: Array.isArray(item.tags) ? item.tags : [],
+    postings: item.postings.map((posting) => ({
       accountName: posting.account,
       amount: posting.amount,
       commodity: posting.commodity,
@@ -169,22 +178,31 @@ interface BeanSemantic {
 
 /** 片段的语义注脚：只列列表响应里确实有值的字段。 */
 const beanSemantics = computed<BeanSemantic[]>(() => {
-  const t = txn.value
-  if (t === null) {
+  const item = txn.value
+  if (item === null) {
     return []
   }
   const out: BeanSemantic[] = []
-  if (t.flag === '!') {
-    out.push({ label: 'Flagged', value: '! 未完成（待核对）' })
+  if (item.flag === '!') {
+    out.push({ label: t('txnDetail.beanFlagged'), value: t('txnDetail.beanFlaggedValue') })
   }
-  if (t.postings.length > 2) {
-    out.push({ label: '分录拆分', value: `${t.postings.length} 条分录逐行列示` })
+  if (item.postings.length > 2) {
+    out.push({
+      label: t('txnDetail.beanSplitLabel'),
+      value: t('txnDetail.beanSplitValue', { n: String(item.postings.length) }),
+    })
   }
-  if ((t.reversal_of ?? '') !== '') {
-    out.push({ label: '冲正交易', value: `原交易 TXN ${shortCode(t.reversal_of ?? '')}` })
+  if ((item.reversal_of ?? '') !== '') {
+    out.push({
+      label: t('txnDetail.beanReversalLabel'),
+      value: t('txnDetail.beanReversalValue', { code: shortCode(item.reversal_of ?? '') }),
+    })
   }
-  if ((t.reversed_by ?? '') !== '') {
-    out.push({ label: '已被冲正', value: `新交易 TXN ${shortCode(t.reversed_by ?? '')}` })
+  if ((item.reversed_by ?? '') !== '') {
+    out.push({
+      label: t('txnDetail.beanReversedLabel'),
+      value: t('txnDetail.beanReversedValue', { code: shortCode(item.reversed_by ?? '') }),
+    })
   }
   return out
 })
@@ -199,11 +217,11 @@ function shortCode(uuid: string): string {
 }
 
 const footLines = computed<string[]>(() => {
-  const t = txn.value
-  if (t === null) {
+  const item = txn.value
+  if (item === null) {
     return []
   }
-  return [`TXN ${shortCode(t.uuid)}`, `ID #${String(t.id).padStart(6, '0')}`]
+  return [`TXN ${shortCode(item.uuid)}`, `ID #${String(item.id).padStart(6, '0')}`]
 })
 
 /** 分享图：与成功页共用组装口径；详情页无 bean / 精确时间源，对应选项内容为空。 */
@@ -214,18 +232,19 @@ const shareDetails = ref<ShareReceiptDetails>({
 })
 
 function openShare(): void {
-  const t = txn.value
-  if (t === null) {
+  const item = txn.value
+  if (item === null) {
     return
   }
+  const label = kindLabel(kind.value)
   const built = buildShareReceipt({
     amount: entry.value.amount,
     commodity: entry.value.commodity,
-    kindLabel: KIND_LABELS[kind.value],
-    date: t.date,
-    payee: t.description !== '' ? t.description : KIND_LABELS[kind.value],
+    kindLabel: label,
+    date: item.date,
+    payee: item.description !== '' ? item.description : label,
     bean: '',
-    tags: t.tags ?? [],
+    tags: item.tags ?? [],
     accounts: postingRows.value.map((posting) => posting.account),
     preciseTime: '',
   }, privacy.enabled)
@@ -236,7 +255,7 @@ function openShare(): void {
 
 async function load(): Promise<void> {
   if (txnId.value === null) {
-    loadError.value = '缺少交易 id，请从流水列表进入'
+    loadError.value = t('txnDetail.errMissingId')
     return
   }
   loading.value = true
@@ -246,10 +265,10 @@ async function load(): Promise<void> {
     accounts.value = Array.isArray(accountRes.accounts) ? accountRes.accounts : []
     transactions.value = Array.isArray(txnRes.transactions) ? txnRes.transactions : []
     if (txn.value === null) {
-      loadError.value = '未找到该交易（可能已被删除）'
+      loadError.value = t('txnDetail.errNotFound')
     }
   } catch (err) {
-    loadError.value = err instanceof ApiError ? err.message : '交易详情加载失败'
+    loadError.value = err instanceof ApiError ? err.message : t('txnDetail.errLoad')
   } finally {
     loading.value = false
   }
@@ -261,7 +280,7 @@ const showDeleteConfirm = ref(false)
 /** 软删前二次确认；删除后可在回收站恢复（uuid 由列表接口透出）。 */
 function onDelete(): void {
   if (session.isViewer) {
-    notice.value = '只读成员不能删除交易'
+    notice.value = t('txnDetail.errViewerDelete')
     return
   }
   notice.value = ''
@@ -281,7 +300,10 @@ async function confirmDelete(): Promise<void> {
     markDirty('local-write')
     void router.push({ name: 'transactions' })
   } catch (err) {
-    notice.value = err instanceof ApiError ? `删除失败：${err.message}` : '删除失败，请稍后重试'
+    notice.value =
+      err instanceof ApiError
+        ? t('txnDetail.errDeleteWithMessage', { message: err.message })
+        : t('txnDetail.errDelete')
   } finally {
     deleting.value = false
   }
@@ -317,14 +339,14 @@ const editHint = computed<string>(() => {
   switch (editState.value) {
     case 'reversed':
       // 固定文案（AC-5.4）：不得复用离线文案。
-      return '该交易已被冲正，请修改最新版本'
+      return t('txnDetail.editHintReversed')
     case 'offline':
       // 固定文案（AC-5.4）。
-      return '修改需联网'
+      return t('txnDetail.editHintOffline')
     case 'forbidden':
-      return '当前账号无权修改该交易'
+      return t('txnDetail.editHintForbidden')
     default:
-      return '修改 = 冲正 + 新建：保存后原交易保留，账目以新交易为准'
+      return t('txnDetail.editHintReady')
   }
 })
 
@@ -368,14 +390,14 @@ watch(
 <template>
   <section class="detail">
     <div class="detail__bar">
-      <button type="button" class="detail__back" @click="goBack">‹ 返回</button>
+      <button type="button" class="detail__back" @click="goBack">{{ t('txnDetail.back') }}</button>
     </div>
 
     <div v-if="loadError" class="fb-card detail__state detail__state--error">
       <p>{{ loadError }}</p>
-      <button class="fb-btn-ghost" type="button" @click="load">重新加载</button>
+      <button class="fb-btn-ghost" type="button" @click="load">{{ t('txnDetail.retry') }}</button>
     </div>
-    <div v-else-if="loading" class="fb-card detail__state">正在加载交易详情…</div>
+    <div v-else-if="loading" class="fb-card detail__state">{{ t('txnDetail.loading') }}</div>
 
     <template v-else-if="txn !== null">
       <div class="detail__slip">
@@ -383,17 +405,17 @@ watch(
           :stamp="stamp.text"
           :stamp-sub="stamp.sub"
           :tone="stamp.tone"
-          title="交易凭证"
-          subtitle="FAMBEAN · TRANSACTION SLIP"
+          :title="t('txnDetail.slipTitle')"
+          :subtitle="t('txnDetail.slipSubtitle')"
           :amount="entry.amount"
           :commodity="entry.commodity"
           :signed="kind !== 'transfer'"
-          :kind-label="KIND_LABELS[kind]"
+          :kind-label="kindLabel(kind)"
           :rows="rows"
           :postings="postingRows"
           :balanced="true"
           :foot-lines="footLines"
-          thanks="— 凭 证 可 核 对 —"
+          :thanks="t('txnDetail.slipThanks')"
         />
       </div>
 
@@ -404,9 +426,9 @@ watch(
           class="detail__bean-toggle"
           :aria-expanded="beanOpen"
           @click="beanOpen = !beanOpen"
-        >{{ beanOpen ? '收起' : '展开' }}原生语法片段</button>
+        >{{ beanOpen ? t('txnDetail.beanToggleCollapse') : t('txnDetail.beanToggleExpand') }}</button>
         <div v-if="beanOpen" class="detail__bean-body">
-          <p class="detail__bean-note">与导出的 .beancount 逐字一致：标签写在 tags 元数据行。</p>
+          <p class="detail__bean-note">{{ t('txnDetail.beanNote') }}</p>
           <pre class="detail__bean-code">{{ beanSnippet }}</pre>
           <ul v-if="beanSemantics.length > 0" class="detail__bean-meta">
             <li v-for="item in beanSemantics" :key="item.label">
@@ -419,15 +441,15 @@ watch(
 
       <div class="detail__actions">
         <button type="button" class="detail__edit" :disabled="editDisabled" @click="onEdit">
-          修改这笔交易
+          {{ t('txnDetail.edit') }}
         </button>
-        <button type="button" class="detail__share" @click="openShare">生成分享图</button>
+        <button type="button" class="detail__share" @click="openShare">{{ t('txnDetail.share') }}</button>
         <button
           type="button"
           class="detail__delete"
           :disabled="session.isViewer"
           @click="onDelete"
-        >删除这笔交易</button>
+        >{{ t('txnDetail.delete') }}</button>
       </div>
 
       <ReceiptShareSheet
@@ -440,14 +462,14 @@ watch(
       <p v-if="notice" class="detail__notice" role="status">{{ notice }}</p>
 
       <div v-if="showDeleteConfirm" class="fb-card detail__card detail__confirm">
-        <h3>确认删除</h3>
+        <h3>{{ t('txnDetail.confirmDelete') }}</h3>
         <p class="detail__warn">
-          将软删「{{ txn.description }}」（{{ txn.date }}）；删除后可在回收站恢复，确认继续？
+          {{ t('txnDetail.deleteConfirmBody', { name: txn.description, date: txn.date }) }}
         </p>
         <div class="detail__confirm-actions">
-          <button class="fb-btn-ghost" type="button" @click="showDeleteConfirm = false">取消</button>
+          <button class="fb-btn-ghost" type="button" @click="showDeleteConfirm = false">{{ t('txnDetail.cancel') }}</button>
           <button class="fb-btn-primary" type="button" :disabled="deleting" @click="confirmDelete">
-            {{ deleting ? '删除中…' : '确认删除' }}
+            {{ deleting ? t('txnDetail.deleting') : t('txnDetail.confirmDelete') }}
           </button>
         </div>
       </div>

@@ -15,6 +15,7 @@
  */
 import { catIcon } from '@/core/accounts'
 import type { AssetGroup, AssetRow } from '@/core/assets'
+import { t } from '@/i18n'
 import MoneyText from '@/components/MoneyText.vue'
 
 withDefaults(
@@ -59,11 +60,11 @@ function accountCount(group: AssetGroup): number {
       <header class="asset-group__head">
         <span class="asset-group__label">{{ group.label }}</span>
         <span class="asset-group__count">
-          {{ accountCount(group) }} 个账户<template v-if="group.foreignSubtotals.length > 0"><span
+          {{ t('assets.groupCount', { count: String(accountCount(group)) }) }}<template v-if="group.foreignSubtotals.length > 0"><span
             v-for="fx in group.foreignSubtotals"
             :key="fx.commodity"
             class="asset-group__fx"
-          > · 另有 <MoneyText :amount="fx.amount" :commodity="fx.commodity" :privacy="masked" size="sm" />（{{ fx.commodity }}）</span></template>
+          >{{ t('assets.fxExtra') }}<MoneyText :amount="fx.amount" :commodity="fx.commodity" :privacy="masked" size="sm" />{{ t('assets.fxCode', { code: fx.commodity }) }}</span></template>
         </span>
         <span class="asset-group__subtotal">
           <MoneyText :amount="group.subtotal" :commodity="commodity" :privacy="masked" size="sm" />
@@ -71,7 +72,7 @@ function accountCount(group: AssetGroup): number {
       </header>
 
       <p v-if="group.rows.length === 0 && group.foreignRows.length === 0" class="asset-group__empty">
-        没有{{ group.label }}账户
+        {{ t('assets.groupEmpty', { label: group.label }) }}
       </p>
 
       <ul class="asset-group__rows">
@@ -80,7 +81,7 @@ function accountCount(group: AssetGroup): number {
           <span class="asset-row__name">
             <span class="asset-row__icon" aria-hidden="true">{{ catIcon(row) }}</span>
             {{ row.label }}
-            <span v-if="row.closed" class="asset-row__badge">已关户</span>
+            <span v-if="row.closed" class="asset-row__badge">{{ t('assets.closedBadge') }}</span>
             <span class="asset-row__code">{{ row.commodity }}</span>
           </span>
           <span class="asset-row__amount">
@@ -96,7 +97,7 @@ function accountCount(group: AssetGroup): number {
           <span class="asset-row__name">
             <span class="asset-row__icon" aria-hidden="true">{{ catIcon(row) }}</span>
             {{ row.label }}
-            <span v-if="row.closed" class="asset-row__badge">已关户</span>
+            <span v-if="row.closed" class="asset-row__badge">{{ t('assets.closedBadge') }}</span>
             <span class="asset-row__code asset-row__code--foreign">{{ row.commodity }}</span>
           </span>
           <span class="asset-row__amount">

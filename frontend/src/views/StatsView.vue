@@ -37,6 +37,7 @@ import { elapsedDays } from '@/core/calendar'
 import { emptyFilters, filtersToQuery } from '@/core/filters'
 import { categoryShares, inBuckets, memberContributions, periodBuckets, trendSeries, trialBalanceRows, type ReportPeriod, type ReportTxn } from '@/core/reports'
 import { averagePerDay, dailyRows, statsTotals, tagShares, type StatsTotals } from '@/core/stats'
+import { t } from '@/i18n'
 import { getChartPalette, readThemeTokens, themeEpoch } from '@/styles/themeTokens'
 import { useLedgerDataStore } from '@/stores/ledgerData'
 import { usePeriodStore } from '@/stores/period'
@@ -56,9 +57,6 @@ import StatsMetrics from '@/components/stats/StatsMetrics.vue'
 import StatsTabs from '@/components/stats/StatsTabs.vue'
 import TagPanel from '@/components/stats/TagPanel.vue'
 import TrialBalanceCard from '@/components/stats/TrialBalanceCard.vue'
-
-/** 刷新失败但仍有旧快照时的内联提示（四页逐字统一）。 */
-const STALE_NOTICE = '刷新失败，当前显示的是上次数据'
 
 const data = useLedgerDataStore()
 const period = usePeriodStore()
@@ -212,12 +210,12 @@ const staleError = computed(() => (data.error !== '' && data.loaded ? data.error
 
 const cardDesc = computed(() => {
   if (pageState.value === 'error') {
-    return '请检查网络后重试。'
+    return t('common.networkRetry')
   }
   if (pageState.value === 'empty') {
     return granularity.value === 'month'
-      ? '当前月份没有记录。'
-      : '当前周期没有记录。'
+      ? t('common.emptyCurrentMonth')
+      : t('stats.emptyPeriod')
   }
   return ''
 })
@@ -262,7 +260,10 @@ function onDrillCategory(categoryId: number | null): void {
     return
   }
   const found = barCategories.value.find((item) => item.id === categoryId)
-  drilledCategory.value = { id: categoryId, label: found === undefined ? '分类' : found.label }
+  drilledCategory.value = {
+    id: categoryId,
+    label: found === undefined ? t('stats.categoryFallback') : found.label,
+  }
 }
 
 /**
@@ -290,7 +291,7 @@ const drillRange = computed<{ from: string; to: string }>(() => {
  * 整块可点、cursor 是 pointer，但点了什么都不发生，用户会以为页面卡了）。
  *
  * 口径与稿 1081「点行可下钻该标签当月流水」一致：**当前窗口 + 该标签**。
- * 已知边界：「未打标签」桶（`UNTAGGED_LABEL`）在服务端没有对应筛选语义
+ * 已知边界：「未打标签」桶（`untaggedLabel()`）在服务端没有对应筛选语义
  * （`tag` 空串表示「不限」，不是「必须无标签」），跳过去会得到 0 条并显示
  * 「没有符合条件的结果」——**这是可见的反馈，不是死点击**，所以照样跳；
  * 真要支持它需要服务端新增 `tag=none` 语义，不在本轮。
@@ -319,12 +320,12 @@ const palette = computed(() => {
 /** 折线序列：金额与几何量同源（value 由定点串派生，禁止另算一遍）。 */
 const trendSeriesInput = computed(() => [
   {
-    name: '收入',
+    name: t('common.income'),
     color: palette.value.income,
     points: trend.value.income.map((amount) => ({ value: Number(amount), amount })),
   },
   {
-    name: '支出',
+    name: t('common.expense'),
     color: palette.value.danger,
     points: trend.value.expense.map((amount) => ({ value: Number(amount), amount })),
   },
@@ -333,14 +334,17 @@ const trendSeriesInput = computed(() => [
 /** 月份组标签（周周期时显示周区间，避免「点着上/下月却在看周」的错位）。 */
 const rangeLabel = computed(() => {
   if (granularity.value === 'year') {
-    return `${year.value} 年`
+    return t('core.reports.yearLabel', { year: String(year.value) })
   }
   if (granularity.value === 'week') {
     const first = buckets.value[0]
     const last = buckets.value[buckets.value.length - 1]
     return `${first === undefined ? '' : first.key} ~ ${last === undefined ? '' : last.key}`
   }
-  return `${year.value} 年 ${month.value} 月`
+  return t('core.reports.monthLabel', {
+    year: String(year.value),
+    month: String(month.value),
+  })
 })
 
 /**
@@ -369,7 +373,7 @@ const currencyOptions = computed(() => {
 <template>
   <section class="stats">
     <header class="stats__hero">
-      <h1 class="stats__title">统计账单</h1>
+      <h1 class="stats__title">{{ t('shell.nav.stats') }}</h1>
     </header>
 
     <!-- 工具卡（S-01 / S-05）：第一行 = 子页 chips + spacer + 月份组；
@@ -382,18 +386,18 @@ const currencyOptions = computed(() => {
         <StatsTabs :tab="tab" @select="setTab" />
         <span class="stats__spacer"></span>
         <span class="stats__month">
-          <button type="button" class="stats__arrow" aria-label="上一期" @click="shiftMonth(-1)">‹</button>
+          <button type="button" class="stats__arrow" :aria-label="t('stats.prevPeriod')" @click="shiftMonth(-1)">‹</button>
           <button type="button" class="stats__chip" @click="monthOpen = true">
             <span class="stats__chip-text">{{ rangeLabel }}</span>
             <span class="stats__caret" aria-hidden="true">▾</span>
           </button>
-          <button type="button" class="stats__arrow" aria-label="下一期" @click="shiftMonth(1)">›</button>
+          <button type="button" class="stats__arrow" :aria-label="t('stats.nextPeriod')" @click="shiftMonth(1)">›</button>
         </span>
       </div>
       <div class="stats__tool-row">
         <PeriodSeg :period="granularity" @select="setPeriod" />
         <span class="stats__spacer"></span>
-        <span v-if="currencyOptions.length > 1" class="stats__seg" role="group" aria-label="统计币种">
+        <span v-if="currencyOptions.length > 1" class="stats__seg" role="group" :aria-label="t('stats.currencyGroup')">
           <button
             v-for="code in currencyOptions"
             :key="code"
@@ -405,20 +409,18 @@ const currencyOptions = computed(() => {
           >{{ code }}</button>
         </span>
       </div>
-      <p class="stats__note">
-        左箭头上月 / 右箭头下月 / 点击当前月弹月份选择 · 币种口径见页脚（禁跨币种求和）
-      </p>
+      <p class="stats__note">{{ t('stats.toolNote') }}</p>
     </section>
 
     <p v-if="staleError !== ''" class="stats__stale" role="status">
-      <span class="stats__stale-text">{{ STALE_NOTICE }}</span>
-      <button type="button" class="stats__stale-btn" @click="reload">重试</button>
+      <span class="stats__stale-text">{{ t('common.staleNotice') }}</span>
+      <button type="button" class="stats__stale-btn" @click="reload">{{ t('common.retry') }}</button>
     </p>
 
     <!-- 聚合骨架（骨架屏批）：补齐等待期先渲染「双环 + 排行」骨架，补齐完成即换回。
          判据（fullReady）不动；sr 文案保留「正在聚合数据…」的读屏播报。 -->
     <div v-if="showAggregateSkeleton" class="stats__skel" role="status" aria-live="polite">
-      <span class="stats__skel-sr">正在聚合数据…</span>
+      <span class="stats__skel-sr">{{ t('stats.aggregating') }}</span>
       <section class="stats__card">
         <div class="stats__skel-donuts">
           <SkeletonBlock variant="chart" height="150px" />
@@ -453,9 +455,9 @@ const currencyOptions = computed(() => {
              说明文字走 `ChartFrame` 的 `note`。 -->
         <section class="stats__card">
           <TrendChart
-            title="收支趋势"
-            :note="`按${granularity === 'year' ? '月' : '日'}收入 / 支出`"
-            :chart-label="`${rangeLabel} 收入与支出趋势，${commodity} 口径`"
+            :title="t('stats.trendTitle')"
+            :note="granularity === 'year' ? t('stats.trendNoteMonth') : t('stats.trendNoteDay')"
+            :chart-label="t('stats.trendChartLabel', { range: rangeLabel, commodity })"
             :labels="trend.labels"
             :series="trendSeriesInput"
             :commodity="commodity"
@@ -493,9 +495,7 @@ const currencyOptions = computed(() => {
         <section v-if="granularity === 'month'" class="stats__card">
           <DailyTable :table="dailyTable" :commodity="commodity" :masked="privacy.enabled" />
         </section>
-        <p v-else class="stats__hint">
-          每日明细按自然日列出，切到「月」周期查看。
-        </p>
+        <p v-else class="stats__hint">{{ t('stats.dailyHint') }}</p>
 
         <MemberCard :members="members" :commodity="commodity" :masked="privacy.enabled" />
         <TrialBalanceCard :rows="trial" :commodity="commodity" :masked="privacy.enabled" />
@@ -517,7 +517,7 @@ const currencyOptions = computed(() => {
     />
 
     <!-- 空态也要能换账本：与账单页一致的账本名提示（不可点时只是文字） -->
-    <p class="stats__footer">账本：{{ session.ledgerName }} · 统计口径 {{ commodity }}</p>
+    <p class="stats__footer">{{ t('stats.footer', { name: session.ledgerName, commodity }) }}</p>
   </section>
 </template>
 

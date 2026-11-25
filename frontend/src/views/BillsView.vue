@@ -35,6 +35,7 @@ import { buildMonthGrid, type CalendarDay } from '@/core/calendar'
 import { buildLedgerHealthNotice } from '@/core/ledgerHealth'
 import type { LineSeriesInput } from '@/core/charts/option'
 import { buildTxnRow, type TxnRowView } from '@/core/txnRow'
+import { t } from '@/i18n'
 import { getChartPalette, readThemeTokens, themeEpoch } from '@/styles/themeTokens'
 import { useLedgerDataStore } from '@/stores/ledgerData'
 import { usePeriodStore } from '@/stores/period'
@@ -50,9 +51,6 @@ import LedgerSwitcher from '@/components/shell/LedgerSwitcher.vue'
 import MonthPicker from '@/components/shell/MonthPicker.vue'
 import StateCard from '@/components/shell/StateCard.vue'
 import SkeletonBlock from '@/components/shell/SkeletonBlock.vue'
-
-/** 刷新失败但仍有旧快照时的内联提示（四页逐字统一）。 */
-const STALE_NOTICE = '刷新失败，当前显示的是上次数据'
 
 const router = useRouter()
 const data = useLedgerDataStore()
@@ -172,7 +170,7 @@ const groups = computed<DayGroup[]>(() => {
     if (group === undefined || group.date !== txn.date) {
       group = {
         date: txn.date,
-        label: `${month.value}月${day}日`,
+        label: t('bills.groupDate', { month: String(month.value), day: String(day) }),
         expense: point === undefined ? '0.00' : point.expense,
         income: point === undefined ? '0.00' : point.income,
         rows: [],
@@ -219,12 +217,12 @@ const dayLabels = computed(() => series.value.map((point) => String(point.day)))
  */
 const trendSeries = computed<LineSeriesInput[]>(() => [
   {
-    name: '收入',
+    name: t('common.income'),
     color: palette.value.income,
     points: series.value.map((point) => ({ value: Number(point.income), amount: point.income })),
   },
   {
-    name: '支出',
+    name: t('common.expense'),
     color: palette.value.danger,
     points: series.value.map((point) => ({ value: Number(point.expense), amount: point.expense })),
   },
@@ -296,7 +294,7 @@ function withPeriod(text: string): string {
  */
 const healthHint = computed(
   () =>
-    `${withPeriod(healthNotice.value.text)}${healthNotice.value.detail}详情请到设置的数据安全页查看。`,
+    `${withPeriod(healthNotice.value.text)}${healthNotice.value.detail}${t('bills.healthHintSuffix')}`,
 )
 
 async function loadHealth(): Promise<void> {
@@ -317,10 +315,10 @@ function goDataSafety(): void {
 /** 四态卡的说明文案（标题用 StateCard 的默认：加载失败 / 暂无数据）。 */
 const cardDesc = computed(() => {
   if (pageState.value === 'error') {
-    return '请检查网络后重试。'
+    return t('common.networkRetry')
   }
   if (pageState.value === 'empty') {
-    return '当前月份没有记录。'
+    return t('common.emptyCurrentMonth')
   }
   return ''
 })
@@ -426,7 +424,7 @@ function goStats(): void {
          恒等式检查结论收进标题行右侧的按钮，点/回车跳设置的数据安全页看明细。
          这里**不**重复「支出 / 收入 / 结余」三个金额 —— 它们在下方 BillMetrics。 -->
     <header class="bills__hero">
-      <h1 class="bills__title">账单</h1>
+      <h1 class="bills__title">{{ t('shell.nav.bills') }}</h1>
       <button
         type="button"
         class="bills__health-icon"
@@ -452,16 +450,16 @@ function goStats(): void {
         <span class="bills__spacer"></span>
 
         <span class="bills__month">
-          <button type="button" class="bills__arrow" aria-label="上个月" @click="shiftMonth(-1)">‹</button>
+          <button type="button" class="bills__arrow" :aria-label="t('bills.prevMonth')" @click="shiftMonth(-1)">‹</button>
           <button type="button" class="bills__chip bills__chip--month" @click="monthOpen = true">
-            {{ year }} 年 {{ month }} 月
+            {{ t('core.reports.monthLabel', { year: String(year), month: String(month) }) }}
           </button>
-          <button type="button" class="bills__arrow" aria-label="下个月" @click="shiftMonth(1)">›</button>
+          <button type="button" class="bills__arrow" :aria-label="t('bills.nextMonth')" @click="shiftMonth(1)">›</button>
         </span>
       </div>
 
       <div class="bills__tools-row">
-        <span v-if="commodities.length > 1" class="bills__seg" role="group" aria-label="币种">
+        <span v-if="commodities.length > 1" class="bills__seg" role="group" :aria-label="t('bills.currencyGroup')">
           <button
             v-for="item in commodities"
             :key="item"
@@ -476,10 +474,10 @@ function goStats(): void {
         <span class="bills__spacer"></span>
 
         <span class="bills__tools-end">
-          <button type="button" class="bills__icon" aria-label="搜索账单" @click="goSearch">
+          <button type="button" class="bills__icon" :aria-label="t('shell.nav.search')" @click="goSearch">
             <span aria-hidden="true">🔍</span>
           </button>
-          <button type="button" class="bills__icon" aria-label="统计账单" @click="goStats">
+          <button type="button" class="bills__icon" :aria-label="t('shell.nav.stats')" @click="goStats">
             <span aria-hidden="true">◔</span>
           </button>
         </span>
@@ -488,15 +486,15 @@ function goStats(): void {
 
     <!-- 刷新失败但有旧快照：留在 ready，只出内联提示条（组件不改，页面自己画） -->
     <p v-if="staleError !== ''" class="bills__stale" role="status">
-      <span class="bills__stale-text">{{ STALE_NOTICE }}</span>
-      <button type="button" class="bills__stale-btn" @click="reload">重试</button>
+      <span class="bills__stale-text">{{ t('common.staleNotice') }}</span>
+      <button type="button" class="bills__stale-btn" @click="reload">{{ t('common.retry') }}</button>
     </p>
 
     <!-- ③–⑥ 内容区四态（标题/说明用 StateCard 默认，避免 error 态被写成「账单」）。
          monthPending 等待期换「日历 + 指标 + 列表条」骨架组合（骨架屏批）：判据
          monthPending 不动，sr 文案保留原「正在聚合当月数据…」的读屏播报。 -->
     <div v-if="showMonthSkeleton" class="bills__skel" role="status" aria-live="polite">
-      <span class="bills__skel-sr">正在聚合当月数据…</span>
+      <span class="bills__skel-sr">{{ t('bills.monthAggregating') }}</span>
       <section class="bills__card">
         <SkeletonBlock variant="calendar" />
       </section>
@@ -536,9 +534,9 @@ function goStats(): void {
            PC 高度 240（设计 `.chart-h`，移动 220） -->
       <section class="bills__card bills__card--chart">
         <TrendChart
-          title="当月收支趋势"
-          note="每日收入 / 支出折线"
-          :chart-label="`${month} 月每日收入与支出，按自然日`"
+          :title="t('bills.trendTitle')"
+          :note="t('bills.trendNote')"
+          :chart-label="t('bills.trendChartLabel', { month: String(month) })"
           :labels="dayLabels"
           :series="trendSeries"
           :commodity="commodity"
@@ -551,8 +549,8 @@ function goStats(): void {
       <!-- ⑥ 月列表卡：按日分组，行用 TxnRow bill 档 -->
       <section class="bills__card">
         <div class="bills__card-head">
-          <h2 class="bills__card-title">当月明细</h2>
-          <span class="bills__card-note">日期 · 类型 · 金额 · 备注</span>
+          <h2 class="bills__card-title">{{ t('bills.monthDetail') }}</h2>
+          <span class="bills__card-note">{{ t('bills.monthDetailNote') }}</span>
         </div>
         <!-- 外部列表恒为整月全量；当日明细只在下面的底部 sheet 里看。 -->
         <div v-for="group in groups" :key="group.date" class="bills__group">

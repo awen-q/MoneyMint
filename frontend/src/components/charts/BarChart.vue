@@ -15,6 +15,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { acquireChart, initChart, type EChartsInstance } from '@/core/charts/echarts'
 import { GRID, buildBarOption, type BarDatum } from '@/core/charts/option'
+import { locale } from '@/i18n'
 import { getChartPalette, readThemeTokens, themeEpoch } from '@/styles/themeTokens'
 
 import ChartFrame from './ChartFrame.vue'
@@ -39,7 +40,8 @@ const props = withDefaults(
     masked: false,
     height: 220,
     state: 'ready',
-    emptyText: '暂无数据',
+    // 留空 → ChartFrame 回落 t('common.empty')，切语言即时跟随。
+    emptyText: '',
     dense: false,
   },
 )
@@ -278,6 +280,9 @@ const optionKey = computed(() =>
 )
 
 watch(themeEpoch, () => guardedApplyOption())
+
+// 语言切换同样重建 option（命令式 option 不随模板重渲染自动刷新）。
+watch(locale, () => guardedApplyOption())
 
 // 顺序有意义：frameState 先建、且同为 post flush，保证「降级到空态」时先 teardown，
 // 后面 optionKey 那条看到 chart === null 直接跳过，不会白跑一次 setOption。

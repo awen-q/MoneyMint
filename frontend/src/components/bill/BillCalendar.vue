@@ -15,13 +15,27 @@
  *
  * 卡片外观（圆角/阴影/内边距）由页面给，本组件只管内容，避免三个组件各抄一份卡片样式。
  */
+import { computed } from 'vue'
+
 import type { BillCell, BillMonthTotals } from '@/core/bill'
 import type { CalendarDay } from '@/core/calendar'
 import { PRIVACY_MASK } from '@/core/privacy'
+import { t } from '@/i18n'
 import MoneyText from '@/components/MoneyText.vue'
 
-/** 周一起始的星期表头（与 `buildMonthGrid` 的 `(getDay()+6)%7` 偏移一致）。 */
-const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日']
+/**
+ * 周一起始的星期表头（与 `buildMonthGrid` 的 `(getDay()+6)%7` 偏移一致）。
+ * 复用记一笔日期弹层的单字星期 key；computed 保证切语言后表头即时跟随。
+ */
+const WEEKDAYS = computed<string[]>(() => [
+  t('record.weekdayMon'),
+  t('record.weekdayTue'),
+  t('record.weekdayWed'),
+  t('record.weekdayThu'),
+  t('record.weekdayFri'),
+  t('record.weekdaySat'),
+  t('record.weekdaySun'),
+])
 
 const props = withDefaults(
   defineProps<{
@@ -137,12 +151,14 @@ function cellLabel(cell: CalendarDay): string {
   if (!cell.inMonth) {
     return ''
   }
-  const suffix = isToday(cell) ? '，今天' : ''
+  const suffix = isToday(cell) ? t('bills.todaySuffix') : ''
   if (props.masked) {
-    return `${props.month}月${cell.day}日，金额已隐藏${suffix}`
+    return `${t('bills.dayMasked', { month: String(props.month), day: String(cell.day) })}${suffix}`
   }
   const data = cellOf(cell.day, cell.inMonth)
-  return data === undefined ? `${props.month}月${cell.day}日${suffix}` : `${data.ariaLabel}${suffix}`
+  return data === undefined
+    ? `${t('bills.dayPlain', { month: String(props.month), day: String(cell.day) })}${suffix}`
+    : `${data.ariaLabel}${suffix}`
 }
 
 function isSelected(cell: CalendarDay): boolean {
@@ -156,18 +172,18 @@ function isSelected(cell: CalendarDay): boolean {
          标题文案受 `BillCalendar.test.ts` 精确断言锁定（「2026 年 11 月」），
          故只对齐字号/字重与双列结构，不改字。 -->
     <header class="bill-cal__head">
-      <h2 class="bill-cal__title">{{ year }} 年 {{ month }} 月</h2>
+      <h2 class="bill-cal__title">{{ t('core.reports.monthLabel', { year: String(year), month: String(month) }) }}</h2>
       <span class="bill-cal__head-right">
         <span class="bill-cal__sum">
-          支出
+          {{ t('common.expense') }}
           <MoneyText :amount="totals.expense" :commodity="commodity" size="sm" />
           <span aria-hidden="true">·</span>
-          收入
+          {{ t('common.income') }}
           <MoneyText :amount="totals.income" :commodity="commodity" size="sm" />
           <span aria-hidden="true">·</span>
-          记账 {{ activeDays }} 天
+          {{ t('bills.calDays', { count: String(activeDays) }) }}
         </span>
-        <span class="bill-cal__note">点击日期查看当日流水</span>
+        <span class="bill-cal__note">{{ t('bills.calNote') }}</span>
       </span>
     </header>
 
@@ -202,10 +218,7 @@ function isSelected(cell: CalendarDay): boolean {
     </div>
 
     <!-- 操作说明（B-06 ④ / 设计 `.tap-hint`）：移动端第一次用不知道格子可点 -->
-    <p class="bill-cal__hint">
-      点击日期：底部弹出当日交易明细（下方整月列表不变，关掉抽屉即可继续看整月）；格内金额为简写：
-      支出（红）/ 纯收入日（绿），同日有收入时第二行显示收入金额，右上角圆点仍作快速扫描标记
-    </p>
+    <p class="bill-cal__hint">{{ t('bills.calHint') }}</p>
   </div>
 </template>
 

@@ -13,6 +13,7 @@
 import { computed, ref } from 'vue'
 
 import type { TrialBalanceRow } from '@/core/reports'
+import { t } from '@/i18n'
 import MoneyText from '@/components/MoneyText.vue'
 
 const props = withDefaults(
@@ -57,21 +58,21 @@ const sumText = computed(() => {
       :aria-expanded="open"
       @click="open = !open"
     >
-      <span class="trial-card__title">试算平衡</span>
+      <span class="trial-card__title">{{ t('stats.trialTitle') }}</span>
       <span class="trial-card__state" :class="balanced ? 'trial-card__state--ok' : 'trial-card__state--warn'">
-        {{ balanced ? '已配平' : `差额 ${sumText}` }}
+        {{ balanced ? t('stats.trialBalanced') : t('stats.trialDiff', { diff: sumText }) }}
       </span>
       <span class="trial-card__caret" aria-hidden="true">{{ open ? '⌃' : '⌄' }}</span>
     </button>
 
     <div v-if="open" class="trial-card__body">
-      <p v-if="rows.length === 0" class="trial-card__empty">{{ commodity }} 口径下没有账户余额</p>
+      <p v-if="rows.length === 0" class="trial-card__empty">{{ t('stats.trialEmpty', { commodity }) }}</p>
       <table v-else class="trial-card__table">
         <thead>
           <tr>
-            <th scope="col">账户</th>
-            <th scope="col">类型</th>
-            <th scope="col" class="trial-card__r">余额</th>
+            <th scope="col">{{ t('stats.trialAccount') }}</th>
+            <th scope="col">{{ t('stats.trialType') }}</th>
+            <th scope="col" class="trial-card__r">{{ t('stats.trialBalance') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -96,7 +97,7 @@ const sumText = computed(() => {
         -->
         <tfoot>
           <tr>
-            <td>合计</td>
+            <td>{{ t('common.total') }}</td>
             <td aria-hidden="true"></td>
             <td class="trial-card__r" :class="{ 'trial-card__sum--diff': !balanced }">
               <MoneyText :amount="sumText" :commodity="commodity" :privacy="masked" size="sm" />
@@ -104,7 +105,7 @@ const sumText = computed(() => {
           </tr>
         </tfoot>
       </table>
-      <p class="trial-card__hint">余额为 {{ commodity }} 口径原值（符号如实）；全部账户合计应为 0.00</p>
+      <p class="trial-card__hint">{{ t('stats.trialHint', { commodity }) }}</p>
     </div>
   </section>
 </template>

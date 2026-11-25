@@ -48,17 +48,6 @@ function subtotalOf(group: { subtotal: Record<string, string> }): string {
   return value === undefined ? '0.00' : value
 }
 
-/** 分组标题的本地化（core GROUP_LABELS 是中文，视图内等价映射，待 core 子批收敛）。 */
-function groupLabel(type: string): string {
-  if (type === 'Assets') {
-    return t('accounts.groupAssets')
-  }
-  if (type === 'Liabilities') {
-    return t('accounts.groupLiabilities')
-  }
-  return type
-}
-
 /** 父行（有子）显示聚合小计；叶子行显示自身余额。 */
 function rowBalanceText(row: {
   account: AccountView
@@ -159,10 +148,10 @@ onMounted(() => {
     <template v-else>
       <div v-for="group in groups" :key="group.type" class="fb-card accts__card">
         <div class="accts__head">
-          <h3>{{ groupLabel(group.type) }}</h3>
+          <h3>{{ group.label }}</h3>
           <MoneyText :amount="subtotalOf(group)" :commodity="session.defaultCommodity" size="sm" />
         </div>
-        <p v-if="group.rows.length === 0" class="accts__empty">{{ t('accounts.emptyGroup', { label: groupLabel(group.type) }) }}</p>
+        <p v-if="group.rows.length === 0" class="accts__empty">{{ t('accounts.emptyGroup', { label: group.label }) }}</p>
         <ul v-else class="accts__list">
           <li
             v-for="row in group.rows"

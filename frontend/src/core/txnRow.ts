@@ -16,9 +16,15 @@
  *    reversal 组 `已冲正 > 冲正`，kind 组 `转账 > 期初`；组内互斥、组间并存。
  * 4. **标题**备注优先，为空时按类型回落（转账 / 期初 / 分类名 / 未命名交易）。
  *
- * 纯逻辑约束：不 import Vue / store / 组件，只依赖 `core/record` 与 `core/Money`；
- * 金额一律走定点串（`Money` 无 `toNumber`，禁 parseFloat / Math.abs）。
+ * 纯逻辑约束：不 import Vue / store / 组件，只依赖 `core/record`、`core/Money`
+ * 与 i18n 的 `t()`；金额一律走定点串（`Money` 无 `toNumber`，禁 parseFloat / Math.abs）。
+ *
+ * i18n（阶段 2 子批 4）：类型标签 / 徽章 / 兜底标题一律**访问时调用 t()**，
+ * 不在模块顶层求值成常量——模块快照会让切语言后行内文案仍停在旧语言
+ * （阶段 0 navItems 踩过这个坑）。这些字符串只用于展示，消费方不得拿它们
+ * 做相等比较（现有消费方均已确认只渲染）。
  */
+import { t } from '../i18n'
 import { Money } from './Money'
 import {
   accountLabel,
@@ -76,16 +82,25 @@ export interface TxnRowView {
   badges: TxnRowBadge[]
 }
 
-/** 展示类型的中文标签（用于副行 `type` 项）。 */
-const KIND_LABELS: Record<TransactionKind, string> = {
-  expense: '支出',
-  income: '收入',
-  transfer: '转账',
-  opening: '期初',
+/**
+ * 展示类型标签（用于副行 `type` 项），随当前语言。
+ *
+ * 访问时求值（不是模块顶层快照）：`buildTxnRow` 的返回值是**当时**语言的文案，
+ * 切语言后由页面重新构建即可；`t()` 内部读 locale ref，故在 computed / 渲染里
+ * 调用会随语言切换自动刷新。
+ */
+function kindLabel(kind: TransactionKind): string {
+  switch (kind) {
+    case 'expense':
+      return t('core.txnRow.kindExpense')
+    case 'income':
+      return t('core.txnRow.kindIncome')
+    case 'transfer':
+      return t('core.txnRow.kindTransfer')
+    default:
+      return t('core.txnRow.kindOpening')
+  }
 }
-
-/** 备注为空时的兜底标题。 */
-const FALLBACK_TITLE = '未命名交易'
 
 /** 各档位的副行字段顺序与 tag 截取上限（顺序即渲染顺序，渲染层不再排序）。 */
 interface VariantPlan {
@@ -177,16 +192,16 @@ function buildTitle(
     return description
   }
   if (kind === 'transfer') {
-    return '转账'
+    return t('core.txnRow.kindTransfer')
   }
   if (kind === 'opening') {
-    return '期初'
+    return t('core.txnRow.kindOpening')
   }
   const category = findCategoryAccount(txn.postings, accounts)
   if (category !== undefined) {
     return accountLabel(category)
   }
-  return FALLBACK_TITLE
+  return t('core.txnRow.fallbackTitle')
 }
 
 /**
@@ -207,15 +222,15 @@ function buildBadges(txn: TransactionView, kind: TransactionKind): TxnRowBadge[]
   // 这条注明是为了挡住后人「顺手改成两条都出」——两组是独立维度（reversal 组 ×
   // kind 组），组内不是。
   if ((txn.reversed_by ?? '') !== '') {
-    out.push({ label: '已冲正', tone: 'reversal' })
+    out.push({ label: t('core.txnRow.badgeReversed'), tone: 'reversal' })
   } else if ((txn.reversal_of ?? '') !== '') {
-    out.push({ label: '冲正', tone: 'neutral' })
+    out.push({ label: t('core.txnRow.badgeReversal'), tone: 'neutral' })
   }
   // kind 组：三选一。
   if (kind === 'transfer') {
-    out.push({ label: '转账', tone: 'transfer' })
+    out.push({ label: t('core.txnRow.kindTransfer'), tone: 'transfer' })
   } else if (kind === 'opening') {
-    out.push({ label: '期初', tone: 'opening' })
+    out.push({ label: t('core.txnRow.kindOpening'), tone: 'opening' })
   }
   return out
 }
@@ -263,7 +278,7 @@ function buildMetaItem(
     return date === '' ? null : { kind: 'date', text: date }
   }
   if (field === 'type') {
-    return { kind: 'type', text: KIND_LABELS[kind] }
+    return { kind: 'type', text: kindLabel(kind) }
   }
   if (field === 'category') {
     const category = findCategoryAccount(txn.postings, accounts)

@@ -3,7 +3,7 @@
  * 标签子页（B4 / T47）：标签统计表 + 支出/收入标签双环。
  *
  * 三条口径：
- * 1. **「未打标签」是正常的桶**（`core/stats.ts` 的 `UNTAGGED_LABEL`）：只统计有标签的
+ * 1. **「未打标签」是正常的桶**（`core/stats.ts` 的 `untaggedLabel()`）：只统计有标签的
  *    交易会让各扇区之和 < 100%，用户会以为算错。这里照常作为一行/一块显示；
  * 2. **颜色单一来源**：环图 slice 与排行行色块共用同一个 `pickColor` 结果；
  * 3. 环心是该侧合计（支出标签合计 / 收入标签合计），金额取定点串，不由 value 反算。
@@ -11,6 +11,7 @@
 import { computed } from 'vue'
 
 import type { TagShare } from '@/core/stats'
+import { t } from '@/i18n'
 import { getChartPalette, pickColor, readThemeTokens, themeEpoch } from '@/styles/themeTokens'
 import DonutChart from '@/components/charts/DonutChart.vue'
 import MoneyText from '@/components/MoneyText.vue'
@@ -99,18 +100,18 @@ function drillIncome(index: number): void {
   <div class="tag-panel">
     <section class="tag-panel__card">
       <header class="tag-panel__head">
-        <span class="tag-panel__title">标签统计</span>
-        <span class="tag-panel__note">按金额从大到小 · 点击行下钻</span>
+        <span class="tag-panel__title">{{ t('stats.tagTitle') }}</span>
+        <span class="tag-panel__note">{{ t('stats.tagNote') }}</span>
       </header>
-      <p v-if="shares.length === 0" class="tag-panel__empty">本月暂无可统计的标签交易</p>
+      <p v-if="shares.length === 0" class="tag-panel__empty">{{ t('stats.tagEmpty') }}</p>
       <table v-else class="tag-panel__table">
         <thead>
           <tr>
-            <th scope="col">标签</th>
-            <th scope="col" class="tag-panel__r">支出</th>
-            <th scope="col" class="tag-panel__r">收入</th>
-            <th scope="col" class="tag-panel__r">结余</th>
-            <th scope="col" class="tag-panel__r">笔数</th>
+            <th scope="col">{{ t('stats.tagCol') }}</th>
+            <th scope="col" class="tag-panel__r">{{ t('common.expense') }}</th>
+            <th scope="col" class="tag-panel__r">{{ t('common.income') }}</th>
+            <th scope="col" class="tag-panel__r">{{ t('common.balance') }}</th>
+            <th scope="col" class="tag-panel__r">{{ t('stats.countCol') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -135,27 +136,27 @@ function drillIncome(index: number): void {
           </tr>
         </tbody>
       </table>
-      <p class="tag-panel__hint">结余 = 标签收入 − 标签支出（同币种定点减法）；点行可下钻该标签当月流水</p>
+      <p class="tag-panel__hint">{{ t('stats.tagHint') }}</p>
     </section>
 
     <section class="tag-panel__card">
       <header class="tag-panel__head">
-        <span class="tag-panel__title">标签收支占比</span>
-        <span class="tag-panel__note">点击环图或排行项下钻</span>
+        <span class="tag-panel__title">{{ t('stats.tagDonutTitle') }}</span>
+        <span class="tag-panel__note">{{ t('stats.drillHint') }}</span>
       </header>
       <div class="tag-panel__duo">
         <div>
-          <p class="tag-panel__block-title">支出标签</p>
+          <p class="tag-panel__block-title">{{ t('stats.expenseTag') }}</p>
           <DonutChart
-            title="支出标签"
-            :chart-label="`支出标签占比，${commodity} 口径`"
+            :title="t('stats.expenseTag')"
+            :chart-label="t('stats.expenseTagLabel', { commodity })"
             :slices="expenseSlices"
-            center-text="合计"
+            :center-text="t('common.total')"
             :center-value="expenseTotal"
             :commodity="commodity"
             :masked="masked"
             :state="expenseSlices.length === 0 ? 'empty' : 'ready'"
-            empty-text="本月没有带标签的支出"
+            :empty-text="t('stats.emptyExpenseTag')"
             @pick="drillExpense"
           />
           <ul v-if="expenseSlices.length > 0" class="tag-panel__list">
@@ -171,17 +172,17 @@ function drillIncome(index: number): void {
           </ul>
         </div>
         <div>
-          <p class="tag-panel__block-title">收入标签</p>
+          <p class="tag-panel__block-title">{{ t('stats.incomeTag') }}</p>
           <DonutChart
-            title="收入标签"
-            :chart-label="`收入标签占比，${commodity} 口径`"
+            :title="t('stats.incomeTag')"
+            :chart-label="t('stats.incomeTagLabel', { commodity })"
             :slices="incomeSlices"
-            center-text="合计"
+            :center-text="t('common.total')"
             :center-value="incomeTotal"
             :commodity="commodity"
             :masked="masked"
             :state="incomeSlices.length === 0 ? 'empty' : 'ready'"
-            empty-text="本月没有带标签的收入"
+            :empty-text="t('stats.emptyIncomeTag')"
             @pick="drillIncome"
           />
           <ul v-if="incomeSlices.length > 0" class="tag-panel__list">

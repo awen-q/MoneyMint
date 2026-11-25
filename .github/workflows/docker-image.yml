@@ -114,8 +114,8 @@ jobs:
         env:
           # 两个下限都必填：用例下限防「静默少收集」，文件下限防「删一个文件」。
           # 只增不减；每次加测试后按实测值上调（验收时统一抬）。
-          # 当前实测：132 文件 / 1338 用例（i18n 阶段 2 子批 1~3：管理页 / 账户分类 / 数据域）
-          TEST_FLOOR: '1338'       # 有效用例数（已扣除 skip/todo）；下限 == 实测值时，少一条即红
+          # 当前实测：132 文件 / 1361 用例（i18n 阶段 2 子批 4~7：交易域 / core 收敛 / 记一笔 / 五视图）
+          TEST_FLOOR: '1361'       # 有效用例数（已扣除 skip/todo）；下限 == 实测值时，少一条即红
           TEST_FILE_FLOOR: '132'   # 测试文件数；用例下限对「删一个文件」几乎无感，靠这条兜
         run: |
           npx vitest run --reporter=default --reporter=json --outputFile=vitest-report.json

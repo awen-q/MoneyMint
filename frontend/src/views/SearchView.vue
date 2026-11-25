@@ -36,6 +36,7 @@ import {
 } from '@/core/filters'
 import { accountLabel } from '@/core/record'
 import { buildTxnRow, type TxnRowView } from '@/core/txnRow'
+import { t } from '@/i18n'
 import { useLedgerDataStore } from '@/stores/ledgerData'
 import MoneyText from '@/components/MoneyText.vue'
 import SearchBar from '@/components/search/SearchBar.vue'
@@ -115,7 +116,7 @@ async function loadFirst(): Promise<void> {
     if (myGen !== gen) {
       return
     }
-    loadError.value = err instanceof Error ? err.message : '搜索失败，请重试'
+    loadError.value = err instanceof Error ? err.message : t('search.errSearch')
   } finally {
     if (myGen === gen) {
       loading.value = false
@@ -147,7 +148,7 @@ async function loadMore(): Promise<void> {
     if (myGen !== gen) {
       return
     }
-    loadError.value = err instanceof Error ? err.message : '加载更多失败，请重试'
+    loadError.value = err instanceof Error ? err.message : t('search.errMore')
   } finally {
     if (myGen === gen) {
       loadingMore.value = false
@@ -228,10 +229,10 @@ const rows = computed<TxnRowView[]>(() =>
 /** 空态 / 错误态的说明文案（标题用 StateCard 默认）。 */
 const cardDesc = computed(() => {
   if (loadError.value !== '') {
-    return '请检查网络后重试。'
+    return t('common.networkRetry')
   }
   if (items.value.length === 0 && !loading.value) {
-    return hasActiveFilters(filters) ? '没有符合条件的结果，试试放宽筛选。' : '还没有可搜索的交易。'
+    return hasActiveFilters(filters) ? t('search.emptyFiltered') : t('search.emptyAll')
   }
   return ''
 })
@@ -266,24 +267,41 @@ function labelOfAccountId(id: number): string {
       return accountLabel(account)
     }
   }
-  return `#${id}（已删除）`
+  return t('search.deletedAccount', { id: String(id) })
 }
 
 /** 已选条件 chips（`key` 用于单独移除）。 */
 const chips = computed<Array<{ key: string; label: string }>>(() => {
   const out: Array<{ key: string; label: string }> = []
-  if (filters.keyword.trim() !== '') out.push({ key: 'keyword', label: `关键词：${filters.keyword}` })
+  if (filters.keyword.trim() !== '') {
+    out.push({ key: 'keyword', label: t('search.chipKeyword', { value: filters.keyword }) })
+  }
   if (filters.from !== '' || filters.to !== '') {
-    out.push({ key: 'from', label: `日期：${filters.from === '' ? '不限' : filters.from} ~ ${filters.to === '' ? '不限' : filters.to}` })
+    const anyDate = t('search.anyDate')
+    out.push({
+      key: 'from',
+      label: t('search.chipDate', {
+        from: filters.from === '' ? anyDate : filters.from,
+        to: filters.to === '' ? anyDate : filters.to,
+      }),
+    })
   }
   if (filters.kind !== 'all') {
-    const map: Record<string, string> = { expense: '支出', income: '收入', transfer: '转账' }
-    out.push({ key: 'kind', label: `类型：${map[filters.kind] ?? filters.kind}` })
+    const map: Record<string, string> = {
+      expense: t('common.expense'),
+      income: t('common.income'),
+      transfer: t('core.txnRow.kindTransfer'),
+    }
+    out.push({ key: 'kind', label: t('search.chipKind', { value: map[filters.kind] ?? filters.kind }) })
   }
-  if (filters.account !== null) out.push({ key: 'account', label: `账户：${labelOfAccountId(filters.account)}` })
-  if (filters.category !== null) out.push({ key: 'category', label: `分类：${labelOfAccountId(filters.category)}` })
-  if (filters.tag !== '') out.push({ key: 'tag', label: `标签：${filters.tag}` })
-  if (filters.member !== '') out.push({ key: 'member', label: `成员：${filters.member}` })
+  if (filters.account !== null) {
+    out.push({ key: 'account', label: t('search.chipAccount', { value: labelOfAccountId(filters.account) }) })
+  }
+  if (filters.category !== null) {
+    out.push({ key: 'category', label: t('search.chipCategory', { value: labelOfAccountId(filters.category) }) })
+  }
+  if (filters.tag !== '') out.push({ key: 'tag', label: t('search.chipTag', { value: filters.tag }) })
+  if (filters.member !== '') out.push({ key: 'member', label: t('search.chipMember', { value: filters.member }) })
   return out
 })
 
@@ -340,9 +358,9 @@ async function exportCsv(): Promise<void> {
     const page = await transactionApi.listPage({ ...baseQuery(), limit: 0 })
     const rows = buildCsvRowsFromTransactions(page.transactions, data.accounts)
     downloadCsv('family-ledger-search.csv', buildTransactionsCsv(rows))
-    notice.value = `已导出 CSV（${page.transactions.length} 笔交易）`
+    notice.value = t('search.csvDone', { count: String(page.transactions.length) })
   } catch (err) {
-    notice.value = err instanceof Error ? err.message : 'CSV 导出失败，请重试'
+    notice.value = err instanceof Error ? err.message : t('search.csvFailed')
   }
 }
 </script>
@@ -353,11 +371,11 @@ async function exportCsv(): Promise<void> {
          用 router.push 而不是 history.back()：用户可能是直接打开分享链接进来，
          back() 会把他退出应用。 -->
     <div class="search__back">
-      <button type="button" class="search__back-btn" @click="goBills">‹ 返回账单</button>
+      <button type="button" class="search__back-btn" @click="goBills">{{ t('search.backToBills') }}</button>
     </div>
 
     <header class="search__hero">
-      <h1 class="search__title">搜索账单</h1>
+      <h1 class="search__title">{{ t('shell.nav.search') }}</h1>
     </header>
 
     <!-- 搜索卡在四态之外：空态不能让人失去出口（改到 StateCard 里，用例会红） -->
@@ -382,9 +400,9 @@ async function exportCsv(): Promise<void> {
     <!-- 汇总卡（T36）：口径是**筛选全集**，与翻到第几页无关；summary 缺失时整块不渲染。
          `aria-live="polite"`（稿 938）让读屏用户在换筛选后听到新的笔数，而不是
          自己再跑去翻列表。 -->
-    <section v-if="summary !== null" class="search__summary" aria-label="命中汇总" aria-live="polite">
+    <section v-if="summary !== null" class="search__summary" :aria-label="t('search.summaryLabel')" aria-live="polite">
       <!-- 笔数不是金额，隐私遮挡时**不遮**（用户仍需要知道筛出了多少笔） -->
-      <p class="search__summary-total">共 {{ summary.total }} 笔</p>
+      <p class="search__summary-total">{{ t('search.total', { total: String(summary.total) }) }}</p>
       <ul class="search__summary-list">
         <li
           v-for="row in summary.by_commodity"
@@ -392,9 +410,9 @@ async function exportCsv(): Promise<void> {
           class="search__summary-row"
         >
           <span class="search__summary-chip">{{ row.commodity }}</span>
-          <span class="search__summary-label">收入</span>
+          <span class="search__summary-label">{{ t('common.income') }}</span>
           <MoneyText :amount="row.income" :commodity="row.commodity" size="sm" />
-          <span class="search__summary-label">支出</span>
+          <span class="search__summary-label">{{ t('common.expense') }}</span>
           <MoneyText :amount="row.expense" :commodity="row.commodity" size="sm" />
         </li>
       </ul>
@@ -405,9 +423,9 @@ async function exportCsv(): Promise<void> {
     <StateCard :state="pageState" :desc="cardDesc" @action="loadFirst">
       <section class="search__result">
         <header class="search__result-head">
-          <span class="search__result-title">搜索结果</span>
+          <span class="search__result-title">{{ t('search.results') }}</span>
           <span class="search__result-actions">
-            <button type="button" class="search__export" @click="exportCsv">⇩ 导出 CSV</button>
+            <button type="button" class="search__export" @click="exportCsv">{{ t('search.exportCsv') }}</button>
           </span>
         </header>
 
@@ -423,7 +441,7 @@ async function exportCsv(): Promise<void> {
             class="search__more-btn"
             :disabled="loadingMore"
             @click="loadMore"
-          >{{ loadingMore ? '正在加载…' : '加载更多' }}</button>
+          >{{ loadingMore ? t('common.loading') : t('search.loadMore') }}</button>
         </div>
       </section>
     </StateCard>

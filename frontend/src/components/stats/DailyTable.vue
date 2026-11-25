@@ -13,6 +13,7 @@
  * 「这天没有记录」混在一起。
  */
 import type { DailyTable } from '@/core/stats'
+import { t } from '@/i18n'
 import MoneyText from '@/components/MoneyText.vue'
 
 withDefaults(
@@ -28,38 +29,38 @@ withDefaults(
 <template>
   <section class="daily">
     <header class="daily__head">
-      <span class="daily__title">每日收支明细</span>
+      <span class="daily__title">{{ t('stats.dailyTitle') }}</span>
       <span class="daily__sum">
-        <span class="daily__sum-text">总计</span>
-        <span class="daily__sum-item">收 <MoneyText :amount="table.total.income" :commodity="commodity" :privacy="masked" size="sm" /></span>
+        <span class="daily__sum-text">{{ t('stats.totalSummary') }}</span>
+        <span class="daily__sum-item">{{ t('common.income') }} <MoneyText :amount="table.total.income" :commodity="commodity" :privacy="masked" size="sm" /></span>
         <span class="daily__sum-sep" aria-hidden="true">·</span>
-        <span class="daily__sum-item">支 <MoneyText :amount="table.total.expense" :commodity="commodity" :privacy="masked" size="sm" /></span>
+        <span class="daily__sum-item">{{ t('common.expense') }} <MoneyText :amount="table.total.expense" :commodity="commodity" :privacy="masked" size="sm" /></span>
         <span class="daily__sum-sep" aria-hidden="true">·</span>
-        <span class="daily__sum-item">结余 <MoneyText :amount="table.total.balance" :commodity="commodity" :privacy="masked" size="sm" signed /></span>
+        <span class="daily__sum-item">{{ t('common.balance') }} <MoneyText :amount="table.total.balance" :commodity="commodity" :privacy="masked" size="sm" signed /></span>
       </span>
-      <span class="daily__note">日期 · 收入 · 支出 · 结余</span>
+      <span class="daily__note">{{ t('stats.dailyNote') }}</span>
     </header>
 
     <div class="daily__wrap">
       <table class="daily__table">
         <thead>
           <tr>
-            <th scope="col">日期</th>
-            <th scope="col" class="daily__r">收入</th>
-            <th scope="col" class="daily__r">支出</th>
-            <th scope="col" class="daily__r">结余</th>
+            <th scope="col">{{ t('stats.colDate') }}</th>
+            <th scope="col" class="daily__r">{{ t('common.income') }}</th>
+            <th scope="col" class="daily__r">{{ t('common.expense') }}</th>
+            <th scope="col" class="daily__r">{{ t('common.balance') }}</th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="row in table.rows" :key="row.day" :class="{ 'daily__row--empty': !row.hasData }">
-            <td class="daily__date">{{ row.day }}日</td>
+            <td class="daily__date">{{ t('stats.dayUnit', { day: String(row.day) }) }}</td>
             <td class="daily__r">
               <MoneyText v-if="row.income !== '0.00'" :amount="row.income" :commodity="commodity" :privacy="masked" size="sm" />
-              <span v-else class="daily__dash" aria-label="无收入">—</span>
+              <span v-else class="daily__dash" :aria-label="t('stats.noIncome')">—</span>
             </td>
             <td class="daily__r">
               <MoneyText v-if="row.expense !== '0.00'" :amount="row.expense" :commodity="commodity" :privacy="masked" size="sm" />
-              <span v-else class="daily__dash" aria-label="无支出">—</span>
+              <span v-else class="daily__dash" :aria-label="t('stats.noExpense')">—</span>
             </td>
             <td class="daily__r">
               <MoneyText :amount="row.balance" :commodity="commodity" :privacy="masked" size="sm" signed />
@@ -69,7 +70,7 @@ withDefaults(
         <!-- tfoot 只放「日均」一行，且吸底；总计在卡头 -->
         <tfoot>
           <tr>
-            <td>日均</td>
+            <td>{{ t('stats.avgDay') }}</td>
             <td class="daily__r">
               <MoneyText
                 v-if="table.average.applicable"
@@ -78,7 +79,7 @@ withDefaults(
                 :privacy="masked"
                 size="sm"
               />
-              <span v-else class="daily__dash" aria-label="本月未开始">—</span>
+              <span v-else class="daily__dash" :aria-label="t('stats.monthNotStarted')">—</span>
             </td>
             <td class="daily__r">
               <MoneyText
@@ -88,9 +89,9 @@ withDefaults(
                 :privacy="masked"
                 size="sm"
               />
-              <span v-else class="daily__dash" aria-label="本月未开始">—</span>
+              <span v-else class="daily__dash" :aria-label="t('stats.monthNotStarted')">—</span>
             </td>
-            <td class="daily__r daily__dash" aria-label="日均结余不作展示">—</td>
+            <td class="daily__r daily__dash" :aria-label="t('stats.noAvgBalance')">—</td>
           </tr>
         </tfoot>
       </table>
@@ -99,8 +100,11 @@ withDefaults(
     <p class="daily__avg-note">
       {{
         table.average.applicable
-          ? `日均按已过 ${table.elapsedDays} 天折算${table.isCurrentMonth ? '（本月未完）' : ''}`
-          : '本月未开始，日均暂不计算'
+          ? t('stats.avgNote', {
+            days: String(table.elapsedDays),
+            progress: table.isCurrentMonth ? t('stats.monthInProgress') : '',
+          })
+          : t('stats.avgNotStarted')
       }}
     </p>
   </section>

@@ -31,6 +31,7 @@ import {
   type PostingView,
   type SummaryAccount,
 } from '@/core/record'
+import { t } from '@/i18n'
 import PostingPreview from './PostingPreview.vue'
 
 const props = withDefaults(
@@ -307,7 +308,7 @@ function evaluateRow(index: number): void {
     commit()
   } catch (err) {
     // 除零等错误：保留上一次成功落值，只显示该行错误。
-    rowEvalErrors.value[index] = err instanceof Error ? err.message : '金额表达式不正确'
+    rowEvalErrors.value[index] = err instanceof Error ? err.message : t('advancedPostings.evalFallback')
   }
 }
 
@@ -396,18 +397,19 @@ let popoverAnchor: HTMLElement | null = null
  */
 const isPcViewport = ref(typeof window === 'undefined' || window.innerWidth >= 900)
 
-const ACCOUNT_GROUPS: Array<{ type: string; label: string }> = [
-  { type: 'Assets', label: 'ASSETS · 资产' },
-  { type: 'Liabilities', label: 'LIABILITIES · 负债' },
-  { type: 'Income', label: 'INCOME · 收入' },
-  { type: 'Expenses', label: 'EXPENSES · 支出' },
-  { type: 'Equity', label: 'EQUITY · 权益' },
-]
+/** 五类账户分组标题：label 取字典（访问时求值随语言切换），type 仍是后端契约字符串。 */
+const ACCOUNT_GROUPS = computed<Array<{ type: string; label: string }>>(() => [
+  { type: 'Assets', label: t('advancedPostings.groupAssets') },
+  { type: 'Liabilities', label: t('advancedPostings.groupLiabilities') },
+  { type: 'Income', label: t('advancedPostings.groupIncome') },
+  { type: 'Expenses', label: t('advancedPostings.groupExpenses') },
+  { type: 'Equity', label: t('advancedPostings.groupEquity') },
+])
 
 /** 全部账户五类分组（与仅资金账户的简化态浮层明确区分）+ 顶部搜索。 */
 const accountGroups = computed(() => {
   const keyword = rowPopoverSearch.value.trim().toLowerCase()
-  return ACCOUNT_GROUPS.map((group) => ({
+  return ACCOUNT_GROUPS.value.map((group) => ({
     type: group.type,
     label: group.label,
     accounts: props.accounts.filter((account) => {
@@ -759,13 +761,13 @@ defineExpose({ canSubmit, addRow, removeRow, autoBalance, pressActiveKey, finish
 <template>
   <section class="grp">
     <div class="g-head">
-      <span class="g-title"><i class="g-dot"></i>双录分录</span>
+      <span class="g-title"><i class="g-dot"></i>{{ t('advancedPostings.title') }}</span>
       <!-- 编辑态隐藏「返回简化模式」：带类型 Tab 的简化编辑器会把类型暗示带回编辑态。 -->
       <button v-if="!editing" type="button" class="g-link" data-act="back-simple" @click="backToSimple">
-        ‹ 返回简化模式
+        {{ t('advancedPostings.backSimple') }}
       </button>
     </div>
-    <p class="g-note">每行一个账户 · 按币种合计必须为 0 · 至少 2 行 · 账户名取真实导出名</p>
+    <p class="g-note">{{ t('advancedPostings.note') }}</p>
 
     <div class="js-advrows">
       <div
@@ -780,12 +782,12 @@ defineExpose({ canSubmit, addRow, removeRow, autoBalance, pressActiveKey, finish
           <select
             class="acc-contract"
             :value="row.accountId === null ? '' : String(row.accountId)"
-            :aria-label="`第 ${index + 1} 行账户（契约控件）`"
+            :aria-label="t('advancedPostings.ariaAccountInput', { n: String(index + 1) })"
             data-rf="acc"
             data-role="input"
             @change="onAccountChange(index, $event)"
           >
-            <option value="">选择账户…</option>
+            <option value="">{{ t('advancedPostings.selectAccount') }}</option>
             <option v-for="account in accounts" :key="account.id" :value="String(account.id)">
               {{ accountLabel(account) }} · {{ account.name }}
             </option>
@@ -793,28 +795,28 @@ defineExpose({ canSubmit, addRow, removeRow, autoBalance, pressActiveKey, finish
           <button
             type="button"
             class="acc-chip"
-            :aria-label="`第 ${index + 1} 行账户，打开账户选择`"
+            :aria-label="t('advancedPostings.ariaAccountChip', { n: String(index + 1) })"
             data-rf="acc"
             data-role="chip"
             data-popover-trigger="acc"
             :data-row="index"
             @click="openRowPopover('acc', index, $event)"
           >
-            <span class="acc-chip__main">{{ row.accountId === null ? '选择账户…' : accountLabel(accountOf(row.accountId) ?? { name: '' }) }}</span>
+            <span class="acc-chip__main">{{ row.accountId === null ? t('advancedPostings.selectAccount') : accountLabel(accountOf(row.accountId) ?? { name: '' }) }}</span>
             <code class="acc-chip__mono">{{ row.accountId === null ? '' : (accountOf(row.accountId)?.name ?? '') }}</code>
             <span class="chip-caret">▾</span>
           </button>
           <button
             type="button"
             class="adv-remove"
-            :aria-label="`删除第 ${index + 1} 行`"
+            :aria-label="t('advancedPostings.ariaRemoveRow', { n: String(index + 1) })"
             data-act="remove-row"
             :data-row="index"
             @click="removeRow(index)"
           >✕</button>
         </div>
         <div class="row-bottom">
-          <div class="dir-toggle" role="group" :aria-label="`第 ${index + 1} 行借贷方向`">
+          <div class="dir-toggle" role="group" :aria-label="t('advancedPostings.ariaDirection', { n: String(index + 1) })">
             <button
               type="button"
               class="seg debit"
@@ -823,7 +825,7 @@ defineExpose({ canSubmit, addRow, removeRow, autoBalance, pressActiveKey, finish
               data-rf="dir"
               data-dir="debit"
               @click="onDirectionChange(index, 'debit')"
-            >借</button>
+            >{{ t('advancedPostings.debit') }}</button>
             <button
               type="button"
               class="seg credit"
@@ -832,7 +834,7 @@ defineExpose({ canSubmit, addRow, removeRow, autoBalance, pressActiveKey, finish
               data-rf="dir"
               data-dir="credit"
               @click="onDirectionChange(index, 'credit')"
-            >贷</button>
+            >{{ t('advancedPostings.credit') }}</button>
           </div>
           <div class="amt-box">
             <span
@@ -846,7 +848,7 @@ defineExpose({ canSubmit, addRow, removeRow, autoBalance, pressActiveKey, finish
               inputmode="decimal"
               :readonly="!isPcViewport || (keypadActive && activeRow === index)"
               :value="amountDisplayOf(index)"
-              :aria-label="`第 ${index + 1} 行金额（正数）`"
+              :aria-label="t('advancedPostings.ariaAmount', { n: String(index + 1) })"
               data-rf="amt"
               placeholder="0.00"
               @click="onAmountFocus(index, $event)"
@@ -858,8 +860,8 @@ defineExpose({ canSubmit, addRow, removeRow, autoBalance, pressActiveKey, finish
           <button
             type="button"
             class="signflip"
-            :aria-label="`翻转第 ${index + 1} 行借贷方向`"
-            title="正负翻转（切换借贷方向）"
+            :aria-label="t('advancedPostings.ariaFlip', { n: String(index + 1) })"
+            :title="t('advancedPostings.flipTitle')"
             data-act="flip"
             :data-row="index"
             @click="onFlipDirection(index)"
@@ -867,7 +869,7 @@ defineExpose({ canSubmit, addRow, removeRow, autoBalance, pressActiveKey, finish
           <select
             class="cur-contract row-cur"
             :value="row.commodity"
-            :aria-label="`第 ${index + 1} 行币种（契约控件）`"
+            :aria-label="t('advancedPostings.ariaCommodityInput', { n: String(index + 1) })"
             data-rf="cur"
             data-role="input"
             @change="onCommodityChange(index, $event)"
@@ -877,7 +879,7 @@ defineExpose({ canSubmit, addRow, removeRow, autoBalance, pressActiveKey, finish
           <button
             type="button"
             class="cur-chip"
-            :aria-label="`第 ${index + 1} 行币种，打开币种选择`"
+            :aria-label="t('advancedPostings.ariaCommodityChip', { n: String(index + 1) })"
             data-rf="cur"
             data-role="chip"
             data-popover-trigger="cur"
@@ -894,29 +896,29 @@ defineExpose({ canSubmit, addRow, removeRow, autoBalance, pressActiveKey, finish
       </div>
     </div>
 
-    <button type="button" class="add-row" data-act="add-row" @click="addRow">＋ 添加分录</button>
+    <button type="button" class="add-row" data-act="add-row" @click="addRow">{{ t('advancedPostings.addRow') }}</button>
     <button type="button" class="auto-row" data-act="auto-balance" @click="autoBalance">
-      按差额补一行（账户仍需选择）
+      {{ t('advancedPostings.autoBalance') }}
     </button>
   </section>
 
   <section class="grp">
     <div class="g-head">
-      <span class="g-title"><i class="g-dot"></i>配平检查</span>
+      <span class="g-title"><i class="g-dot"></i>{{ t('advancedPostings.checkTitle') }}</span>
       <span class="g-side js-bal-tag" :class="canSubmit ? 'ok' : 'bad'">
-        {{ canSubmit ? '✓ 已平衡' : '✕ 未配平' }}
+        {{ canSubmit ? t('advancedPostings.balanced') : t('advancedPostings.unbalanced') }}
       </span>
     </div>
     <div class="js-check">
       <template v-for="group in groups" :key="group.commodity">
         <div class="check-line">
-          <span>{{ group.commodity }} 借方合计（+）</span><span class="pos">+{{ fmt(group.pos) }}</span>
+          <span>{{ t('advancedPostings.debitTotal', { commodity: group.commodity }) }}</span><span class="pos">+{{ fmt(group.pos) }}</span>
         </div>
         <div class="check-line">
-          <span>{{ group.commodity }} 贷方合计（−）</span><span class="neg">{{ fmt(group.neg) }}</span>
+          <span>{{ t('advancedPostings.creditTotal', { commodity: group.commodity }) }}</span><span class="neg">{{ fmt(group.neg) }}</span>
         </div>
         <div class="check-line">
-          <span>{{ group.commodity }} 差额</span>
+          <span>{{ t('advancedPostings.checkDiff', { commodity: group.commodity }) }}</span>
           <span :class="group.sum === '0.00' ? 'zero' : 'neg'">{{ signedFmt(group.sum) }}</span>
         </div>
       </template>
@@ -930,10 +932,10 @@ defineExpose({ canSubmit, addRow, removeRow, autoBalance, pressActiveKey, finish
   </section>
 
   <!-- 编辑态：日期 / 标签 / 备注来自原交易；新建态：沿用切换前填写的内容。 -->
-  <p v-if="editing" class="adv-note">日期 / 标签 / 备注来自原交易，可直接修改；保存走冲正 + 新建（仅在线）。</p>
-  <p v-else class="adv-note">日期 / 标签 / 备注沿用切换前填写的内容；返回简化模式可修改。提交走与简化模式相同的幂等路径。</p>
-  <p v-if="editing" class="edit-mini">原交易将被冲正：保存后以新交易为准，仅在线提交。</p>
-  <p class="adv-note">多币种时按 <b>commodity 分组</b>各自配平；跨币种 cost / price 注解属 P1，本期不出。</p>
+  <p v-if="editing" class="adv-note">{{ t('advancedPostings.noteEdit') }}</p>
+  <p v-else class="adv-note">{{ t('advancedPostings.noteCreate') }}</p>
+  <p v-if="editing" class="edit-mini">{{ t('advancedPostings.editMini') }}</p>
+  <p class="adv-note">{{ t('advancedPostings.multiNoteBefore') }}<b>{{ t('advancedPostings.multiNoteBold') }}</b>{{ t('advancedPostings.multiNoteAfter') }}</p>
 
   <!-- 行浮层：Teleport 到 body 避开 .rs-panel{overflow:hidden} / .rs-body{overflow-y:auto} 裁剪。 -->
   <Teleport to="body">
@@ -942,21 +944,21 @@ defineExpose({ canSubmit, addRow, removeRow, autoBalance, pressActiveKey, finish
         class="adv-popover"
         :style="rowPopoverStyle"
         role="dialog"
-        :aria-label="rowPopover.kind === 'acc' ? '选择账户（该行）' : '选择币种（该行）'"
+        :aria-label="rowPopover.kind === 'acc' ? t('advancedPostings.popoverAccount') : t('advancedPostings.popoverCommodity')"
         :data-popover="rowPopover.kind"
         :data-row="rowPopover.row"
       >
         <div class="adv-pop-head">
-          <b>{{ rowPopover.kind === 'acc' ? `选择账户（第 ${rowPopover.row + 1} 行）` : '选择币种（该行）' }}</b>
-          <button type="button" class="adv-pop-close" aria-label="关闭浮层" @click="closeRowPopover">✕</button>
+          <b>{{ rowPopover.kind === 'acc' ? t('advancedPostings.popoverAccountRow', { n: String(rowPopover.row + 1) }) : t('advancedPostings.popoverCommodity') }}</b>
+          <button type="button" class="adv-pop-close" :aria-label="t('advancedPostings.closePopover')" @click="closeRowPopover">✕</button>
         </div>
         <template v-if="rowPopover.kind === 'acc'">
           <input
             v-model="rowPopoverSearch"
             class="adv-search"
             type="search"
-            placeholder="搜索 display_name / name"
-            aria-label="搜索账户"
+            :placeholder="t('advancedPostings.searchPlaceholder')"
+            :aria-label="t('advancedPostings.searchAria')"
             data-search="adv-acc"
           />
           <div v-for="group in accountGroups" :key="group.type" class="adv-group">

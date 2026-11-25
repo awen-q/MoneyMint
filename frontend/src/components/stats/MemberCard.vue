@@ -10,6 +10,7 @@
 import { ref } from 'vue'
 
 import type { MemberContribution } from '@/core/reports'
+import { t } from '@/i18n'
 import MoneyText from '@/components/MoneyText.vue'
 
 withDefaults(
@@ -32,24 +33,24 @@ const open = ref(false)
       :aria-expanded="open"
       @click="open = !open"
     >
-      <span class="member-card__title">成员贡献</span>
-      <span class="member-card__count">{{ members.length }} 人</span>
+      <span class="member-card__title">{{ t('stats.memberTitle') }}</span>
+      <span class="member-card__count">{{ t('stats.memberCount', { count: String(members.length) }) }}</span>
       <span class="member-card__caret" aria-hidden="true">{{ open ? '⌃' : '⌄' }}</span>
     </button>
 
     <div v-if="open" class="member-card__body">
-      <p v-if="members.length === 0" class="member-card__empty">本月没有记录</p>
+      <p v-if="members.length === 0" class="member-card__empty">{{ t('stats.memberEmpty') }}</p>
       <ul v-else class="member-card__list">
         <li v-for="member in members" :key="member.name" class="member-card__row">
           <span class="member-card__name">{{ member.name }}</span>
-          <span class="member-card__meta">{{ member.count }} 笔</span>
+          <span class="member-card__meta">{{ t('common.txnCount', { count: String(member.count) }) }}</span>
           <span class="member-card__amount">
             <MoneyText :amount="member.amount" :commodity="commodity" :privacy="masked" size="sm" />
           </span>
         </li>
       </ul>
       <!-- EXT-01 ⑤：卡底口径说明（设计 `.tbl-note` 原语），说明「按记账人聚合」 -->
-      <p class="member-card__note">按记账人聚合 · {{ commodity }} 口径</p>
+      <p class="member-card__note">{{ t('stats.memberNote', { commodity }) }}</p>
     </div>
   </section>
 </template>

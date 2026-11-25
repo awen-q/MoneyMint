@@ -13,6 +13,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { memberApi } from '@/api/client'
 import { ApiError } from '@/api/errors'
 import type { LedgerRole, MemberView } from '@/api/types'
+import { roleLabel } from '@/core/batch3'
 import PasswordInput from '@/components/PasswordInput.vue'
 import { t } from '@/i18n'
 import { useSessionStore } from '@/stores/session'
@@ -43,20 +44,6 @@ const currentRole = computed<LedgerRole | ''>(() => {
   return session.user === null ? '' : session.user.role
 })
 const isOwner = computed(() => currentRole.value === 'owner')
-
-/** 角色中文标签（值与原 core/batch3.roleLabel 逐字节一致，阶段 2 只迁视图）。 */
-function roleText(role: LedgerRole | ''): string {
-  if (role === 'owner') {
-    return t('common.roleOwner')
-  }
-  if (role === 'editor') {
-    return t('common.roleEditor')
-  }
-  if (role === 'viewer') {
-    return t('common.roleViewer')
-  }
-  return t('common.roleNone')
-}
 
 function messageOf(err: unknown): string {
   return err instanceof ApiError ? err.message : t('members.errGeneric')
@@ -121,7 +108,7 @@ function toggleRole(member: MemberView): void {
     () => memberApi.updateRole(member.user_id, { role: next }),
     t('members.noticeRoleChanged', {
       name: member.display_name || member.username,
-      role: roleText(next),
+      role: roleLabel(next),
     }),
   )
 }
@@ -237,7 +224,7 @@ onMounted(() => { void load() })
           <span class="mem__avatar">{{ (member.display_name || member.username).charAt(0) }}</span>
           <span class="mem__name">
             {{ member.display_name || member.username }}
-            <small>@{{ member.username }} · {{ roleText(member.role) }}</small>
+            <small>@{{ member.username }} · {{ roleLabel(member.role) }}</small>
           </span>
           <template v-if="member.role !== 'owner'">
             <button class="fb-btn-ghost mem__btn" type="button" :disabled="busy" @click="toggleRole(member)">

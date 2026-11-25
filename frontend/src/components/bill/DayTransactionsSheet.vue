@@ -15,6 +15,7 @@ import { computed } from 'vue'
 
 import type { AccountView, TransactionView } from '@/api/types'
 import { buildTxnRow } from '@/core/txnRow'
+import { t } from '@/i18n'
 import TxnRow from '@/components/TxnRow.vue'
 import SelectSheet from '@/components/shell/SelectSheet.vue'
 
@@ -48,8 +49,12 @@ const rows = computed(() =>
 
 const title = computed(() =>
   props.day === null
-    ? '当日交易'
-    : `${props.month}月${props.day}日 · ${rows.value.length} 笔`,
+    ? t('bills.sheetTitleNoDay')
+    : t('bills.sheetTitle', {
+      month: String(props.month),
+      day: String(props.day),
+      count: String(rows.value.length),
+    }),
 )
 </script>
 
@@ -57,11 +62,11 @@ const title = computed(() =>
   <SelectSheet
     :open="open"
     :title="title"
-    dialog-label="当日交易明细"
+    :dialog-label="t('bills.sheetDialog')"
     data-testid="day-transactions-sheet"
     @close="emit('close')"
   >
-    <p v-if="rows.length === 0" class="daytx__empty" role="status">当日无交易</p>
+    <p v-if="rows.length === 0" class="daytx__empty" role="status">{{ t('bills.sheetEmpty') }}</p>
     <ul v-else class="daytx__list">
       <li v-for="row in rows" :key="row.id" class="daytx__item">
         <TxnRow

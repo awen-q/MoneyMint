@@ -54,6 +54,7 @@ import {
 import { catIcon, recordFundAccounts } from '@/core/accounts'
 import { buildBeanSnippet } from '@/core/bean'
 import { clearDraft, readDefaultAccounts, readDraft, setDefaultAccount, writeDraft, type DefaultAccountKind } from '@/core/storage'
+import { t } from '@/i18n'
 import { usePrivacyStore } from '@/stores/privacy'
 import { useRecordSheetStore } from '@/stores/recordSheet'
 import { useSessionStore } from '@/stores/session'
@@ -147,7 +148,8 @@ interface ReceiptSnapshot {
   kindLabel: string
   amount: string
   commodity: string
-  rows: Array<{ label: string; value?: string; tags?: string[] }>
+  /** 明细行：kind 为稳定身份，label 随语言（避免用本地化文案做查找条件）。 */
+  rows: Array<{ kind: 'date' | 'desc' | 'tags'; label: string; value?: string; tags?: string[] }>
   postings: Array<{ account: string; commodity: string; amount: string }>
   /** 与折叠预览逐字一致的 bean 片段（票面新增区）。 */
   bean: string
@@ -171,9 +173,9 @@ function openShare(): void {
     return
   }
   // 分类展示名：备注优先（用户可见），没有备注时用类型标签，绝不取完整科目名。
-  const descRow = r.rows.find((row) => row.label === '备注')
+  const descRow = r.rows.find((row) => row.kind === 'desc')
   const payee = descRow?.value !== undefined && descRow.value !== '' ? descRow.value : r.kindLabel
-  const tagRow = r.rows.find((row) => row.label === '标签')
+  const tagRow = r.rows.find((row) => row.kind === 'tags')
   /**
    * 精确时间从票尾第一行提取（形如「2026-11-21 18:30:00 · 家庭账本」），
    * 只取到秒的时间串，不能把账本名一起塞进分享图。
@@ -183,7 +185,7 @@ function openShare(): void {
     amount: r.amount,
     commodity: r.commodity,
     kindLabel: r.kindLabel,
-    date: r.rows.find((row) => row.label === '日期')?.value ?? '',
+    date: r.rows.find((row) => row.kind === 'date')?.value ?? '',
     payee,
     bean: r.bean,
     tags: tagRow?.tags ?? [],
@@ -195,10 +197,15 @@ function openShare(): void {
   shareOpen.value = true
 }
 
-const KIND_LABELS: Record<RecordKind, string> = {
-  expense: '支出 EXPENSE',
-  income: '收入 INCOME',
-  transfer: '转账 TRANSFER',
+/** 票面类型标签：按当前语言求值（非模块快照）；编辑态固定「修改 EDIT」。 */
+function receiptKindLabel(kind: RecordKind): string {
+  if (kind === 'income') {
+    return t('record.receiptKindIncome')
+  }
+  if (kind === 'transfer') {
+    return t('record.receiptKindTransfer')
+  }
+  return t('record.receiptKindExpense')
 }
 
 function pad2(value: number): string {
@@ -226,7 +233,7 @@ function accountNameOf(accountId: number): string {
       return accountLabel(account)
     }
   }
-  return `账户 #${accountId}`
+  return t('record.accountFallback', { id: String(accountId) })
 }
 
 // ---------- 0.6.0 S6：编辑态（修改 = 冲正 + 新建） ----------
@@ -283,19 +290,43 @@ function prefillFromEditTxn(): void {
 let idempotencyKey: string | null = null
 let lastPayloadJson = ''
 
-const tabs: Array<{ key: RecordKind; label: string }> = [
-  { key: 'expense', label: '支出' },
-  { key: 'income', label: '收入' },
-  { key: 'transfer', label: '转账' },
-]
+/**
+ * 键位身份：数字 / 符号沿用其字符本身，动作键用与语言无关的枚举 id。
+ * 键面文案（label）随语言求值，data-key 绑定 label 以保持契约（zh 下与原值逐字一致）。
+ */
+interface KeypadKey {
+  id: string
+  label: string
+}
+
+const tabs = computed<Array<{ key: RecordKind; label: string }>>(() => [
+  { key: 'expense', label: t('core.txnRow.kindExpense') },
+  { key: 'income', label: t('core.txnRow.kindIncome') },
+  { key: 'transfer', label: t('core.txnRow.kindTransfer') },
+])
 /** 4×5 键位：前四行数字 / 运算，第五行动作条（规格 §5-K）。 */
-const keyboardKeys: string[] = [
-  '7', '8', '9', '⌫',
-  '4', '5', '6', '×',
-  '1', '2', '3', '÷',
-  '.', '0', '=', '−',
-  '+', '再记', '高级双录', '保存',
-]
+const keyboardKeys = computed<KeypadKey[]>(() => [
+  { id: '7', label: '7' },
+  { id: '8', label: '8' },
+  { id: '9', label: '9' },
+  { id: '⌫', label: '⌫' },
+  { id: '4', label: '4' },
+  { id: '5', label: '5' },
+  { id: '6', label: '6' },
+  { id: '×', label: '×' },
+  { id: '1', label: '1' },
+  { id: '2', label: '2' },
+  { id: '3', label: '3' },
+  { id: '÷', label: '÷' },
+  { id: '.', label: '.' },
+  { id: '0', label: '0' },
+  { id: '=', label: '=' },
+  { id: '−', label: '−' },
+  { id: '+', label: '+' },
+  { id: 'again', label: t('record.keyAgain') },
+  { id: 'advanced', label: t('record.keyAdvanced') },
+  { id: 'save', label: t('record.keySave') },
+])
 /** 键盘运算键（内部表达式统一半角 + - * /，键面显示 × ÷ − +）。 */
 const OPERATOR_KEYS: Record<string, string> = {
   '×': '*',
@@ -305,7 +336,7 @@ const OPERATOR_KEYS: Record<string, string> = {
 }
 /** 高级行内键盘：复用前四行数字 / 运算键 + 第五行「+」（§5-E 四则缺一不可），
  * 末尾「完成」按钮与 + 同行占 3 格（grid-column: 2/-1），共 5 行 18 格。 */
-const advancedKeypadKeys: string[] = keyboardKeys.slice(0, 17)
+const advancedKeypadKeys = computed<KeypadKey[]>(() => keyboardKeys.value.slice(0, 17))
 
 const containerClass = computed(() =>
   props.variant === 'auto' ? 'rs-mask--auto' : `rs-mask--${props.variant}`,
@@ -460,6 +491,10 @@ const currency = computed(() => {
   return symbol !== '' ? symbol : session.defaultCommodity
 })
 const commodityCode = computed(() => (session.defaultCommodity === '' ? 'CNY' : session.defaultCommodity))
+/** 账本名兜底：未加载 / 未命名时显示「家庭账本」（随语言求值，非模块快照）。 */
+const ledgerDisplayName = computed(() =>
+  session.ledgerName === undefined || session.ledgerName === '' ? t('record.familyLedger') : session.ledgerName,
+)
 
 const snapshot = (): RecordForm => ({ ...form, tags: form.tags.slice(), advancedPostings: (form.advancedPostings ?? []).map((row) => ({ ...row })) })
 
@@ -476,7 +511,7 @@ const preview = computed<PostingDraft[]>(() => {
 })
 const previewError = computed<string>(() => {
   if (accounts.value.length === 0) {
-    return '账户列表加载中…'
+    return t('record.loadingAccounts')
   }
   if (advancedMode.value) {
     return ''
@@ -485,7 +520,7 @@ const previewError = computed<string>(() => {
     buildPostings(snapshot(), accounts.value, session.defaultCommodity)
     return ''
   } catch (err) {
-    return err instanceof Error ? err.message : '表单校验失败'
+    return err instanceof Error ? err.message : t('record.formInvalid')
   }
 })
 
@@ -606,18 +641,18 @@ const tagsText = computed(() => form.tags.join(' '))
 /** chip 文案：今天 / 昨天 / 前天，其余原样 YYYY-MM-DD。 */
 const dateChipLabel = computed(() => {
   if (form.date === quickDate(0)) {
-    return '今天'
+    return t('record.dateToday')
   }
   if (form.date === quickDate(1)) {
-    return '昨天'
+    return t('record.dateYesterday')
   }
   if (form.date === quickDate(2)) {
-    return '前天'
+    return t('record.dateDayBefore')
   }
   return form.date
 })
 const fundChipLabel = computed(() => accountNameOf(form.fundAccountId ?? -1))
-const flagChipLabel = computed(() => (form.flag === '!' ? '! 未完成' : '* 已完成'))
+const flagChipLabel = computed(() => (form.flag === '!' ? t('record.flagPendingShort') : t('record.flagDone')))
 /** 标签浮层选项：已知标签 + 当前选中，去重且保持稳定顺序。 */
 const tagOptions = computed<string[]>(() => {
   const result: string[] = []
@@ -714,7 +749,7 @@ function restoreDraft(): void {
       knownTags.value.push(tag)
     }
   }
-  notice.value = '已恢复上次未提交的表单草稿'
+  notice.value = t('record.noticeDraftRestored')
 }
 
 /** 按 uuid 反查可用账户 id；已删除 / 已关户返回 null。 */
@@ -776,7 +811,7 @@ function applyDefaultAccounts(): void {
   applyField('transferFromAccountId', defaults.transferOut, fundIds)
   applyField('transferToAccountId', defaults.transferIn, fundIds)
   if (invalid) {
-    notice.value = '默认账户已失效，已回退为首个可用账户'
+    notice.value = t('record.noticeDefaultFallback')
   }
 }
 
@@ -823,7 +858,7 @@ async function loadAccounts(): Promise<void> {
       form.transferToAccountId = fundAccounts.value[1].id
     }
   } catch (err) {
-    loadError.value = err instanceof ApiError ? err.message : '账户列表加载失败'
+    loadError.value = err instanceof ApiError ? err.message : t('record.loadAccountsFailed')
   } finally {
     loading.value = false
   }
@@ -978,7 +1013,9 @@ function onDateInput(event: Event): void {
     notice.value = ''
     return
   }
-  dateError.value = value > maxDate.value ? '日期不能晚于今天' : `日期不能早于账本期初 ${minDate.value}`
+  dateError.value = value > maxDate.value
+    ? t('record.dateAfterToday')
+    : t('record.dateBeforeOpening', { date: minDate.value })
   ;(event.target as HTMLInputElement).value = form.date
 }
 
@@ -1082,7 +1119,9 @@ function applyQuickDate(daysAgo: number): void {
   const candidate = quickDate(daysAgo)
   const opening = ledgerOpening()
   if (candidate < opening || candidate > maxDate.value) {
-    notice.value = candidate > maxDate.value ? '日期不能晚于今天' : `日期不能早于账本期初 ${opening}`
+    notice.value = candidate > maxDate.value
+      ? t('record.dateAfterToday')
+      : t('record.dateBeforeOpening', { date: opening })
     return
   }
   form.date = candidate
@@ -1090,6 +1129,17 @@ function applyQuickDate(daysAgo: number): void {
   notice.value = ''
   closePopover()
 }
+
+/** 日历表头：周日 → 周六，随语言求值。 */
+const weekdayLabels = computed<string[]>(() => [
+  t('record.weekdaySun'),
+  t('record.weekdayMon'),
+  t('record.weekdayTue'),
+  t('record.weekdayWed'),
+  t('record.weekdayThu'),
+  t('record.weekdayFri'),
+  t('record.weekdaySat'),
+])
 
 /** 日历单元格：前导空位 + 当月日；越界日禁用，今天描边，选中实心。 */
 interface CalendarCell {
@@ -1187,33 +1237,34 @@ function evaluateNow(): void {
     evalError.value = ''
     afterEquals.value = true
   } catch (err) {
-    evalError.value = err instanceof Error ? err.message : '金额表达式不正确'
+    evalError.value = err instanceof Error ? err.message : t('advancedPostings.evalFallback')
   }
 }
 
-function pressKey(key: string): void {
-  if (key === '保存' || key === '再记') {
+/** keyId 为键位身份（动作键枚举 / 数字与符号本身），与语言无关。 */
+function pressKey(keyId: string): void {
+  if (keyId === 'save' || keyId === 'again') {
     // 主操作守门：键盘动作键与底部保存条共用 canSubmit。
     if (!canSubmit.value) {
       return
     }
-    void submit(key === '再记')
+    void submit(keyId === 'again')
     return
   }
-  if (key === '高级双录') {
+  if (keyId === 'advanced') {
     toggleAdvanced()
     return
   }
-  if (key === '=') {
+  if (keyId === '=') {
     evaluateNow()
     return
   }
-  if (key === '⌫') {
+  if (keyId === '⌫') {
     markEditing()
     form.amountExpression = form.amountExpression.slice(0, -1)
     return
   }
-  const operator = OPERATOR_KEYS[key]
+  const operator = OPERATOR_KEYS[keyId]
   if (operator !== undefined) {
     if (form.amountExpression === '') {
       return
@@ -1235,7 +1286,7 @@ function pressKey(key: string): void {
   }
   markEditing()
   const segment = currentSegment(expression)
-  if (key === '.') {
+  if (keyId === '.') {
     if (segment.indexOf('.') >= 0) {
       form.amountExpression = expression
       return
@@ -1243,37 +1294,40 @@ function pressKey(key: string): void {
     form.amountExpression = expression + (segment === '' ? '0.' : '.')
     return
   }
-  if (/^[0-9]$/.test(key)) {
+  if (/^[0-9]$/.test(keyId)) {
     const dot = segment.indexOf('.')
     if (dot >= 0 && segment.length - dot - 1 >= 2) {
       form.amountExpression = expression
       return
     }
-    form.amountExpression = expression + key
+    form.amountExpression = expression + keyId
   }
 }
 
-function isActionKey(key: string): boolean {
-  return key === '保存' || key === '再记'
+function isActionKey(keyId: string): boolean {
+  return keyId === 'save' || keyId === 'again'
 }
 
-function keyClass(key: string): string {
-  if (key === '保存') {
+function keyClass(keyId: string): string {
+  if (keyId === 'save') {
     return 'rs-key rs-key--save js-save'
   }
-  if (key === '再记') {
+  if (keyId === 'again') {
     return 'rs-key rs-key--again'
   }
-  if (key === '高级双录') {
+  if (keyId === 'advanced') {
     return 'rs-key rs-key--advanced'
   }
-  if (key === '⌫' || key === '×' || key === '÷' || key === '−' || key === '+' || key === '=') {
+  if (keyId === '⌫' || keyId === '×' || keyId === '÷' || keyId === '−' || keyId === '+' || keyId === '=') {
     return 'rs-key rs-key--op'
   }
   return 'rs-key'
 }
 
 function defaultDescription(): string {
+  // 这是写入账本数据（交易 description 与 .beancount 导出）的默认描述，刻意不 i18n：
+  // 本地化会让同一操作在 en 下产生英文账目描述，破坏数据确定性，也与其他数据
+  // （账户名 / 分类名均为中文）不一致。值保持迁移前的中文字面量。
   if (form.kind === 'transfer') {
     return '转账'
   }
@@ -1406,33 +1460,33 @@ function buildAdvancedPostings(): PostingDraft[] | null {
   advancedError.value = ''
   const rows = form.advancedPostings ?? []
   if (rows.length < 2) {
-    advancedError.value = '高级双录至少需要 2 条分录'
+    advancedError.value = t('record.errAdvancedMinRows')
     return null
   }
   const drafts: PostingDraft[] = []
   for (const row of rows) {
     if (row.accountId === null) {
-      advancedError.value = '存在未选择账户的分录'
+      advancedError.value = t('record.errAdvancedNoAccount')
       return null
     }
     const account = accounts.value.find((item) => item.id === row.accountId)
     if (account === undefined) {
-      advancedError.value = '分录账户不在当前账本'
+      advancedError.value = t('record.errAdvancedForeign')
       return null
     }
     if (typeof row.amount !== 'string' || row.amount.trim() === '') {
-      advancedError.value = '存在空金额的分录'
+      advancedError.value = t('record.errAdvancedEmptyAmount')
       return null
     }
     let value: Money
     try {
       value = Money.from(row.amount)
     } catch {
-      advancedError.value = '分录金额格式不正确'
+      advancedError.value = t('record.errAdvancedBadAmount')
       return null
     }
     if (value.isZero()) {
-      advancedError.value = '分录金额不能为 0'
+      advancedError.value = t('record.errAdvancedZero')
       return null
     }
     drafts.push({
@@ -1446,9 +1500,9 @@ function buildAdvancedPostings(): PostingDraft[] | null {
   if (diffs.length > 0) {
     const parts: string[] = []
     for (const diff of diffs) {
-      parts.push(`${diff.commodity} 差额 ${diff.diff}`)
+      parts.push(t('record.diffLine', { commodity: diff.commodity, amount: diff.diff }))
     }
-    advancedError.value = `分录不配平：${parts.join('；')}`
+    advancedError.value = t('record.errAdvancedUnbalanced', { parts: parts.join(t('record.diffSeparator')) })
     return null
   }
   return drafts
@@ -1465,23 +1519,23 @@ function buildReceipt(
 ): ReceiptSnapshot {
   const entry = displayEntryOf(payload.postings, accounts.value)
   const commodity = entry.commodity !== '' ? entry.commodity : session.defaultCommodity
-  const rows: Array<{ label: string; value?: string; tags?: string[] }> = [
-    { label: '日期', value: payload.date },
-    { label: '备注', value: payload.description },
+  const rows: ReceiptSnapshot['rows'] = [
+    { kind: 'date', label: t('record.dateLabel'), value: payload.date },
+    { kind: 'desc', label: t('record.receiptDesc'), value: payload.description },
   ]
   const tags = payload.tags ?? []
   if (tags.length > 0) {
-    rows.push({ label: '标签', tags })
+    rows.push({ kind: 'tags', label: t('record.tags'), tags })
   }
 
   const stampMap: Record<
     typeof mode,
     { stamp: string; stampSub: string; tone: ReceiptSnapshot['tone'] }
   > = {
-    saved: { stamp: '已保存', stampSub: 'SAVED', tone: 'green' },
-    idempotent: { stamp: '未重复', stampSub: 'IDEMPOTENT', tone: 'blue' },
-    offline: { stamp: '待同步', stampSub: 'OFFLINE', tone: 'amber' },
-    updated: { stamp: '已修改', stampSub: 'UPDATED', tone: 'green' },
+    saved: { stamp: t('record.stampSaved'), stampSub: 'SAVED', tone: 'green' },
+    idempotent: { stamp: t('record.stampIdempotent'), stampSub: 'IDEMPOTENT', tone: 'blue' },
+    offline: { stamp: t('record.stampOffline'), stampSub: 'OFFLINE', tone: 'amber' },
+    updated: { stamp: t('record.stampUpdated'), stampSub: 'UPDATED', tone: 'green' },
   }
   const stamp = stampMap[mode]
 
@@ -1489,18 +1543,18 @@ function buildReceipt(
   let statusLine = ''
   let statusTone: ReceiptSnapshot['statusTone'] = 'amber'
   if (mode === 'saved') {
-    const ledgerName = session.ledgerName === undefined || session.ledgerName === '' ? '家庭账本' : session.ledgerName
+    const ledgerName = session.ledgerName === undefined || session.ledgerName === '' ? t('record.familyLedger') : session.ledgerName
     footLines = [`${nowText()} · ${ledgerName}`, `TXN ${shortCode(uuid)}`]
   } else if (mode === 'idempotent') {
-    footLines = [`${nowText()} · 未新增交易`, `TXN ${shortCode(uuid)}`]
-    statusLine = '本次为重复提交的幂等命中，账本中仅一笔'
+    footLines = [`${nowText()} · ${t('record.footNoNewTxn')}`, `TXN ${shortCode(uuid)}`]
+    statusLine = t('record.statusIdempotent')
     statusTone = 'blue'
   } else if (mode === 'offline') {
-    footLines = [`${nowText()} · 本机待推送`, `LOCAL ${shortCode(uuid)}`]
-    statusLine = '当前离线，已保存在本机，联网后自动同步'
+    footLines = [`${nowText()} · ${t('record.footLocalPending')}`, `LOCAL ${shortCode(uuid)}`]
+    statusLine = t('record.statusOffline')
   } else {
-    footLines = [`${nowText()} · 原交易已冲正`, `NEW ${shortCode(uuid)}`]
-    statusLine = '修改已保存：原交易已冲正，账目以新交易为准'
+    footLines = [`${nowText()} · ${t('record.footReversedOriginal')}`, `NEW ${shortCode(uuid)}`]
+    statusLine = t('record.statusUpdated')
     statusTone = 'blue'
   }
 
@@ -1509,7 +1563,7 @@ function buildReceipt(
     stampSub: stamp.stampSub,
     tone: stamp.tone,
     // 编辑态无类型概念（冲正 + 新建），票面类型标签固定为「修改 EDIT」。
-    kindLabel: isEditing.value ? '修改 EDIT' : KIND_LABELS[form.kind],
+    kindLabel: isEditing.value ? t('record.receiptKindEdited') : receiptKindLabel(form.kind),
     amount: Money.from(entry.amount).abs().toString(),
     commodity,
     rows,
@@ -1534,15 +1588,17 @@ async function submit(continueAfter: boolean): Promise<void> {
   // 提交处再次守门：浮层绕过后也不允许未来 / 早于开账日的日期落库。
   // 编辑态回填的是历史交易日期，不受「新记一笔」的下限约束（冲正 + 新建口径不变）。
   if (!isEditing.value && !isDateAllowed(form.date)) {
-    submitError.value = form.date > maxDate.value ? '日期不能晚于今天' : `日期不能早于账本期初 ${minDate.value}`
+    submitError.value = form.date > maxDate.value
+      ? t('record.dateAfterToday')
+      : t('record.dateBeforeOpening', { date: minDate.value })
     return
   }
   if (session.isViewer) {
-    submitError.value = '只读成员不能记账'
+    submitError.value = t('shell.viewerCannotRecord')
     return
   }
   if (session.ledgerId === null) {
-    submitError.value = '尚未选择账本，无法提交'
+    submitError.value = t('record.errNoLedger')
     return
   }
 
@@ -1550,7 +1606,7 @@ async function submit(continueAfter: boolean): Promise<void> {
   if (advancedMode.value) {
     const built = buildAdvancedPostings()
     if (built === null) {
-      submitError.value = advancedError.value === '' ? '高级分录校验失败' : advancedError.value
+      submitError.value = advancedError.value === '' ? t('record.errAdvancedInvalid') : advancedError.value
       return
     }
     postings = built
@@ -1558,7 +1614,7 @@ async function submit(continueAfter: boolean): Promise<void> {
     try {
       postings = buildPostings(snapshot(), accounts.value, session.defaultCommodity)
     } catch (err) {
-      submitError.value = err instanceof Error ? err.message : '表单校验失败'
+      submitError.value = err instanceof Error ? err.message : t('record.formInvalid')
       return
     }
   }
@@ -1580,7 +1636,7 @@ async function submit(continueAfter: boolean): Promise<void> {
   if (isEditing.value) {
     const target = editingTxn.value
     if (target === null) {
-      submitError.value = '编辑会话已失效，请重新进入'
+      submitError.value = t('record.errEditExpired')
       return
     }
     submitting.value = true
@@ -1590,12 +1646,12 @@ async function submit(continueAfter: boolean): Promise<void> {
       emit('updated', target.uuid)
       receipt.value = buildReceipt('updated', payload, result.new_uuid)
       showSuccess.value = true
-      notice.value = '修改已保存：原交易已冲正，账目以新交易为准'
+      notice.value = t('record.statusUpdated')
     } catch (err) {
       if (err instanceof ApiError && err.code === 'network_error') {
-        submitError.value = '修改需联网，请恢复网络后重试'
+        submitError.value = t('record.errEditOffline')
       } else {
-        submitError.value = err instanceof ApiError ? err.message : '修改失败，请稍后重试'
+        submitError.value = err instanceof ApiError ? err.message : t('record.errEditFailed')
       }
     } finally {
       submitting.value = false
@@ -1623,7 +1679,7 @@ async function submit(continueAfter: boolean): Promise<void> {
     emit('saved', result)
     if (continueAfter) {
       resetForm()
-      notice.value = '已保存，可继续记一笔'
+      notice.value = t('record.noticeSavedContinue')
     } else {
       showSuccess.value = true
     }
@@ -1635,12 +1691,12 @@ async function submit(continueAfter: boolean): Promise<void> {
         resetIdempotencyKey()
         rememberDefaults()
         receipt.value = buildReceipt('offline', payload, offlineUuid)
-        notice.value = '当前离线，已保存在本机，联网后自动同步'
+        notice.value = t('record.statusOffline')
         showSuccess.value = true
         return
       }
     }
-    submitError.value = err instanceof ApiError ? err.message : '保存失败，请检查网络后重试'
+    submitError.value = err instanceof ApiError ? err.message : t('record.errSaveFailed')
     if (
       err instanceof ApiError &&
       (err.code === 'idempotency_key_deleted' || err.code === 'idempotency_payload_mismatch')
@@ -1707,13 +1763,13 @@ function resetForm(): void {
 
 function again(): void {
   resetForm()
-  notice.value = '已清空金额，可继续记一笔'
+  notice.value = t('record.noticeCleared')
 }
 
 function copyLast(): void {
   resetIdempotencyKey()
   showSuccess.value = false
-  notice.value = '已复制上一笔，可修改后保存'
+  notice.value = t('record.noticeCopied')
 }
 
 function close(): void {
@@ -1863,7 +1919,7 @@ watch(
       :class="{ 'rs-panel--receipt': showSuccess }"
       role="dialog"
       aria-modal="true"
-      aria-label="记一笔"
+      :aria-label="t('shell.record')"
     >
       <!-- 成功态：票面即主体，不套白卡 / 标题栏 / 底部键盘 -->
       <div v-if="showSuccess" class="rs-receipt">
@@ -1872,7 +1928,7 @@ watch(
           :stamp="receipt.stamp"
           :stamp-sub="receipt.stampSub"
           :tone="receipt.tone"
-          title="家庭账本"
+          :title="t('record.familyLedger')"
           subtitle="FAMBEAN · DOUBLE-ENTRY JOURNAL"
           :amount="receipt.amount"
           :commodity="receipt.commodity"
@@ -1882,7 +1938,7 @@ watch(
           :bean="receipt.bean"
           :balanced="true"
           :foot-lines="receipt.footLines"
-          :thanks="isEditing ? '— 修 改 完 成 —' : '— 感 谢 记 账 —'"
+          :thanks="isEditing ? t('record.receiptThanksEdit') : t('record.receiptThanks')"
         />
         <p
           v-if="receipt !== null && receipt.statusLine !== ''"
@@ -1892,12 +1948,12 @@ watch(
         >{{ receipt.statusLine }}</p>
         <div class="rs-receipt__actions">
           <template v-if="!isEditing">
-            <button type="button" class="rs-rcpt-btn rs-rcpt-btn--text" @click="close">返回</button>
-            <button type="button" class="rs-rcpt-btn rs-rcpt-btn--ghost" @click="openShare">分享图</button>
-            <button type="button" class="rs-rcpt-btn rs-rcpt-btn--ghost" @click="copyLast">复制上一笔</button>
-            <button type="button" class="rs-rcpt-btn rs-rcpt-btn--primary" @click="again">再记一笔</button>
+            <button type="button" class="rs-rcpt-btn rs-rcpt-btn--text" @click="close">{{ t('record.receiptBack') }}</button>
+            <button type="button" class="rs-rcpt-btn rs-rcpt-btn--ghost" @click="openShare">{{ t('record.receiptShare') }}</button>
+            <button type="button" class="rs-rcpt-btn rs-rcpt-btn--ghost" @click="copyLast">{{ t('record.receiptCopyLast') }}</button>
+            <button type="button" class="rs-rcpt-btn rs-rcpt-btn--primary" @click="again">{{ t('record.receiptAgain') }}</button>
           </template>
-          <button v-else type="button" class="rs-rcpt-btn rs-rcpt-btn--primary" @click="close">完成</button>
+          <button v-else type="button" class="rs-rcpt-btn rs-rcpt-btn--primary" @click="close">{{ t('record.keyDone') }}</button>
         </div>
       </div>
 
@@ -1916,17 +1972,17 @@ watch(
           <div class="head-left">
             <span class="head-mark">¥</span>
             <div>
-              <h3>{{ isEditing ? '修改交易' : '记一笔' }}</h3>
-              <p class="head-sub">家庭账本 · {{ form.date }}</p>
+              <h3>{{ isEditing ? t('record.editTitle') : t('shell.record') }}</h3>
+              <p class="head-sub">{{ t('record.familyLedger') }} · {{ form.date }}</p>
             </div>
           </div>
-          <button class="rs-close" type="button" aria-label="关闭记一笔" @click="close">✕</button>
+          <button class="rs-close" type="button" :aria-label="t('record.closeAria')" @click="close">✕</button>
         </header>
 
         <!-- 编辑态固定文案：原交易将被冲正 + 仅在线；绝不出现「已保存在本机」 -->
         <p v-if="isEditing" class="rs-editbanner" role="status">
           <span class="eb-icon">ⓘ</span>
-          正在修改「{{ editingTxn?.description }}」：保存后原交易将被冲正，账目以新交易为准，仅在线提交。
+          {{ t('record.editBanner', { desc: editingTxn?.description ?? '' }) }}
         </p>
 
         <!-- 编辑态无类型 Tab 与金额舞台：Beancount 交易无类型字段，类型由分录本身表达，
@@ -1951,7 +2007,7 @@ watch(
             role="button"
             tabindex="0"
             data-act="amount"
-            aria-label="点此输入金额"
+            :aria-label="t('record.amountAria')"
             @click="openKeypad"
             @keydown.enter.prevent="openKeypad"
             @keydown.space.prevent="openKeypad"
@@ -1961,18 +2017,18 @@ watch(
                 type="button"
                 class="amt-chip js-ledger-chip"
                 data-act="ledger-chip"
-                aria-label="管理账本"
+                :aria-label="t('record.manageLedgerAria')"
                 @click.stop="navigateTo('/ledgers')"
-              >▣ {{ session.ledgerName === undefined || session.ledgerName === '' ? '家庭账本' : session.ledgerName }}</button>
+              >▣ {{ ledgerDisplayName }}</button>
               <button
                 type="button"
                 class="amt-chip js-commodity-chip"
                 data-act="commodity-chip"
-                aria-label="管理币种"
+                :aria-label="t('record.manageCommodityAria')"
                 @click.stop="navigateTo('/commodities')"
               >CNY {{ currency }}</button>
             </div>
-            <div class="amt-cap">{{ form.kind === 'income' ? '收入金额' : form.kind === 'transfer' ? '转账金额' : '支出金额' }}</div>
+            <div class="amt-cap">{{ form.kind === 'income' ? t('record.amountIncome') : form.kind === 'transfer' ? t('record.amountTransfer') : t('record.amountExpense') }}</div>
             <div class="amt-line">
               <span class="amt-sym">{{ currency }}</span>
               <span class="amt-val js-amount">{{ amountDisplay }}</span>
@@ -1993,8 +2049,8 @@ watch(
               class="amt-expr js-expr"
               type="text"
               :value="form.amountExpression"
-              placeholder="表达式可输入 + - * /"
-              aria-label="金额表达式，可输入加号"
+              :placeholder="t('record.exprPlaceholder')"
+              :aria-label="t('record.exprAria')"
               autocomplete="off"
               @click.stop
               @focus="exprFocused = true; hideKeypad()"
@@ -2004,19 +2060,19 @@ watch(
             <div v-if="evalError" class="amt-error js-eval-error" role="alert">{{ evalError }}</div>
             <div class="amt-sub">
               {{ advancedMode
-                ? '高级模式下分录由下方逐条编辑，上方金额仅作参考；按币种合计为 0 才能保存。'
+                ? t('record.subAdvanced')
                 : form.kind === 'transfer'
-                  ? '转出账户减少、转入账户增加，不产生收支分类；两行分录自动配平。'
+                  ? t('record.subTransfer')
                   : form.kind === 'income'
-                    ? '资金账户记正数，收入分类记负数；按币种合计为 0 才能保存。'
-                    : '资金账户记负数，支出分类记正数；按币种合计为 0 才能保存。' }}
+                    ? t('record.subIncome')
+                    : t('record.subExpense') }}
             </div>
             <div v-if="notice" class="rs-notice"><span>✓</span>{{ notice }}</div>
           </div>
         </div>
 
         <div v-if="loadError" class="rs-alert rs-alert--error">
-          {{ loadError }}<button type="button" @click="loadAccounts">重试</button>
+          {{ loadError }}<button type="button" @click="loadAccounts">{{ t('common.retry') }}</button>
         </div>
         <div v-if="submitError" class="rs-alert rs-alert--error" role="alert">{{ submitError }}</div>
         <div v-if="advancedError" class="rs-alert rs-alert--error" role="alert">{{ advancedError }}</div>
@@ -2040,64 +2096,64 @@ watch(
             />
             <!-- 日期 / flag / 标签 / 备注：与简化态共用同一 form 字段 -->
             <section class="grp">
-              <div class="g-head"><span class="g-title"><i class="g-dot"></i>这笔钱的细节</span><span class="g-side">可选项</span></div>
+              <div class="g-head"><span class="g-title"><i class="g-dot"></i>{{ t('record.detailsTitle') }}</span><span class="g-side">{{ t('record.optional') }}</span></div>
               <div class="fld-row">
                 <div class="fld">
-                  <label class="fld-label">日期</label>
-                  <input class="inp-text" type="date" data-field="date" v-model="form.date" aria-label="交易日期" />
-                  <div class="date-chips" role="group" aria-label="快捷日期">
-                    <button type="button" data-act="date-today" :class="{ on: form.date === quickDate(0) }" @click="applyQuickDate(0)">今天</button>
-                    <button type="button" data-act="date-yesterday" :class="{ on: form.date === quickDate(1) }" @click="applyQuickDate(1)">昨天</button>
-                    <button type="button" data-act="date-day-before" :class="{ on: form.date === quickDate(2) }" @click="applyQuickDate(2)">前天</button>
+                  <label class="fld-label">{{ t('record.dateLabel') }}</label>
+                  <input class="inp-text" type="date" data-field="date" v-model="form.date" :aria-label="t('record.dateAria')" />
+                  <div class="date-chips" role="group" :aria-label="t('record.quickDateAria')">
+                    <button type="button" data-act="date-today" :class="{ on: form.date === quickDate(0) }" @click="applyQuickDate(0)">{{ t('record.dateToday') }}</button>
+                    <button type="button" data-act="date-yesterday" :class="{ on: form.date === quickDate(1) }" @click="applyQuickDate(1)">{{ t('record.dateYesterday') }}</button>
+                    <button type="button" data-act="date-day-before" :class="{ on: form.date === quickDate(2) }" @click="applyQuickDate(2)">{{ t('record.dateDayBefore') }}</button>
                   </div>
                 </div>
                 <div class="fld">
                   <label class="fld-label">flag</label>
-                  <select class="inp-text" data-field="flag" v-model="form.flag" aria-label="交易 flag">
-                    <option value="*">* 已完成</option>
-                    <option value="!">! 待核 / 冲正</option>
+                  <select class="inp-text" data-field="flag" v-model="form.flag" :aria-label="t('record.flagAria')">
+                    <option value="*">{{ t('record.flagDone') }}</option>
+                    <option value="!">{{ t('record.flagPending') }}</option>
                   </select>
                 </div>
               </div>
               <div class="fld">
-                <label class="fld-label">标签（空格或逗号分隔）</label>
+                <label class="fld-label">{{ t('record.tagsLabel') }}</label>
                 <input
                   class="inp-text"
                   type="text"
                   :value="tagsText"
                   data-field="tags"
-                  placeholder="如：日常 孩子"
+                  :placeholder="t('record.tagsPlaceholder')"
                   enterkeyhint="done"
-                  aria-label="标签"
+                  :aria-label="t('record.tags')"
                   @input="onTagsChange"
                   @change="onTagsChange"
                 />
               </div>
               <div class="fld">
-                <label class="fld-label">描述 / 备注</label>
+                <label class="fld-label">{{ t('record.descLabel') }}</label>
                 <input
                   class="inp-text"
                   type="text"
                   v-model="form.description"
                   data-field="desc"
-                  placeholder="如：超市采购"
+                  :placeholder="t('record.descPlaceholderAdvanced')"
                   enterkeyhint="done"
-                  aria-label="描述"
+                  :aria-label="t('record.descAria')"
                 />
               </div>
-              <p class="bean-note">标签导出为 <code>tags: "..."</code> 元数据行（中文标签不走 <code>#tag</code>）。</p>
+              <p class="bean-note">{{ t('record.beanNoteBefore') }}<code>tags: "..."</code>{{ t('record.beanNoteMid') }}<code>#tag</code>{{ t('record.beanNoteAfter') }}</p>
             </section>
           </template>
 
           <template v-else>
             <section v-if="form.kind !== 'transfer'" class="grp">
               <div class="g-head">
-                <span class="g-title"><i class="g-dot"></i>记到哪</span>
-                <span class="g-side">先选分类，再选资金账户</span>
+                <span class="g-title"><i class="g-dot"></i>{{ t('record.catSectionTitle') }}</span>
+                <span class="g-side">{{ t('record.catSectionHint') }}</span>
               </div>
               <div class="cat-head">
-                <span class="cat-hint">一级分类 · 点按即选</span>
-                <span class="chip js-cat-chip">已选：{{ selectedCategoryLabel }} <code>{{ selectedCategoryName }}</code></span>
+                <span class="cat-hint">{{ t('record.catRootHint') }}</span>
+                <span class="chip js-cat-chip">{{ t('record.selectedPrefix') }}{{ selectedCategoryLabel }} <code>{{ selectedCategoryName }}</code></span>
               </div>
               <!-- 一级 grid：根分类由 accountApi.list() 的 parent_uuid 动态派生，6 列。 -->
               <div class="rs-cats">
@@ -2117,11 +2173,11 @@ watch(
                   <span class="rs-cat__mono">{{ cat.name }}</span>
                 </button>
                 <p v-if="rootCategories.length === 0" class="rs-muted">
-                  当前账本暂无{{ form.kind === 'income' ? '收入' : '支出' }}分类账户
+                  {{ t('record.noCategories', { kind: form.kind === 'income' ? t('core.txnRow.kindIncome') : t('core.txnRow.kindExpense') }) }}
                 </p>
               </div>
               <!-- 二级 chips：无子分类整行隐藏，一级本身即提交分类。 -->
-              <div v-if="subCategories.length > 0" class="rs-subcats" role="group" aria-label="二级分类">
+              <div v-if="subCategories.length > 0" class="rs-subcats" role="group" :aria-label="t('record.subcatsAria')">
                 <button
                   v-for="sub in subCategories"
                   :key="sub.id"
@@ -2133,19 +2189,19 @@ watch(
                   :data-cat="sub.id"
                   @click="selectCategory(sub.id)"
                 >{{ catIcon(sub) }} {{ accountLabel(sub) }}</button>
-                <button type="button" class="rs-subcat rs-subcat--all" data-popover="category" @click="togglePopover('category', $event)">全部 ▾</button>
+                <button type="button" class="rs-subcat rs-subcat--all" data-popover="category" @click="togglePopover('category', $event)">{{ t('record.allCategories') }}</button>
               </div>
               <div v-else class="cat-more">
-                <button type="button" class="rs-subcat rs-subcat--all" data-popover="category" @click="togglePopover('category', $event)">全部 ▾</button>
-                <span class="more-hint">真实导出名 <code class="js-cat-name">{{ selectedCategoryName }}</code></span>
+                <button type="button" class="rs-subcat rs-subcat--all" data-popover="category" @click="togglePopover('category', $event)">{{ t('record.allCategories') }}</button>
+                <span class="more-hint">{{ t('record.realExportName') }} <code class="js-cat-name">{{ selectedCategoryName }}</code></span>
               </div>
             </section>
 
             <section v-else class="grp">
               <div class="g-head">
-                <span class="g-title"><i class="g-dot"></i>资金流向</span>
+                <span class="g-title"><i class="g-dot"></i>{{ t('record.flowTitle') }}</span>
                 <span class="g-side" :class="form.transferFromAccountId === form.transferToAccountId ? 'bad' : 'ok'">
-                  {{ form.transferFromAccountId === form.transferToAccountId ? '转出与转入不可相同' : '两行资产分录' }}
+                  {{ form.transferFromAccountId === form.transferToAccountId ? t('record.transferSameBad') : t('record.transferOk') }}
                 </span>
               </div>
               <div class="transfer-chips">
@@ -2158,12 +2214,12 @@ watch(
                 </button>
               </div>
               <div class="fld">
-                <label class="fld-label">转出账户 <b>必选</b></label>
+                <label class="fld-label">{{ t('record.transferOutLabel') }} <b>{{ t('record.required') }}</b></label>
                 <div class="sel">
                   <span class="sel-ico">🔵</span>
                   <span class="sel-text">{{ accountNameOf(form.transferFromAccountId ?? -1) }}</span>
-                  <select class="rs-select" :value="transferFromValue" data-field="from" data-role="input" aria-label="转出账户" @change="onTransferFrom">
-                    <option value="">选择转出账户</option>
+                  <select class="rs-select" :value="transferFromValue" data-field="from" data-role="input" :aria-label="t('record.transferOutLabel')" @change="onTransferFrom">
+                    <option value="">{{ t('record.selectTransferOut') }}</option>
                     <option v-for="acc in fundAccounts" :key="acc.id" :value="String(acc.id)">
                       {{ accountLabel(acc) }} · {{ acc.name }}（{{ balanceText(acc) }}）
                     </option>
@@ -2172,12 +2228,12 @@ watch(
               </div>
               <div class="transfer-mid"><span class="tline"></span><span class="tbadge">↓</span><span class="tline"></span></div>
               <div class="fld">
-                <label class="fld-label">转入账户 <b>必选</b></label>
+                <label class="fld-label">{{ t('record.transferInLabel') }} <b>{{ t('record.required') }}</b></label>
                 <div class="sel">
                   <span class="sel-ico">🟢</span>
                   <span class="sel-text">{{ accountNameOf(form.transferToAccountId ?? -1) }}</span>
-                  <select class="rs-select" :value="transferToValue" data-field="to" data-role="input" aria-label="转入账户" @change="onTransferTo">
-                    <option value="">选择转入账户</option>
+                  <select class="rs-select" :value="transferToValue" data-field="to" data-role="input" :aria-label="t('record.transferInLabel')" @change="onTransferTo">
+                    <option value="">{{ t('record.selectTransferIn') }}</option>
                     <option v-for="acc in fundAccounts" :key="acc.id" :value="String(acc.id)">
                       {{ accountLabel(acc) }} · {{ acc.name }}（{{ balanceText(acc) }}）
                     </option>
@@ -2187,20 +2243,20 @@ watch(
             </section>
 
             <!-- meta chips：日期 → 资金 → 标签 → flag，flex-wrap 自然换行。 -->
-            <section class="rs-meta" aria-label="交易附加信息">
+            <section class="rs-meta" :aria-label="t('record.metaAria')">
               <button type="button" class="meta-chip js-date-chip" data-field="date" data-role="chip" data-popover="date" @click="togglePopover('date', $event)">📅 {{ dateChipLabel }}</button>
               <button type="button" class="meta-chip js-fund-chip" data-field="fund" data-role="chip" data-popover="fund" @click="openFundPopover('fund', $event)">🏦 {{ fundChipLabel }}</button>
-              <button type="button" class="meta-chip js-tags-chip" data-field="tags" data-role="chip" data-popover="tags" @click="togglePopover('tags', $event)">🏷 {{ tagsText === '' ? '＋ 标签' : tagsText }}</button>
+              <button type="button" class="meta-chip js-tags-chip" data-field="tags" data-role="chip" data-popover="tags" @click="togglePopover('tags', $event)">🏷 {{ tagsText === '' ? t('record.addTagChip') : tagsText }}</button>
               <button type="button" class="meta-chip js-flag-chip" data-field="flag" data-role="chip" data-popover="flag" @click="togglePopover('flag', $event)">{{ flagChipLabel }}</button>
             </section>
 
             <section class="grp">
-              <div class="g-head"><span class="g-title"><i class="g-dot"></i>这笔钱的细节</span><span class="g-side">可选项</span></div>
+              <div class="g-head"><span class="g-title"><i class="g-dot"></i>{{ t('record.detailsTitle') }}</span><span class="g-side">{{ t('record.optional') }}</span></div>
               <div class="fld">
-                <label class="fld-label">描述 / 备注</label>
-                <input class="inp-text" type="text" v-model="form.description" data-field="desc" data-role="input" placeholder="和朋友一起吃晚餐" enterkeyhint="done" aria-label="描述" />
+                <label class="fld-label">{{ t('record.descLabel') }}</label>
+                <input class="inp-text" type="text" v-model="form.description" data-field="desc" data-role="input" :placeholder="t('record.descPlaceholderSimple')" enterkeyhint="done" :aria-label="t('record.descAria')" />
               </div>
-              <p class="bean-note">标签导出为 <code>tags: "..."</code> 元数据行（中文标签不走 <code>#tag</code>）。</p>
+              <p class="bean-note">{{ t('record.beanNoteBefore') }}<code>tags: "..."</code>{{ t('record.beanNoteMid') }}<code>#tag</code>{{ t('record.beanNoteAfter') }}</p>
             </section>
 
             <PostingPreview
@@ -2210,11 +2266,11 @@ watch(
               @advanced="toggleAdvanced"
             />
             <div class="rs-preview js-preview" :class="previewBalanced ? 'is-ok' : 'is-bad'" role="status">
-              <template v-if="previewBalanced">✓ 配平</template>
+              <template v-if="previewBalanced">{{ t('record.balanced') }}</template>
               <template v-else>
-                {{ previewError === '' ? '不平' : previewError }}
+                {{ previewError === '' ? t('record.unbalanced') : previewError }}
                 <span v-for="diff in diffViews" :key="diff.commodity" class="rs-preview__diff">
-                  {{ diff.commodity }} 差额 {{ diff.text }}
+                  {{ t('record.diffLine', { commodity: diff.commodity, amount: diff.text }) }}
                 </span>
               </template>
             </div>
@@ -2223,24 +2279,24 @@ watch(
                  容器常驻 DOM（v-show）以保留 data-field 契约，仅激活态可见。 -->
             <Teleport v-if="portalHostEl" :to="portalHostEl">
             <div v-show="activePopover !== ''" class="rs-popover-mask" @click.self="closePopover">
-              <div class="rs-popover" :style="popoverStyle" role="dialog" aria-label="编辑选项">
+              <div class="rs-popover" :style="popoverStyle" role="dialog" :aria-label="t('record.popoverAria')">
                 <div class="pop-handle"></div>
-                <button type="button" class="pop-close" aria-label="关闭浮层" @click="closePopover">✕</button>
+                <button type="button" class="pop-close" :aria-label="t('advancedPostings.closePopover')" @click="closePopover">✕</button>
 
                 <div v-show="activePopover === 'date'" class="pop-body js-pop-date">
-                  <h4>选择日期</h4>
-                  <div class="date-chips" role="group" aria-label="快捷日期">
-                    <button type="button" data-act="date-today" :class="{ on: form.date === quickDate(0) }" @click="applyQuickDate(0)">今天</button>
-                    <button type="button" data-act="date-yesterday" :class="{ on: form.date === quickDate(1) }" @click="applyQuickDate(1)">昨天</button>
-                    <button type="button" data-act="date-day-before" :class="{ on: form.date === quickDate(2) }" @click="applyQuickDate(2)">前天</button>
+                  <h4>{{ t('record.pickDate') }}</h4>
+                  <div class="date-chips" role="group" :aria-label="t('record.quickDateAria')">
+                    <button type="button" data-act="date-today" :class="{ on: form.date === quickDate(0) }" @click="applyQuickDate(0)">{{ t('record.dateToday') }}</button>
+                    <button type="button" data-act="date-yesterday" :class="{ on: form.date === quickDate(1) }" @click="applyQuickDate(1)">{{ t('record.dateYesterday') }}</button>
+                    <button type="button" data-act="date-day-before" :class="{ on: form.date === quickDate(2) }" @click="applyQuickDate(2)">{{ t('record.dateDayBefore') }}</button>
                   </div>
                   <div class="cal-head">
-                    <button type="button" aria-label="上个月" @click="shiftCalendarMonth(-1)">‹</button>
+                    <button type="button" :aria-label="t('record.prevMonthAria')" @click="shiftCalendarMonth(-1)">‹</button>
                     <span class="cal-title">{{ calendarMonth === '' ? form.date.slice(0, 7) : calendarMonth }}</span>
-                    <button type="button" aria-label="下个月" @click="shiftCalendarMonth(1)">›</button>
+                    <button type="button" :aria-label="t('record.nextMonthAria')" @click="shiftCalendarMonth(1)">›</button>
                   </div>
                   <div class="cal-grid">
-                    <span v-for="label in ['日', '一', '二', '三', '四', '五', '六']" :key="label" class="cal-week">{{ label }}</span>
+                    <span v-for="(label, index) in weekdayLabels" :key="index" class="cal-week">{{ label }}</span>
                     <template v-for="cell in calendarCells" :key="cell.key">
                       <span v-if="cell.day === null" class="cal-day cal-day--blank"></span>
                       <button
@@ -2255,7 +2311,7 @@ watch(
                     </template>
                   </div>
                   <p v-if="dateError" class="pop-error" role="alert">{{ dateError }}</p>
-                  <label class="pop-label">精确日期
+                  <label class="pop-label">{{ t('record.exactDate') }}
                     <input
                       class="inp-text"
                       type="date"
@@ -2264,14 +2320,14 @@ watch(
                       :max="maxDate"
                       data-field="date"
                       data-role="input"
-                      aria-label="交易日期"
+                      :aria-label="t('record.dateAria')"
                       @input="onDateInput"
                     />
                   </label>
                 </div>
 
                 <div v-show="activePopover === 'fund'" class="pop-body js-pop-fund">
-                  <h4>资金账户</h4>
+                  <h4>{{ t('core.record.labelFundAccount') }}</h4>
                   <button
                     v-for="acc in fundAccounts"
                     :key="acc.id"
@@ -2286,16 +2342,16 @@ watch(
                     <code class="pop-row__mono">{{ acc.name }}</code>
                     <span v-if="(fundPopoverTarget === 'from' ? form.transferFromAccountId : fundPopoverTarget === 'to' ? form.transferToAccountId : form.fundAccountId) === acc.id" class="pop-row__check">✓</span>
                   </button>
-                  <label class="pop-label">账户字段（契约控件）
+                  <label class="pop-label">{{ t('record.fundFieldLabel') }}
                     <select
                       class="inp-text"
                       :value="fundPopoverTarget === 'from' ? transferFromValue : fundPopoverTarget === 'to' ? transferToValue : fundValue"
                       data-field="fund"
                       data-role="input"
-                      aria-label="资金账户"
+                      :aria-label="t('core.record.labelFundAccount')"
                       @change="onFundPopoverSelect"
                     >
-                      <option value="">选择资金账户</option>
+                      <option value="">{{ t('record.selectFund') }}</option>
                       <option v-for="acc in fundAccounts" :key="acc.id" :value="String(acc.id)">
                         {{ accountLabel(acc) }} · {{ acc.name }}（{{ balanceText(acc) }}）
                       </option>
@@ -2304,7 +2360,7 @@ watch(
                 </div>
 
                 <div v-show="activePopover === 'tags'" class="pop-body js-pop-tags">
-                  <h4>标签</h4>
+                  <h4>{{ t('record.tags') }}</h4>
                   <div class="tag-list">
                     <button
                       v-for="tag in tagOptions"
@@ -2315,28 +2371,28 @@ watch(
                       :data-tag="tag"
                       @click="toggleTag(tag)"
                     >{{ tag }} <span v-if="form.tags.indexOf(tag) >= 0">✓</span></button>
-                    <button type="button" class="pop-tag pop-tag--new" @click="createTag">＋ 新标签</button>
+                    <button type="button" class="pop-tag pop-tag--new" @click="createTag">{{ t('record.newTag') }}</button>
                   </div>
                   <input
                     v-model="newTagText"
                     class="inp-text"
                     type="text"
                     data-tag-input="new"
-                    placeholder="输入新标签后点「＋ 新标签」"
+                    :placeholder="t('record.newTagPlaceholder')"
                     enterkeyhint="done"
-                    aria-label="新标签"
+                    :aria-label="t('record.newTagAria')"
                     @keydown.enter.prevent="createTag"
                   />
-                  <label class="pop-label">标签字段（契约控件）
+                  <label class="pop-label">{{ t('record.tagsFieldLabel') }}
                     <input
                       class="inp-text"
                       type="text"
                       :value="tagsText"
                       data-field="tags"
                       data-role="input"
-                      placeholder="如：日常 孩子"
+                      :placeholder="t('record.tagsPlaceholder')"
                       enterkeyhint="done"
-                      aria-label="标签"
+                      :aria-label="t('record.tags')"
                       @input="onTagsChange"
                       @change="onTagsChange"
                     />
@@ -2344,30 +2400,30 @@ watch(
                 </div>
 
                 <div v-show="activePopover === 'flag'" class="pop-body js-pop-flag">
-                  <h4>交易状态</h4>
+                  <h4>{{ t('record.flagTitle') }}</h4>
                   <button type="button" class="pop-row" :class="{ on: form.flag === '*' }" data-flag="*" @click="selectFlag('*')">
-                    <b>* 已完成</b><span>已确认入账</span><span v-if="form.flag === '*'" class="pop-row__check">✓</span>
+                    <b>{{ t('record.flagDone') }}</b><span>{{ t('record.flagDoneHint') }}</span><span v-if="form.flag === '*'" class="pop-row__check">✓</span>
                   </button>
                   <button type="button" class="pop-row" :class="{ on: form.flag === '!' }" data-flag="!" @click="selectFlag('!')">
-                    <b>! 未完成</b><span>待确认核对</span><span v-if="form.flag === '!'" class="pop-row__check">✓</span>
+                    <b>{{ t('record.flagPendingShort') }}</b><span>{{ t('record.flagPendingHint') }}</span><span v-if="form.flag === '!'" class="pop-row__check">✓</span>
                   </button>
-                  <label class="pop-label">flag 字段（契约控件）
-                    <select class="inp-text" data-field="flag" data-role="input" v-model="form.flag" aria-label="交易 flag">
-                      <option value="*">* 已完成</option>
-                      <option value="!">! 未完成</option>
+                  <label class="pop-label">{{ t('record.flagFieldLabel') }}
+                    <select class="inp-text" data-field="flag" data-role="input" v-model="form.flag" :aria-label="t('record.flagAria')">
+                      <option value="*">{{ t('record.flagDone') }}</option>
+                      <option value="!">{{ t('record.flagPendingShort') }}</option>
                     </select>
                   </label>
                 </div>
 
                 <div v-show="activePopover === 'category'" class="pop-body js-pop-category">
-                  <h4>全部{{ form.kind === 'income' ? '收入' : '支出' }}分类</h4>
+                  <h4>{{ t('record.allCategoriesTitle', { kind: form.kind === 'income' ? t('core.txnRow.kindIncome') : t('core.txnRow.kindExpense') }) }}</h4>
                   <input
                     v-model="categorySearch"
                     class="inp-text"
                     type="search"
                     data-category-search="1"
-                    placeholder="搜索中文名或导出名"
-                    aria-label="搜索分类"
+                    :placeholder="t('record.categorySearchPlaceholder')"
+                    :aria-label="t('record.categorySearchAria')"
                   />
                   <div v-for="group in categoryGroups" :key="group.key" class="cat-group">
                     <div class="cat-group__head">{{ group.label }} <code>{{ group.mono }}</code></div>
@@ -2387,16 +2443,16 @@ watch(
                       <span v-if="form.categoryAccountId === cat.id" class="pop-row__check">✓</span>
                     </button>
                   </div>
-                  <label class="pop-label">分类字段（契约控件）
+                  <label class="pop-label">{{ t('record.categoryFieldLabel') }}
                     <select
                       class="inp-text"
                       :value="categorySelectValue"
                       data-field="category"
                       data-role="input"
-                      aria-label="完整分类列表"
+                      :aria-label="t('record.categoryListAria')"
                       @change="onCategorySelect"
                     >
-                      <option value="">选择其他分类…</option>
+                      <option value="">{{ t('record.selectOtherCategory') }}</option>
                       <option v-for="cat in categoryOptions" :key="cat.id" :value="String(cat.id)">
                         {{ accountLabel(cat) }} · {{ cat.name }}
                       </option>
@@ -2414,29 +2470,29 @@ watch(
           <template v-if="!advancedMode">
             <template v-if="keypadOpen">
               <div class="dock-rail">
-                <span>金额 <b>¥<span class="js-rail-amt">{{ amountDisplay }}</span></b></span>
+                <span>{{ t('record.amountWord') }} <b>¥<span class="js-rail-amt">{{ amountDisplay }}</span></b></span>
                 <span class="rail-r" :class="canSubmit ? 'is-ok' : 'is-bad'">
-                  <i></i><span class="js-rail-txt">{{ canSubmit ? '可保存' : (previewError === '' ? '请输入金额' : previewError) }}</span>
+                  <i></i><span class="js-rail-txt">{{ canSubmit ? t('record.canSave') : (previewError === '' ? t('record.enterAmount') : previewError) }}</span>
                 </span>
                 <button
                   type="button"
                   class="dock-hide"
                   data-act="hide-keypad"
-                  aria-label="收起键盘，查看完整表单"
+                  :aria-label="t('record.hideKeypadAria')"
                   @click="hideKeypad"
-                >收起 ⌄</button>
+                >{{ t('record.hideKeypad') }}</button>
               </div>
               <div class="rs-keyboard">
                 <button
                   v-for="key in keyboardKeys"
-                  :key="key"
+                  :key="key.id"
                   type="button"
-                  :class="keyClass(key)"
-                  :disabled="isActionKey(key) && !canSubmit"
+                  :class="keyClass(key.id)"
+                  :disabled="isActionKey(key.id) && !canSubmit"
                   data-act="key"
-                  :data-key="key"
-                  @click="pressKey(key)"
-                >{{ key }}</button>
+                  :data-key="key.label"
+                  @click="pressKey(key.id)"
+                >{{ key.label }}</button>
               </div>
             </template>
             <div v-else class="dock-hint">
@@ -2444,49 +2500,49 @@ watch(
                 type="button"
                 class="dock-hint__btn"
                 data-act="show-keypad"
-                aria-label="输入金额，展开数字键盘"
+                :aria-label="t('record.showKeypadAria')"
                 @click="openKeypad"
-              >输入金额 <span class="dock-hint__chev">›</span></button>
+              >{{ t('record.showKeypad') }} <span class="dock-hint__chev">›</span></button>
             </div>
           </template>
           <template v-else>
             <!-- 高级键盘展开：临时替代底部全宽保存条（§12-1 / §5-B），无保存键。 -->
             <template v-if="advancedKeypadOpen">
               <div class="dock-rail">
-                <span>第 {{ activeRowIndex + 1 }} 行金额 <b>¥<span class="js-adv-rail-amt">{{ magnitudeOf(form.advancedPostings?.[activeRowIndex]?.amount ?? '') }}</span></b></span>
-                <span class="rail-r is-ok"><i></i><span class="js-adv-rail-txt">行内四则 · 完成后保存条复现</span></span>
+                <span>{{ t('record.advRowAmount', { n: String(activeRowIndex + 1) }) }} <b>¥<span class="js-adv-rail-amt">{{ magnitudeOf(form.advancedPostings?.[activeRowIndex]?.amount ?? '') }}</span></b></span>
+                <span class="rail-r is-ok"><i></i><span class="js-adv-rail-txt">{{ t('record.advRailHint') }}</span></span>
               </div>
               <div class="rs-keyboard rs-keyboard--advanced js-adv-keypad">
                 <button
                   v-for="key in advancedKeypadKeys"
-                  :key="key"
+                  :key="key.id"
                   type="button"
-                  :class="keyClass(key)"
+                  :class="keyClass(key.id)"
                   data-act="key"
-                  :data-key="key"
-                  @click="pressAdvancedKey(key)"
-                >{{ key }}</button>
+                  :data-key="key.label"
+                  @click="pressAdvancedKey(key.id)"
+                >{{ key.label }}</button>
                 <button
                   type="button"
                   class="rs-key rs-key--done js-adv-keypad-done"
                   data-act="advanced-keypad-done"
-                  data-key="完成"
+                  :data-key="t('record.keyDone')"
                   @click="closeAdvancedKeypad"
-                >完成</button>
+                >{{ t('record.keyDone') }}</button>
               </div>
             </template>
             <template v-else>
               <div class="rs-preview rs-preview--dock js-preview" :class="previewBalanced ? 'is-ok' : 'is-bad'" role="status">
-                <template v-if="previewBalanced">✓ 配平</template>
+                <template v-if="previewBalanced">{{ t('record.balanced') }}</template>
                 <template v-else>
-                  {{ previewError === '' ? '不平' : previewError }}
+                  {{ previewError === '' ? t('record.unbalanced') : previewError }}
                   <span v-for="diff in diffViews" :key="diff.commodity" class="rs-preview__diff">
-                    {{ diff.commodity }} 差额 {{ diff.text }}
+                    {{ t('record.diffLine', { commodity: diff.commodity, amount: diff.text }) }}
                   </span>
                 </template>
               </div>
               <div class="foot-note js-foot-note">
-                {{ canSubmit ? (isEditing ? '分录已配平 · 保存后原交易冲正（需联网）' : '分录已配平，可保存') : '分录未配平或账户未选全，保存已禁用' }}
+                {{ canSubmit ? (isEditing ? t('record.footBalancedEdit') : t('record.footBalanced')) : t('record.footUnbalanced') }}
               </div>
               <div class="rs-foot">
                 <button
@@ -2495,7 +2551,7 @@ watch(
                   :disabled="!canSubmit"
                   data-act="save"
                   @click="submit(false)"
-                >{{ submitting ? '保存中…' : '保存' }}</button>
+                >{{ submitting ? t('common.saving') : t('common.save') }}</button>
               </div>
             </template>
           </template>

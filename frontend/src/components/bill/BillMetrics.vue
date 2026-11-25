@@ -13,6 +13,7 @@ import { computed } from 'vue'
 
 import type { BillMonthTotals } from '@/core/bill'
 import { Money } from '@/core/Money'
+import { t } from '@/i18n'
 import MoneyText from '@/components/MoneyText.vue'
 
 const props = defineProps<{
@@ -38,26 +39,26 @@ const balanceTone = computed<'pos' | 'neg' | 'neutral'>(() => {
 </script>
 
 <template>
-  <section class="metrics" aria-label="当月指标">
+  <section class="metrics" :aria-label="t('bills.metricsLabel')">
     <div class="metrics__card metrics__card--income">
-      <span class="metrics__label">收入</span>
+      <span class="metrics__label">{{ t('common.income') }}</span>
       <MoneyText :amount="totals.income" :commodity="commodity" size="md" />
     </div>
     <div class="metrics__card metrics__card--expense">
-      <span class="metrics__label">支出</span>
+      <span class="metrics__label">{{ t('common.expense') }}</span>
       <MoneyText :amount="totals.expense" :commodity="commodity" size="md" />
     </div>
     <div class="metrics__card">
-      <span class="metrics__label">结余</span>
+      <span class="metrics__label">{{ t('common.balance') }}</span>
       <span class="metrics__value" :class="`metrics__value--${balanceTone}`">
         <MoneyText :amount="totals.balance" :commodity="commodity" size="md" signed />
       </span>
-      <span class="metrics__sub">结余 = 收入 − 支出</span>
+      <span class="metrics__sub">{{ t('bills.balanceFormula') }}</span>
     </div>
     <div class="metrics__card">
-      <span class="metrics__label">交易数量</span>
-      <span class="metrics__value">{{ totals.count }} 笔</span>
-      <span class="metrics__sub">所选币种全部笔数</span>
+      <span class="metrics__label">{{ t('bills.metricCount') }}</span>
+      <span class="metrics__value">{{ t('common.txnCount', { count: String(totals.count) }) }}</span>
+      <span class="metrics__sub">{{ t('bills.countSub') }}</span>
     </div>
   </section>
 </template>

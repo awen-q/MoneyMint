@@ -12,6 +12,7 @@
 import { computed } from 'vue'
 
 import type { CategoryShare } from '@/core/reports'
+import { t } from '@/i18n'
 import { getChartPalette, pickColor, readThemeTokens, themeEpoch } from '@/styles/themeTokens'
 import DonutChart from '@/components/charts/DonutChart.vue'
 import MoneyText from '@/components/MoneyText.vue'
@@ -110,23 +111,23 @@ function drillIncome(index: number): void {
 <template>
   <section class="donut-rank">
     <header class="donut-rank__head">
-      <span class="donut-rank__title">分类占比</span>
-      <span class="donut-rank__note">点击环图或排行项下钻</span>
+      <span class="donut-rank__title">{{ t('stats.donutTitle') }}</span>
+      <span class="donut-rank__note">{{ t('stats.drillHint') }}</span>
     </header>
 
     <div class="donut-rank__duo">
       <div class="donut-rank__block">
-        <p class="donut-rank__block-title">消费分类</p>
+        <p class="donut-rank__block-title">{{ t('stats.expenseCategory') }}</p>
         <DonutChart
-          title="消费分类"
-          :chart-label="`消费分类占比，${commodity} 口径`"
+          :title="t('stats.expenseCategory')"
+          :chart-label="t('stats.expenseDonutLabel', { commodity })"
           :slices="expenseSlices"
-          center-text="合计"
+          :center-text="t('common.total')"
           :center-value="expenseTotal"
           :commodity="commodity"
           :masked="masked"
           :state="expenseSlices.length === 0 ? 'empty' : 'ready'"
-          empty-text="本月没有支出记录"
+          :empty-text="t('stats.emptyExpense')"
           @pick="drillExpense"
         />
         <ul v-if="expenseSlices.length > 0" class="donut-rank__list">
@@ -144,17 +145,17 @@ function drillIncome(index: number): void {
       </div>
 
       <div class="donut-rank__block">
-        <p class="donut-rank__block-title">收入分类</p>
+        <p class="donut-rank__block-title">{{ t('stats.incomeCategory') }}</p>
         <DonutChart
-          title="收入分类"
-          :chart-label="`收入分类占比，${commodity} 口径`"
+          :title="t('stats.incomeCategory')"
+          :chart-label="t('stats.incomeDonutLabel', { commodity })"
           :slices="incomeSlices"
-          center-text="合计"
+          :center-text="t('common.total')"
           :center-value="incomeTotal"
           :commodity="commodity"
           :masked="masked"
           :state="incomeSlices.length === 0 ? 'empty' : 'ready'"
-          empty-text="本月没有收入记录"
+          :empty-text="t('stats.emptyIncome')"
           @pick="drillIncome"
         />
         <ul v-if="incomeSlices.length > 0" class="donut-rank__list">

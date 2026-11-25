@@ -8,6 +8,7 @@
  */
 import { formatAmount } from './Money'
 import type { LedgerRole } from '@/api/types'
+import { t } from '../i18n'
 
 /** 按币种的恒等式差额（后端 identity/check 的 `sum` 与导出头统一成 amount）。 */
 export interface DiffItem {
@@ -61,24 +62,24 @@ export function formatIdentityDiffs(diffs: DiffItem[]): string {
     const sign = text.charAt(0) === '-' || text === '0.00' ? '' : '+'
     parts.push(`${diff.commodity} ${sign}${text}`)
   }
-  return parts.join('、')
+  return parts.join(t('core.batch3.diffSeparator'))
 }
 
 /** 备份页错误文案（与旧版 backup_card.dart 的 _mapError 一致）。 */
 export function mapBackupError(status: number, message: string): string {
   switch (status) {
     case 401:
-      return '登录已失效，请重新登录'
+      return t('core.batch3.err401')
     case 403:
-      return '需要管理员权限'
+      return t('core.batch3.err403')
     case 409:
-      return '已有备份正在执行，请稍后再试'
+      return t('core.batch3.err409')
     case 503:
-      return '服务端未启用备份功能'
+      return t('core.batch3.err503')
     case 0:
-      return '网络异常，请检查连接后重试'
+      return t('core.batch3.err0')
     default:
-      return message === '' ? '操作失败，请稍后重试' : message
+      return message === '' ? t('core.batch3.errGeneric') : message
   }
 }
 
@@ -102,7 +103,7 @@ export function parseServerTime(raw: string): Date | null {
 export function formatSessionTime(raw: string): string {
   const date = parseServerTime(raw)
   if (date === null) {
-    return '—'
+    return t('core.batch3.dash')
   }
   return `${date.getFullYear()}-${twoDigits(date.getMonth() + 1)}-${twoDigits(date.getDate())} ` +
     `${twoDigits(date.getHours())}:${twoDigits(date.getMinutes())}`
@@ -112,7 +113,7 @@ export function formatSessionTime(raw: string): string {
 export function relativeTime(raw: string, now: Date = new Date()): string {
   const date = parseServerTime(raw)
   if (date === null) {
-    return '—'
+    return t('core.batch3.dash')
   }
   const diff = now.getTime() - date.getTime()
   if (diff < 0) {
@@ -120,18 +121,18 @@ export function relativeTime(raw: string, now: Date = new Date()): string {
   }
   const minutes = Math.floor(diff / 60000)
   if (minutes < 1) {
-    return '刚刚'
+    return t('core.batch3.justNow')
   }
   if (minutes < 60) {
-    return `${minutes} 分钟前`
+    return t('core.batch3.minutesAgo', { n: String(minutes) })
   }
   const hours = Math.floor(minutes / 60)
   if (hours < 24) {
-    return `${hours} 小时前`
+    return t('core.batch3.hoursAgo', { n: String(hours) })
   }
   const days = Math.floor(hours / 24)
   if (days < 7) {
-    return `${days} 天前`
+    return t('core.batch3.daysAgo', { n: String(days) })
   }
   return `${date.getFullYear()}-${twoDigits(date.getMonth() + 1)}-${twoDigits(date.getDate())}`
 }
@@ -139,12 +140,12 @@ export function relativeTime(raw: string, now: Date = new Date()): string {
 /** 文件体积：≥1MB 用一位小数 MB，否则整数 KB。 */
 export function formatBackupSize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) {
-    return '0 KB'
+    return t('core.batch3.sizeZero')
   }
   if (bytes >= 1024 * 1024) {
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+    return t('core.batch3.sizeMb', { n: (bytes / (1024 * 1024)).toFixed(1) })
   }
-  return `${Math.ceil(bytes / 1024)} KB`
+  return t('core.batch3.sizeKb', { n: String(Math.ceil(bytes / 1024)) })
 }
 
 /** 备份记录是否成功（error 为空即成功，失败记录仍保留在清单里）。 */
@@ -156,13 +157,13 @@ export function backupSucceeded(item: { error?: string }): boolean {
 export function roleLabel(role: LedgerRole | ''): string {
   switch (role) {
     case 'owner':
-      return '所有者'
+      return t('core.batch3.roleOwner')
     case 'editor':
-      return '编辑'
+      return t('core.batch3.roleEditor')
     case 'viewer':
-      return '只读'
+      return t('core.batch3.roleViewer')
     default:
-      return '未加入账本'
+      return t('core.batch3.roleNone')
   }
 }
 

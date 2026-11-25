@@ -20,6 +20,7 @@
 import { computed } from 'vue'
 
 import MoneyText from './MoneyText.vue'
+import { t } from '@/i18n'
 import type { BadgeTone, TxnRowView, TxnRowVariant } from '@/core/txnRow'
 
 const props = withDefaults(
@@ -128,7 +129,7 @@ function onClick(): void {
       formatMoney。让名称由内容构成，三个问题同时消失。
       也不要用 display:none / visibility:hidden —— 那会把这段文字从可访问树里删掉。
     -->
-    <span v-if="clickable" class="txn-row__a11y">查看详情</span>
+    <span v-if="clickable" class="txn-row__a11y">{{ t('txnRow.a11yViewDetail') }}</span>
   </component>
 </template>
 

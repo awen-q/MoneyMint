@@ -11,6 +11,7 @@
 import { computed } from 'vue'
 
 import type { AveragePerDay, StatsTotals } from '@/core/stats'
+import { t } from '@/i18n'
 import MoneyText from '@/components/MoneyText.vue'
 
 const props = defineProps<{
@@ -26,25 +27,25 @@ const props = defineProps<{
 /** 日均副标：分母 + 本月未完提示；未来月明确说「未开始」。 */
 const averageSub = computed(() => {
   if (!props.average.applicable) {
-    return '本月未开始'
+    return t('stats.monthNotStarted')
   }
-  const base = `按已过 ${props.average.elapsedDays} 天`
-  return props.isCurrentMonth === true ? `${base}（本月未完）` : base
+  const base = t('stats.avgByDays', { days: String(props.average.elapsedDays) })
+  return props.isCurrentMonth === true ? `${base}${t('stats.monthInProgress')}` : base
 })
 </script>
 
 <template>
-  <section class="stats-metrics" aria-label="统计信息">
+  <section class="stats-metrics" :aria-label="t('stats.metricsLabel')">
     <div class="stats-metrics__card stats-metrics__card--income">
-      <span class="stats-metrics__label">收入</span>
+      <span class="stats-metrics__label">{{ t('common.income') }}</span>
       <MoneyText :amount="totals.income" :commodity="commodity" :privacy="masked === true" size="md" />
     </div>
     <div class="stats-metrics__card stats-metrics__card--expense">
-      <span class="stats-metrics__label">支出</span>
+      <span class="stats-metrics__label">{{ t('common.expense') }}</span>
       <MoneyText :amount="totals.expense" :commodity="commodity" :privacy="masked === true" size="md" />
     </div>
     <div class="stats-metrics__card">
-      <span class="stats-metrics__label">结余</span>
+      <span class="stats-metrics__label">{{ t('common.balance') }}</span>
       <MoneyText
         :amount="totals.balance"
         :commodity="commodity"
@@ -54,7 +55,7 @@ const averageSub = computed(() => {
       />
     </div>
     <div class="stats-metrics__card stats-metrics__card--expense">
-      <span class="stats-metrics__label">日均消费</span>
+      <span class="stats-metrics__label">{{ t('stats.avgExpense') }}</span>
       <span v-if="average.applicable" class="stats-metrics__avg">
         <MoneyText
           :amount="average.expense"
@@ -63,13 +64,13 @@ const averageSub = computed(() => {
           size="md"
         />
       </span>
-      <span v-else class="stats-metrics__dash" aria-label="本月未开始">—</span>
+      <span v-else class="stats-metrics__dash" :aria-label="t('stats.monthNotStarted')">—</span>
       <span class="stats-metrics__sub">{{ averageSub }}</span>
     </div>
     <div class="stats-metrics__card">
-      <span class="stats-metrics__label">记账数量</span>
+      <span class="stats-metrics__label">{{ t('stats.txnCountLabel') }}</span>
       <span class="stats-metrics__count">{{ totals.count }}</span>
-      <span class="stats-metrics__sub">所选币种笔数</span>
+      <span class="stats-metrics__sub">{{ t('stats.countSub') }}</span>
     </div>
   </section>
 </template>

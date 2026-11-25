@@ -15,6 +15,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { acquireChart, initChart, type EChartsInstance } from '@/core/charts/echarts'
 import { GRID, buildLineOption, type LineSeriesInput } from '@/core/charts/option'
+import { locale } from '@/i18n'
 import { getChartPalette, readThemeTokens, themeEpoch } from '@/styles/themeTokens'
 
 import ChartFrame from './ChartFrame.vue'
@@ -42,7 +43,8 @@ const props = withDefaults(
     masked: false,
     height: 220,
     state: 'ready',
-    emptyText: '暂无数据',
+    // 留空 → ChartFrame 回落 t('common.empty')，切语言即时跟随。
+    emptyText: '',
   },
 )
 
@@ -288,6 +290,12 @@ const optionKey = computed(() =>
 )
 
 watch(themeEpoch, () => guardedApplyOption())
+
+/**
+ * 语言切换也重绘：系列名等 option 文本由父级用 t() 构造（命令式 option 不会因
+ * 模板重渲染自动刷新），这里与 themeEpoch 同款显式重建整份 option。
+ */
+watch(locale, () => guardedApplyOption())
 
 // 顺序有意义：frameState 先建、且同为 post flush，保证「降级到空态」时先 teardown，
 // 后面 optionKey 那条看到 chart === null 直接跳过，不会白跑一次 setOption。

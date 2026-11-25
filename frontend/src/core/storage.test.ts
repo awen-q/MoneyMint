@@ -7,8 +7,8 @@ import {
   categoryOrderKey,
   clearDefaultAccounts,
   DEFAULT_ACCOUNT_KINDS,
-  DEFAULT_ACCOUNT_LABELS,
   defaultAccountKey,
+  defaultAccountLabel,
   readCategoryOrder,
   readDefaultAccounts,
   setDefaultAccount,
@@ -98,7 +98,7 @@ describe('分类顺序持久化（localStorage，按账本命名空间）', () =
 describe('默认账户记忆（含 P0 fund 位）', () => {
   it('fund 在白名单里，读写回完整保留', () => {
     expect(DEFAULT_ACCOUNT_KINDS).toContain('fund')
-    expect(DEFAULT_ACCOUNT_LABELS.fund).toBe('默认资金账户')
+    expect(defaultAccountLabel('fund')).toBe('默认资金账户')
 
     writeDefaultAccounts(7, { fund: 'u-card', expense: 'u-food' })
     expect(readDefaultAccounts(7)).toEqual({ fund: 'u-card', expense: 'u-food' })

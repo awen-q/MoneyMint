@@ -11,10 +11,8 @@
  *
  * 全库级操作：路由带 adminOnly 守卫，视图内再断言一次 is_admin（纵深防御）。
  *
- * i18n 阶段 2 子批 3（数据域）：用户可见文案走字典。**待收敛**：以下文案
- * 原本由 `core/m2` 输出中文，本视图内做了等价映射（core 未改动）：
- * `restoreCompareRows` 的四行表头、`restoreRejectionText` 的拒绝原因、
- * `mapRestoreError` 的错误文案。
+ * i18n 阶段 2 子批 5a：对比行 / 拒绝原因 / 错误文案改为直接消费 `core/m2`
+ * （`restoreCompareRows` / `restoreRejectionText` / `mapRestoreError`），视图内不再保留等价映射。
  */
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -22,9 +20,13 @@ import { useRouter } from 'vue-router'
 import { restoreApi } from '@/api/client'
 import { ApiError } from '@/api/errors'
 import type { RestorePreviewResult, RestoreResult } from '@/api/types'
-import { RESTORE_CONFIRM_WORD } from '@/core/m2'
+import {
+  mapRestoreError,
+  RESTORE_CONFIRM_WORD,
+  restoreCompareRows,
+  restoreRejectionText,
+} from '@/core/m2'
 import { t } from '@/i18n'
-import type { MessageKey } from '@/i18n/zh-CN'
 import { useSessionStore } from '@/stores/session'
 
 const session = useSessionStore()
@@ -44,45 +46,13 @@ const fileInput = ref<HTMLInputElement | null>(null)
 const isAdmin = computed(() => session.user !== null && session.user.is_admin === true)
 const confirmUnlocked = computed(() => confirmText.value === RESTORE_CONFIRM_WORD)
 
-/** 「备份 vs 当前」覆盖量对比行（core/m2.restoreCompareRows 的视图内等价映射，待收敛）。 */
+/** 「备份 vs 当前」覆盖量对比行（直接消费 core/m2）。 */
 const compareRows = computed(() => {
   if (preview.value === null) {
     return []
   }
-  const backup = preview.value.backup
-  const current = preview.value.current
-  return [
-    { label: t('restore.compareUsers'), backup: backup.users, current: current.users },
-    { label: t('restore.compareLedgers'), backup: backup.ledgers, current: current.ledgers },
-    { label: t('restore.compareAccounts'), backup: backup.accounts, current: current.accounts },
-    { label: t('restore.compareTransactions'), backup: backup.transactions, current: current.transactions },
-  ]
+  return restoreCompareRows(preview.value.backup, preview.value.current)
 })
-
-/** 预检拒绝原因文案（core/m2.restoreRejectionText 的视图内等价映射，待收敛）。 */
-function rejectionText(target: RestorePreviewResult): string {
-  if (target.error !== undefined && target.error !== '') {
-    return target.error
-  }
-  const byReason: Record<string, MessageKey> = {
-    not_sqlite: 'restore.reject.not_sqlite',
-    integrity_failed: 'restore.reject.integrity_failed',
-    not_our_backup: 'restore.reject.not_our_backup',
-    future_version: 'restore.reject.future_version',
-    file_too_large: 'restore.reject.file_too_large',
-  }
-  const key = target.reason !== undefined ? byReason[target.reason] : undefined
-  return key === undefined ? t('restore.reject.generic') : t(key)
-}
-
-/** 恢复端点错误文案（core/m2.mapRestoreError 的视图内等价映射，待收敛）。 */
-function restoreErrorText(status: number, message: string): string {
-  if (status === 401) return t('restore.errLogin')
-  if (status === 403) return t('restore.errForbidden')
-  if (status === 400) return message !== '' ? message : t('restore.errUpload')
-  if (status >= 500) return t('restore.errServer')
-  return message !== '' ? message : t('restore.errGeneric')
-}
 
 function onFileChange(event: Event): void {
   const input = event.target as HTMLInputElement
@@ -113,7 +83,7 @@ async function runPreview(): Promise<void> {
     step.value = 'preview'
   } catch (err) {
     actionError.value =
-      err instanceof ApiError ? restoreErrorText(err.status, err.message) : restoreErrorText(0, '')
+      err instanceof ApiError ? mapRestoreError(err.status, err.message) : mapRestoreError(0, '')
   } finally {
     busy.value = false
   }
@@ -130,7 +100,7 @@ async function runRestore(): Promise<void> {
     step.value = 'done'
   } catch (err) {
     actionError.value =
-      err instanceof ApiError ? restoreErrorText(err.status, err.message) : restoreErrorText(0, '')
+      err instanceof ApiError ? mapRestoreError(err.status, err.message) : mapRestoreError(0, '')
   } finally {
     busy.value = false
   }
@@ -180,7 +150,7 @@ function backToLogin(): void {
       <template v-else-if="step === 'preview' && preview !== null">
         <div v-if="!preview.valid" class="fb-card rs__card rs__reject" role="alert">
           <h2>{{ t('restore.rejectTitle') }}</h2>
-          <p>{{ rejectionText(preview) }}</p>
+          <p>{{ restoreRejectionText(preview) }}</p>
           <div class="rs__buttons">
             <button class="fb-btn-ghost rs__btn" type="button" @click="reset">{{ t('restore.pickAgain') }}</button>
           </div>

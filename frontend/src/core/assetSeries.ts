@@ -14,6 +14,8 @@
  * 5. **点数不齐时补齐**：正常恒 12 个点，但若旧/异常响应少给，按月份键补齐为 `0.00`
  *    并保持顺序 —— 缺点的线会断，而断线看上去像「那几个月没资产」。
  */
+import { t } from '@/i18n'
+
 import { Money } from './Money'
 import type { AssetSeriesPoint, AssetSeriesResponse } from '../api/types'
 
@@ -63,9 +65,12 @@ function isZero(amount: string): boolean {
   return moneyOf(amount).isDisplayZero()
 }
 
-/** 展示标签：`1月` … `12月`（月号去前导零）。 */
+/**
+ * 展示标签：`1月` … `12月`（月号去前导零）。
+ * 复用壳层的月份短名 key（同一「N月 / M{N}」图案），**访问时**求值，切语言即变。
+ */
 function labelOf(index: number): string {
-  return `${index + 1}月`
+  return t('shell.monthShort', { month: String(index + 1) })
 }
 
 /**

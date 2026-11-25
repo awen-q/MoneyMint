@@ -5,7 +5,10 @@
  * 只负责「选哪个周期」，**不碰 cursor 与数据窗口** —— 那是页面（T48）的事，
  * 组件保持可单测、可复用（B6 资产统计页也要同一套）。
  */
+import { computed } from 'vue'
+
 import type { ReportPeriod } from '@/core/reports'
+import { t } from '@/i18n'
 
 withDefaults(
   defineProps<{
@@ -18,15 +21,16 @@ const emit = defineEmits<{
   (event: 'select', period: ReportPeriod): void
 }>()
 
-const OPTIONS: Array<{ value: ReportPeriod; label: string }> = [
-  { value: 'week', label: '周' },
-  { value: 'month', label: '月' },
-  { value: 'year', label: '年' },
-]
+/** 选项标签**访问时**求值（computed）：切语言后段控文案即时跟随。 */
+const OPTIONS = computed<Array<{ value: ReportPeriod; label: string }>>(() => [
+  { value: 'week', label: t('stats.periodWeek') },
+  { value: 'month', label: t('stats.periodMonth') },
+  { value: 'year', label: t('stats.periodYear') },
+])
 </script>
 
 <template>
-  <div class="period-seg" role="group" aria-label="统计周期">
+  <div class="period-seg" role="group" :aria-label="t('stats.periodLabel')">
     <button
       v-for="option in OPTIONS"
       :key="option.value"

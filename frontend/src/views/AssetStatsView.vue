@@ -28,6 +28,7 @@ import { ApiError } from '@/api/errors'
 import type { AssetSeriesResponse } from '@/api/types'
 import { buildAssetSeries, emptyAssetSeries, type AssetSeries } from '@/core/assetSeries'
 import type { LineSeriesInput } from '@/core/charts/option'
+import { t } from '@/i18n'
 import { getChartPalette, readThemeTokens, themeEpoch } from '@/styles/themeTokens'
 import { usePeriodStore } from '@/stores/period'
 import { usePrivacyStore } from '@/stores/privacy'
@@ -81,7 +82,7 @@ async function load(): Promise<void> {
     if (token !== requestToken) {
       return
     }
-    error.value = err instanceof ApiError ? err.message : '资产序列加载失败，请重试'
+    error.value = err instanceof ApiError ? err.message : t('assetStats.errLoad')
   } finally {
     if (token === requestToken) {
       loading.value = false
@@ -116,10 +117,10 @@ const staleError = computed(() => (error.value !== '' && loaded.value ? error.va
 
 const cardDesc = computed(() => {
   if (pageState.value === 'error') {
-    return '请检查网络后重试。'
+    return t('common.networkRetry')
   }
   if (pageState.value === 'empty') {
-    return `${year.value} 年没有资产或负债记录。`
+    return t('assetStats.emptyYear', { year: String(year.value) })
   }
   return ''
 })
@@ -163,17 +164,17 @@ const palette = computed(() => {
  */
 const chartSeries = computed<LineSeriesInput[]>(() => [
   {
-    name: '总资产',
+    name: t('assets.totalAssets'),
     color: palette.value.brand,
     points: series.value.assets.map((amount) => ({ value: Number(amount), amount })),
   },
   {
-    name: '总负债',
+    name: t('assets.totalLiabilities'),
     color: palette.value.danger,
     points: series.value.liabilities.map((amount) => ({ value: Number(amount), amount })),
   },
   {
-    name: '净资产',
+    name: t('assets.netWorth'),
     color: palette.value.warn,
     points: series.value.net.map((amount) => ({ value: Number(amount), amount })),
   },
@@ -189,22 +190,22 @@ const currencyOptions = computed(() => {
 <template>
   <section class="astats">
     <header class="astats__hero">
-      <h1 class="astats__title">资产统计</h1>
+      <h1 class="astats__title">{{ t('shell.nav.assetStats') }}</h1>
     </header>
 
     <!-- 工具卡：返回 / 年份 / 币种（都在 StateCard 之外，空态与错误态仍可操作） -->
     <section class="astats__card astats__card--tool">
       <div class="astats__tool-row">
-        <button type="button" class="astats__back" @click="goAssets">‹ 返回资产</button>
+        <button type="button" class="astats__back" @click="goAssets">{{ t('assetStats.back') }}</button>
         <span class="astats__year">
-          <button type="button" class="astats__arrow" aria-label="上一年" @click="shiftYear(-1)">‹</button>
+          <button type="button" class="astats__arrow" :aria-label="t('shell.prevYear')" @click="shiftYear(-1)">‹</button>
           <button type="button" class="astats__chip" @click="yearOpen = true">
-            <span class="astats__chip-text">{{ year }} 年</span>
+            <span class="astats__chip-text">{{ t('core.reports.yearLabel', { year: String(year) }) }}</span>
             <span class="astats__caret" aria-hidden="true">▾</span>
           </button>
-          <button type="button" class="astats__arrow" aria-label="下一年" @click="shiftYear(1)">›</button>
+          <button type="button" class="astats__arrow" :aria-label="t('shell.nextYear')" @click="shiftYear(1)">›</button>
         </span>
-        <span v-if="currencyOptions.length > 1" class="astats__seg" role="group" aria-label="统计币种">
+        <span v-if="currencyOptions.length > 1" class="astats__seg" role="group" :aria-label="t('stats.currencyGroup')">
           <button
             v-for="code in currencyOptions"
             :key="code"
@@ -215,12 +216,12 @@ const currencyOptions = computed(() => {
           >{{ code }}</button>
         </span>
       </div>
-      <p class="astats__note">按月口径（本期不做按日）· 金额单位 {{ commodity }} · 禁跨币种求和</p>
+      <p class="astats__note">{{ t('assetStats.note', { commodity }) }}</p>
     </section>
 
     <p v-if="staleError !== ''" class="astats__stale" role="status">
-      <span>刷新失败，当前显示的是上次数据</span>
-      <button type="button" class="astats__stale-btn" @click="reload">重试</button>
+      <span>{{ t('common.staleNotice') }}</span>
+      <button type="button" class="astats__stale-btn" @click="reload">{{ t('common.retry') }}</button>
     </p>
 
     <!-- loading 骨架模式（骨架屏批）：本页等待区结构固定（趋势卡 + 月度变化卡），
@@ -228,24 +229,19 @@ const currencyOptions = computed(() => {
     <StateCard :state="pageState" :desc="cardDesc" loading-skeleton @action="reload">
       <section class="astats__card">
         <div class="astats__card-head">
-          <span class="astats__card-title">资产趋势</span>
-          <span class="astats__card-note">总资产 / 负债 / 净资产 三线</span>
+          <span class="astats__card-title">{{ t('assetStats.trendTitle') }}</span>
+          <span class="astats__card-note">{{ t('assetStats.trendNote') }}</span>
         </div>
         <TrendChart
-          title="资产趋势"
-          :chart-label="`${year} 年 1..12 月总资产、负债与净资产，${commodity} 口径`"
+          :title="t('assetStats.trendTitle')"
+          :chart-label="t('assetStats.chartLabel', { year: String(year), commodity })"
           :labels="series.labels"
           :series="chartSeries"
           :commodity="commodity"
           :masked="privacy.enabled"
         />
         <p class="astats__hint">
-          净资产 = 总资产 + 负债（负债为负值，故相加）；12 月末：总资产
-          <MoneyText :amount="series.yearEnd.assets" :commodity="commodity" :privacy="privacy.enabled" size="sm" />
-          · 负债
-          <MoneyText :amount="series.yearEnd.liabilities" :commodity="commodity" :privacy="privacy.enabled" size="sm" />
-          · 净资产
-          <MoneyText :amount="series.yearEnd.net" :commodity="commodity" :privacy="privacy.enabled" size="sm" />
+          {{ t('assetStats.hintPrefix') }}<MoneyText :amount="series.yearEnd.assets" :commodity="commodity" :privacy="privacy.enabled" size="sm" />{{ t('assetStats.hintLiabilities') }}<MoneyText :amount="series.yearEnd.liabilities" :commodity="commodity" :privacy="privacy.enabled" size="sm" />{{ t('assetStats.hintNet') }}<MoneyText :amount="series.yearEnd.net" :commodity="commodity" :privacy="privacy.enabled" size="sm" />
         </p>
       </section>
 

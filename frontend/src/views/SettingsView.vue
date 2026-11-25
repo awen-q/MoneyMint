@@ -17,10 +17,11 @@ import { setThemePreference, theme, themePreference, type ThemePreference } from
 import { LOCALES, locale, setLocale, t, type Locale } from '@/i18n'
 import { ApiError } from '@/api/errors'
 import type { AccountView } from '@/api/types'
+import { roleLabel } from '@/core/batch3'
 import {
   DEFAULT_ACCOUNT_KINDS,
-  DEFAULT_ACCOUNT_LABELS,
   clearDefaultAccounts,
+  defaultAccountLabel,
   readDefaultAccounts,
   type DefaultAccountKind,
 } from '@/core/storage'
@@ -100,20 +101,6 @@ interface LinkItem {
   hint: string
   to: string
   disabled?: boolean
-}
-
-/** 角色中文标签（本页徽章用；值与原 core/batch3.roleLabel 逐字节一致，阶段 2 只迁视图）。 */
-function roleText(role: string): string {
-  if (role === 'owner') {
-    return t('common.roleOwner')
-  }
-  if (role === 'editor') {
-    return t('common.roleEditor')
-  }
-  if (role === 'viewer') {
-    return t('common.roleViewer')
-  }
-  return t('common.roleNone')
 }
 
 const links = computed<LinkItem[]>(() => [
@@ -261,7 +248,7 @@ onMounted(() => {
       <span class="set__badges">
         <em v-if="isAdmin" class="set__badge set__badge--admin">{{ t('settings.admin') }}</em>
         <em class="set__badge" :class="{ 'set__badge--owner': currentRole === 'owner' }">
-          {{ t('settings.ledgerRoleBadge', { role: roleText(currentRole) }) }}
+          {{ t('settings.ledgerRoleBadge', { role: roleLabel(currentRole) }) }}
         </em>
       </span>
     </div>
@@ -282,7 +269,7 @@ onMounted(() => {
       <p v-if="!accountsLoaded" class="set__state">{{ t('settings.readingDefaults') }}</p>
       <dl v-else class="set__defaults">
         <template v-for="kind in DEFAULT_ACCOUNT_KINDS" :key="kind">
-          <dt>{{ DEFAULT_ACCOUNT_LABELS[kind] }}</dt>
+          <dt>{{ defaultAccountLabel(kind) }}</dt>
           <dd :class="{ 'set__missing': isDefaultMissing(kind) }">{{ defaultLabel(kind) }}</dd>
         </template>
       </dl>

@@ -10,6 +10,7 @@ import { computed } from 'vue'
 
 import { formatAmount } from '@/core/Money'
 import type { BalanceGroup, PostingView } from '@/core/record'
+import { t } from '@/i18n'
 
 const props = withDefaults(
   defineProps<{
@@ -44,20 +45,20 @@ function amountClass(amount: string): string {
   return amount.charAt(0) === '-' ? 'neg' : 'pos'
 }
 
-/** bean-check 提示文案：按币种给出差额。 */
+/** bean-check 提示文案：按币种给出差额（随语言求值，金额走 formatAmount）。 */
 function chipNote(group: BalanceGroup): string {
   return group.balanced
-    ? '✓ 按币种配平（sum = 0）'
-    : `✕ 差额 ${signed(group.sum)}，bean-check 会拒绝`
+    ? t('postingPreview.chipBalanced')
+    : t('postingPreview.chipDiff', { amount: signed(group.sum) })
 }
 </script>
 
 <template>
   <section class="grp">
     <div class="g-head">
-      <span class="g-title"><i class="g-dot"></i>分录预览 · 复式</span>
+      <span class="g-title"><i class="g-dot"></i>{{ t('postingPreview.title') }}</span>
       <span class="g-side js-bal-tag" :class="balanced ? 'ok' : 'bad'">
-        {{ balanced ? '✓ 已配平' : '✕ 未配平' }}
+        {{ balanced ? t('postingPreview.balanced') : t('postingPreview.unbalanced') }}
       </span>
     </div>
 
@@ -66,10 +67,10 @@ function chipNote(group: BalanceGroup): string {
         <span
           class="p-sign"
           :class="posting.isDebit ? 'debit' : 'credit'"
-          :aria-label="posting.isDebit ? '借方' : '贷方'"
-        >{{ posting.isDebit ? '借' : '贷' }}</span>
+          :aria-label="posting.isDebit ? t('postingPreview.debitAria') : t('postingPreview.creditAria')"
+        >{{ posting.isDebit ? t('postingPreview.debit') : t('postingPreview.credit') }}</span>
         <span class="p-main">
-          <b>{{ posting.label === '' ? '待选账户' : posting.label }}</b>
+          <b>{{ posting.label === '' ? t('postingPreview.pendingAccount') : posting.label }}</b>
           <small>{{ posting.name === '' ? '—' : posting.name }}</small>
         </span>
         <span class="p-amt" :class="amountClass(posting.amount)">
@@ -84,20 +85,18 @@ function chipNote(group: BalanceGroup): string {
           class="bal-chip"
           :class="{ bad: !group.balanced }"
         >
-          <b>{{ group.commodity }}</b> · {{ group.rows }} 条分录 · 合计 <b>{{ signed(group.sum) }}</b>
+          <b>{{ group.commodity }}</b> · {{ t('postingPreview.rowsUnit', { n: String(group.rows) }) }} · {{ t('postingPreview.totalLabel') }} <b>{{ signed(group.sum) }}</b>
           <small>{{ chipNote(group) }}</small>
         </div>
       </div>
 
       <details class="bean">
-        <summary>查看导出 .beancount 片段（对照 bean-check）</summary>
+        <summary>{{ t('postingPreview.beanSummary') }}</summary>
         <pre class="js-bean">{{ bean }}</pre>
       </details>
 
       <p class="bean-note">
-        账户名必须是 <code>Assets/Liabilities/Equity/Income/Expenses</code> 开头的 ASCII 冒号层级；
-        每条 posting 为 <code>账户 金额 币种</code>，同币种金额之和必须为 0。
-        「借 / 贷」沿用既有认知标注，Beancount 本身没有借贷字段，判定一律以带符号金额与 sum = 0 为准。
+        {{ t('postingPreview.beanNoteStart') }}<code>Assets/Liabilities/Equity/Income/Expenses</code>{{ t('postingPreview.beanNoteBetween') }}<code>{{ t('postingPreview.beanNotePostingCode') }}</code>{{ t('postingPreview.beanNoteEnd') }}
       </p>
     </div>
 
@@ -108,7 +107,7 @@ function chipNote(group: BalanceGroup): string {
       data-act="advanced"
       @click="emit('advanced')"
     >
-      高级模式 · 逐条编辑双录分录 <span>›</span>
+      {{ t('postingPreview.advancedEntry') }} <span>›</span>
     </button>
   </section>
 </template>

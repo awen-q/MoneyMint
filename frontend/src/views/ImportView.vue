@@ -10,10 +10,9 @@
  * - 执行在服务端单一大事务内完成，失败不留半批数据；
  *   成功后展示批次标识，可一键撤销（仅回滚本批新建实体与本批交易）。
  *
- * i18n 阶段 2 子批 3（数据域）：用户可见文案走字典。**待收敛**：以下文案
- * 原本由 `core/m2` 输出中文，本视图内做了等价映射（core 未改动）：
- * `importSummaryRows` 的五行标签、`formatImportErrors` 的行号文案、
- * `formatImportConflicts` 的冲突标签与拼接格式、`mapImportError` 的错误文案。
+ * i18n 阶段 2 子批 5a：摘要行 / 错误行号 / 冲突标签与拼接 / 错误文案改为直接消费
+ * `core/m2`（`importSummaryRows` / `formatImportErrors` / `formatImportConflicts` /
+ * `mapImportError`），视图内不再保留等价映射。
  */
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -21,9 +20,13 @@ import { useRouter } from 'vue-router'
 import { importApi } from '@/api/client'
 import { ApiError } from '@/api/errors'
 import type { ImportPreviewResult, ImportResult, ImportUndoResult, ImportWarning } from '@/api/types'
-import type { ImportSummaryRow } from '@/core/m2'
+import {
+  formatImportConflicts,
+  formatImportErrors,
+  importSummaryRows,
+  mapImportError,
+} from '@/core/m2'
 import { t } from '@/i18n'
-import type { MessageKey } from '@/i18n/zh-CN'
 import { markDirty } from '@/stores/dataFreshness'
 
 const router = useRouter()
@@ -41,53 +44,28 @@ const fileInput = ref<HTMLInputElement | null>(null)
 
 const hasText = computed(() => text.value.trim() !== '')
 
-/** 预检摘要行（core/m2.importSummaryRows 的视图内等价映射，待收敛）。 */
-const summaryRows = computed<ImportSummaryRow[]>(() => {
+/** 预检摘要行（直接消费 core/m2）。 */
+const summaryRows = computed(() => {
   if (preview.value === null) {
     return []
   }
-  return [
-    { label: t('import.summaryNewAccounts'), value: preview.value.new_accounts },
-    { label: t('import.summaryReuseAccounts'), value: preview.value.reuse_accounts },
-    { label: t('import.summaryNewTransactions'), value: preview.value.new_transactions },
-    { label: t('import.summarySkipTransactions'), value: preview.value.skip_transactions },
-    { label: t('import.summaryNewCommodities'), value: preview.value.new_commodities },
-  ]
+  return importSummaryRows(preview.value)
 })
 
-/** 解析错误逐行文案（core/m2.formatImportErrors 的视图内等价映射，待收敛）。 */
+/** 解析错误逐行文案（直接消费 core/m2）。 */
 const errorLines = computed<string[]>(() => {
   if (preview.value === null || preview.value.errors === undefined) {
     return []
   }
-  return preview.value.errors.map((e) => t('import.errorLine', { line: String(e.line), msg: e.msg }))
+  return formatImportErrors(preview.value.errors)
 })
 
-/** 冲突类型短标签（core/m2.importConflictTypeLabel 的视图内等价映射，待收敛）。 */
-function conflictTypeLabel(type: string): string {
-  const keys: Record<string, MessageKey> = {
-    account_conflict: 'import.conflict.account_conflict',
-    commodity_conflict: 'import.conflict.commodity_conflict',
-    undeclared_account: 'import.conflict.undeclared_account',
-    unbalanced: 'import.conflict.unbalanced',
-    pad_balance_unsupported: 'import.conflict.pad_balance_unsupported',
-  }
-  const key = keys[type]
-  return key === undefined ? t('import.conflict.generic') : t(key)
-}
-
-/** 冲突逐行文案（core/m2.formatImportConflicts 的视图内等价映射，待收敛）。 */
+/** 冲突逐行文案（直接消费 core/m2）。 */
 const conflictLines = computed<string[]>(() => {
   if (preview.value === null || preview.value.conflicts.length === 0) {
     return []
   }
-  return preview.value.conflicts.map((c) => {
-    const line = c.line > 0 ? t('import.lineRef', { line: String(c.line) }) : ''
-    const name = c.name !== '' ? ` ${c.name}` : ''
-    const raw = `${line}${name}`
-    const where = raw !== '' ? t('import.conflictWhere', { where: raw }) : ''
-    return t('import.conflictEntry', { label: conflictTypeLabel(c.type), where, reason: c.reason })
-  })
+  return formatImportConflicts(preview.value.conflicts)
 })
 
 // 非阻断性警告（如负债正余额疑似符号填反）：仅提示，不进冲突清单、不影响导入。
@@ -121,14 +99,6 @@ const resultCurrentLine = computed<string>(() => {
     ? t('import.resultCurrentSkipped', params)
     : t('import.resultCurrent', params)
 })
-
-/** 导入端点错误文案（core/m2.mapImportError 的视图内等价映射，待收敛）。 */
-function importErrorText(status: number, message: string): string {
-  if (status === 401) return t('import.errLogin')
-  if (status === 400) return message !== '' ? message : t('import.errInvalid')
-  if (status >= 500) return t('import.errServer')
-  return message !== '' ? message : t('import.errGeneric')
-}
 
 function onFileChange(event: Event): void {
   const input = event.target as HTMLInputElement
@@ -173,7 +143,7 @@ async function runPreview(): Promise<void> {
     preview.value = await importApi.preview(text.value, target.value)
   } catch (err) {
     actionError.value =
-      err instanceof ApiError ? importErrorText(err.status, err.message) : importErrorText(0, '')
+      err instanceof ApiError ? mapImportError(err.status, err.message) : mapImportError(0, '')
   } finally {
     busy.value = false
   }
@@ -192,7 +162,7 @@ async function runImport(): Promise<void> {
     markDirty('local-write')
   } catch (err) {
     actionError.value =
-      err instanceof ApiError ? importErrorText(err.status, err.message) : importErrorText(0, '')
+      err instanceof ApiError ? mapImportError(err.status, err.message) : mapImportError(0, '')
   } finally {
     busy.value = false
   }
@@ -209,7 +179,7 @@ async function runUndo(): Promise<void> {
     markDirty('local-write')
   } catch (err) {
     actionError.value =
-      err instanceof ApiError ? importErrorText(err.status, err.message) : importErrorText(0, '')
+      err instanceof ApiError ? mapImportError(err.status, err.message) : mapImportError(0, '')
   } finally {
     undoing.value = false
   }

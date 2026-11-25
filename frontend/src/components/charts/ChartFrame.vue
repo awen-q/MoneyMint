@@ -12,6 +12,8 @@
  */
 import { computed } from 'vue'
 
+import { t } from '@/i18n'
+
 const props = withDefaults(
   defineProps<{
     title: string
@@ -38,9 +40,15 @@ const props = withDefaults(
     note: '',
     height: 220,
     state: 'ready',
-    emptyText: '暂无数据',
+    // 空态默认文案留空：模板里回落 t('common.empty')，保证切语言后即时跟随。
+    emptyText: '',
     legend: () => [],
   },
+)
+
+/** 空态文案：调用方显式传入优先，否则用共享的四态默认（随语言）。 */
+const resolvedEmptyText = computed(() =>
+  props.emptyText !== '' ? props.emptyText : t('common.empty'),
 )
 
 /**
@@ -79,10 +87,10 @@ const bodyStyle = computed<Record<string, string>>(() => ({
       :aria-label="chartLabel"
     >
       <slot v-if="state === 'ready'" />
-      <p v-else-if="state === 'loading'" class="fb-chart__state">正在加载图表…</p>
-      <p v-else-if="state === 'empty'" class="fb-chart__state">{{ emptyText }}</p>
+      <p v-else-if="state === 'loading'" class="fb-chart__state">{{ t('charts.loading') }}</p>
+      <p v-else-if="state === 'empty'" class="fb-chart__state">{{ resolvedEmptyText }}</p>
       <p v-else class="fb-chart__state fb-chart__state--error">
-        图表加载失败，请稍后重试
+        {{ t('charts.error') }}
       </p>
     </div>
   </section>

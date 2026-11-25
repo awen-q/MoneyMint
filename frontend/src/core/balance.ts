@@ -5,6 +5,7 @@
  * 禁止 JS 裸 `+` / `-`；差额、展示、符号判断全部在这里收口。
  */
 import { formatAmount, Money } from '@/core/Money'
+import { t } from '../i18n'
 
 /** 普通十进制字符串（允许可选正负号，不接受指数记数法）。 */
 const PLAIN_DECIMAL_RE = /^[+-]?\d+(?:\.\d+)?$/
@@ -43,8 +44,12 @@ export function previewText(
   cumulative: string,
   target: string,
 ): string {
-  return `截至 ${asOfDate} 日初（前一日日终）当前累计 ${formatAmount(cumulative)} / ` +
-    `目标 ${formatAmount(target)} / 将自动补记 ${signedDiff(balanceDiff(cumulative, target))}`
+  return t('core.balance.preview', {
+    date: asOfDate,
+    current: formatAmount(cumulative),
+    target: formatAmount(target),
+    diff: signedDiff(balanceDiff(cumulative, target)),
+  })
 }
 
 /** D 之后是否已有交易（AC-3.7：二次确认需提示「会改变 D 之后的所有余额」）。 */

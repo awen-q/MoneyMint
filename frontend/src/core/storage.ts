@@ -8,6 +8,8 @@
  * 所有访问都带 typeof 守卫与 try/catch，保证在 Node（Vitest）环境、
  * Safari 隐私模式、配额耗尽等场景下静默降级而不抛错。
  */
+import { t } from '../i18n'
+import type { MessageKey } from '../i18n/zh-CN'
 
 /** 旧版 Flutter 前端把 token 存在这个键里，Cookie 化后必须清理。 */
 const LEGACY_TOKEN_KEY = 'fl_token'
@@ -218,12 +220,24 @@ export const DEFAULT_ACCOUNT_KINDS: readonly DefaultAccountKind[] = [
   'fund',
 ]
 
-export const DEFAULT_ACCOUNT_LABELS: Record<DefaultAccountKind, string> = {
-  expense: '默认支出分类',
-  income: '默认收入分类',
-  transferOut: '默认转账来源',
-  transferIn: '默认转账目标',
-  fund: '默认资金账户',
+/** 默认账户各类位的显示名消息键（顶层只存键，不存译文）。 */
+const DEFAULT_ACCOUNT_LABEL_KEYS: Record<DefaultAccountKind, MessageKey> = {
+  expense: 'core.storage.defaultExpense',
+  income: 'core.storage.defaultIncome',
+  transferOut: 'core.storage.defaultTransferOut',
+  transferIn: 'core.storage.defaultTransferIn',
+  fund: 'core.storage.defaultFund',
+}
+
+/**
+ * 默认账户位显示名（唯一字符串源，设置页直接渲染）。
+ *
+ * 这些文案**仅用于 UI 展示**，从不写入账本数据 / 导出（持久化的是账户 uuid），
+ * 因此可以随语言切换。刻意做成访问时求值的函数：若保持模块顶层常量，
+ * 切语言后设置页仍显示旧语言（模块快照陷阱）。
+ */
+export function defaultAccountLabel(kind: DefaultAccountKind): string {
+  return t(DEFAULT_ACCOUNT_LABEL_KEYS[kind])
 }
 
 const DEFAULT_ACCOUNT_KEY_PREFIX = 'fambean.default_accounts.'

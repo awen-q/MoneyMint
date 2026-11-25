@@ -5,6 +5,8 @@
  * **LO-03 原始缺陷**：上一版把 chips 吸底，把内容挤出首屏。这里就是**普通行内元素**，
  * `position` 保持默认 —— 不吸底、也不吸顶（吸顶同样会遮挡日历/指标）。
  */
+import { t } from '@/i18n'
+
 withDefaults(
   defineProps<{
     /** 当前子页。 */
@@ -19,7 +21,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div class="stats-tabs" role="tablist" aria-label="统计子页">
+  <div class="stats-tabs" role="tablist" :aria-label="t('stats.tabsLabel')">
     <button
       type="button"
       role="tab"
@@ -27,7 +29,7 @@ const emit = defineEmits<{
       :class="{ 'stats-tabs__btn--on': tab === 'stat' }"
       :aria-selected="tab === 'stat'"
       @click="emit('select', 'stat')"
-    >统计</button>
+    >{{ t('shell.tab.stats') }}</button>
     <button
       type="button"
       role="tab"
@@ -35,7 +37,7 @@ const emit = defineEmits<{
       :class="{ 'stats-tabs__btn--on': tab === 'tag' }"
       :aria-selected="tab === 'tag'"
       @click="emit('select', 'tag')"
-    >标签</button>
+    >{{ t('stats.tabTag') }}</button>
   </div>
 </template>
 

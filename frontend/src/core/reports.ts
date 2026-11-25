@@ -13,7 +13,39 @@
  * Safari 14.1 兼容：不用 `.at()` / findLast / Object.hasOwn / padStart / toISOString。
  */
 import { Money } from './Money'
+import { t } from '../i18n'
 import { accountLabel, type SummaryAccount } from './record'
+
+/**
+ * 周标签（周一~周日）与月刻度的消息键。
+ *
+ * 模块顶层只保存**键**（不含译文），译文一律在 periodBuckets 访问时 t() 求值 ——
+ * 否则切语言后图表刻度仍是旧语言（模块快照陷阱）。
+ */
+const WEEKDAY_KEYS = [
+  'core.reports.weekMon',
+  'core.reports.weekTue',
+  'core.reports.weekWed',
+  'core.reports.weekThu',
+  'core.reports.weekFri',
+  'core.reports.weekSat',
+  'core.reports.weekSun',
+] as const
+
+const MONTH_KEYS = [
+  'core.reports.month1',
+  'core.reports.month2',
+  'core.reports.month3',
+  'core.reports.month4',
+  'core.reports.month5',
+  'core.reports.month6',
+  'core.reports.month7',
+  'core.reports.month8',
+  'core.reports.month9',
+  'core.reports.month10',
+  'core.reports.month11',
+  'core.reports.month12',
+] as const
 
 /** 报表所需的最小分录结构（与 api/types 的 PostingView 兼容）。 */
 export interface ReportPosting {
@@ -65,7 +97,7 @@ export function periodBuckets(period: ReportPeriod, cursor: Date): PeriodBucket[
 
   if (period === 'year') {
     for (let m = 0; m < 12; m += 1) {
-      out.push({ key: `${year}-${twoDigits(m + 1)}`, label: `${m + 1}月` })
+      out.push({ key: `${year}-${twoDigits(m + 1)}`, label: t(MONTH_KEYS[m]) })
     }
     return out
   }
@@ -85,10 +117,9 @@ export function periodBuckets(period: ReportPeriod, cursor: Date): PeriodBucket[
   const weekday = cursor.getDay()
   const offset = weekday === 0 ? 6 : weekday - 1
   const monday = new Date(year, month, cursor.getDate() - offset)
-  const weekLabels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
   for (let i = 0; i < 7; i += 1) {
     const day = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i)
-    out.push({ key: dateString(day), label: weekLabels[i] })
+    out.push({ key: dateString(day), label: t(WEEKDAY_KEYS[i]) })
   }
   return out
 }
@@ -107,10 +138,13 @@ export function inBuckets(date: string, buckets: PeriodBucket[], period: ReportP
 export function periodLabel(period: ReportPeriod, cursor: Date): string {
   const year = cursor.getFullYear()
   if (period === 'year') {
-    return `${year} 年`
+    return t('core.reports.yearLabel', { year: String(year) })
   }
   if (period === 'month') {
-    return `${year} 年 ${cursor.getMonth() + 1} 月`
+    return t('core.reports.monthLabel', {
+      year: String(year),
+      month: String(cursor.getMonth() + 1),
+    })
   }
   const buckets = periodBuckets('week', cursor)
   return `${buckets[0].key} ~ ${buckets[6].key}`
@@ -367,7 +401,7 @@ export function categoryShares(
       if (bucket === undefined) {
         bucket = {
           id: account === undefined ? null : posting.account_id,
-          label: account === undefined ? '未分类' : accountLabel(account),
+          label: account === undefined ? t('core.reports.uncategorized') : accountLabel(account),
           amount: Money.zero(),
           txns: [],
         }
@@ -429,7 +463,7 @@ export function memberContributions(
 ): MemberContribution[] {
   const buckets: { [name: string]: { count: number; amount: Money } } = {}
   for (const txn of txns) {
-    const name = txn.created_by_name === '' ? '未署名' : txn.created_by_name
+    const name = txn.created_by_name === '' ? t('core.reports.unnamedMember') : txn.created_by_name
     let expense = Money.zero()
     for (const posting of txn.postings) {
       if (matches(posting, accounts, 'Expenses', commodity)) {

@@ -16,6 +16,8 @@
  * 的唯一职责（首页与资产页 hero 同源）。这里只给「分组小计」，并且有交叉断言
  * 把两边的口径钉在一起（`assets.test.ts`：「分组小计之和 === computeBalanceSummary」）。
  */
+import { t } from '@/i18n'
+
 import { Money } from './Money'
 import { isClosed, type SummaryAccount } from './accounts'
 import { accountLabel } from './record'
@@ -85,9 +87,12 @@ export interface AssetBreakdown {
   closedCount: number
 }
 
-const GROUP_LABELS: Record<AssetGroupType, string> = {
-  Assets: '资产',
-  Liabilities: '负债',
+/**
+ * 组头显示名：**访问时**取译文（模块顶层不存快照，切语言后重新聚合即得新语言）。
+ * 组 `type` 仍是稳定的 `Assets` / `Liabilities` 键，不参与展示。
+ */
+function groupLabel(type: AssetGroupType): string {
+  return type === 'Assets' ? t('assets.groupAssets') : t('assets.groupLiabilities')
 }
 
 /** 组顺序：恒为资产在前、负债在后（不依赖对象 key 顺序）。 */
@@ -223,7 +228,7 @@ export function buildAssetBreakdown(
 
     groups.push({
       type,
-      label: GROUP_LABELS[type],
+      label: groupLabel(type),
       subtotal: subtotal.toString(),
       rows,
       foreignRows,

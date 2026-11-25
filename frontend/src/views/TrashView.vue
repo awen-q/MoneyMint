@@ -23,6 +23,7 @@ import { ApiError } from '@/api/errors'
 import type { PurgeLogEntry, PurgeSummary, TrashItemView } from '@/api/types'
 import SelectSheet from '@/components/shell/SelectSheet.vue'
 import { formatMoney } from '@/core/Money'
+import { t } from '@/i18n'
 import { markDirty } from '@/stores/dataFreshness'
 import { useSessionStore } from '@/stores/session'
 
@@ -31,8 +32,14 @@ const session = useSessionStore()
 /** 弹层状态机：none → menu → row-confirm；none → purge-all。 */
 type SheetState = 'none' | 'menu' | 'row-confirm' | 'purge-all'
 
-/** 清空弹层里用户必须手输的词（与请求体的 confirm 词不是同一个概念）。 */
-const PURGE_ALL_PHRASE = '清空'
+/**
+ * 清空弹层里用户必须手输的词（与请求体的 confirm 词不是同一个概念）。
+ *
+ * 注意：**请求体**的确认词 `PURGE_CONFIRM_WORD`（「删除」）是后端契约常量，
+ * 必须保持字面量、绝不 t() 化（en 下后端仍严等「删除」，本地化会让校验永远失败）；
+ * 这里只是本弹层的解锁词，随语言切换，不发给后端。
+ */
+const purgeAllPhrase = computed(() => t('trash.purgeAllPhrase'))
 
 const items = ref<TrashItemView[]>([])
 const summary = ref<PurgeSummary>({ deletable: 0, system_kept: 0, paired: 0 })
@@ -82,16 +89,16 @@ const canPurgeAll = computed(
 )
 
 /** 手输「清空」严等解锁（不做同义词 / 模糊匹配）。 */
-const purgeAllUnlocked = computed(() => purgeAllInput.value.trim() === PURGE_ALL_PHRASE)
+const purgeAllUnlocked = computed(() => purgeAllInput.value.trim() === purgeAllPhrase.value)
 
 const sheetTitle = computed(() => {
   switch (sheet.value) {
     case 'menu':
-      return '这笔交易'
+      return t('trash.sheetTitleRow')
     case 'row-confirm':
-      return '永久删除'
+      return t('trash.sheetTitleRowConfirm')
     case 'purge-all':
-      return '清空回收站'
+      return t('trash.sheetTitlePurgeAll')
     default:
       return ''
   }
@@ -114,19 +121,19 @@ function sumPostings(item: TrashItemView): string {
  */
 function mapPurgeError(err: unknown): string {
   if (!(err instanceof ApiError)) {
-    return '操作失败，请稍后重试'
+    return t('trash.errGeneric')
   }
   switch (err.code) {
     case 'txn_purge_forbidden':
-      return '只有账本 owner 可以永久删除'
+      return t('trash.errForbidden')
     case 'txn_purge_not_deleted':
-      return '这笔交易已不在回收站，请刷新后重试'
+      return t('trash.errNotDeleted')
     case 'txn_purge_not_allowed':
-      return '系统生成的交易（期初 / 校准 / 导入批次）不能永久删除'
+      return t('trash.errNotAllowed')
     case 'txn_purge_confirm_required':
-      return '请重新确认后再试'
+      return t('trash.errConfirmRequired')
     case 'txn_not_found':
-      return '交易不存在（可能已被删除）'
+      return t('trash.errNotFound')
     default:
       return err.message
   }
@@ -142,7 +149,7 @@ async function load(): Promise<void> {
     summary.value = res.purge_summary ?? { deletable: 0, system_kept: 0, paired: 0 }
     auditLog.value = Array.isArray(res.purge_log) ? res.purge_log : []
   } catch (err) {
-    loadError.value = err instanceof ApiError ? err.message : '回收站加载失败'
+    loadError.value = err instanceof ApiError ? err.message : t('trash.errLoad')
   } finally {
     loading.value = false
   }
@@ -157,11 +164,14 @@ async function restore(item: TrashItemView): Promise<void> {
   notice.value = ''
   try {
     await transactionApi.restore(item.uuid)
-    notice.value = `已恢复「${item.description}」`
+    notice.value = t('trash.noticeRestored', { name: item.description })
     markDirty('local-write')
     await load()
   } catch (err) {
-    notice.value = err instanceof ApiError ? `恢复失败：${err.message}` : '恢复失败，请稍后重试'
+    notice.value =
+      err instanceof ApiError
+        ? t('trash.errRestoreWithMessage', { message: err.message })
+        : t('trash.errRestore')
   } finally {
     busyUuid.value = null
     busy.value = false
@@ -225,8 +235,8 @@ async function confirmPurgeRow(): Promise<void> {
     const res = await transactionApi.purge(item.uuid, PURGE_CONFIRM_WORD)
     notice.value =
       res.already_purged === true
-        ? '这笔交易已被永久删除'
-        : `已永久删除 ${res.count} 笔`
+        ? t('trash.noticeAlreadyPurged')
+        : t('trash.noticePurgedCount', { n: String(res.count) })
     sheet.value = 'none'
     activeItem.value = null
     markDirty('local-write')
@@ -253,8 +263,8 @@ async function confirmPurgeAll(): Promise<void> {
     const kept = summary.value.system_kept
     notice.value =
       kept > 0
-        ? `已永久删除 ${res.count} 笔，另有 ${kept} 笔系统交易已保留`
-        : `已永久删除 ${res.count} 笔`
+        ? t('trash.noticePurgedWithKept', { n: String(res.count), kept: String(kept) })
+        : t('trash.noticePurgedCount', { n: String(res.count) })
     sheet.value = 'none'
     purgeAllInput.value = ''
     markDirty('local-write')
@@ -286,26 +296,26 @@ onMounted(() => {
 <template>
   <section class="trash">
     <header class="trash__hero fb-hero">
-      <span class="trash__label">回收站 · 已删除 {{ items.length }} 笔</span>
+      <span class="trash__label">{{ t('trash.heroLabel', { n: String(items.length) }) }}</span>
     </header>
 
     <div v-if="loadError" class="fb-card trash__state trash__state--error">
       <p>{{ loadError }}</p>
-      <button class="fb-btn-ghost" type="button" @click="load">重新加载</button>
+      <button class="fb-btn-ghost" type="button" @click="load">{{ t('trash.retry') }}</button>
     </div>
-    <div v-else-if="loading" class="fb-card trash__state">正在加载回收站…</div>
+    <div v-else-if="loading" class="fb-card trash__state">{{ t('trash.loading') }}</div>
 
     <div v-else class="fb-card trash__card">
       <p v-if="notice" class="trash__notice" role="status">{{ notice }}</p>
-      <p v-if="sorted.length === 0" class="trash__empty">回收站是空的。</p>
+      <p v-if="sorted.length === 0" class="trash__empty">{{ t('trash.empty') }}</p>
       <ul v-else class="trash__list">
         <li v-for="item in sorted" :key="item.uuid" class="trash__row">
           <span class="trash__info">
             <span class="trash__desc">{{ item.description }}</span>
-            <span class="trash__meta">{{ item.date }} · 删除于 {{ item.deleted_at }} · {{ item.created_by_name }}</span>
+            <span class="trash__meta">{{ t('trash.rowMeta', { date: item.date, deletedAt: item.deleted_at, member: item.created_by_name }) }}</span>
             <span class="trash__meta trash__postings">{{ sumPostings(item) }}</span>
             <!-- 系统交易没有永久删除入口，但必须说明「为什么没有」。 -->
-            <span v-if="item.is_system === true" class="trash__sys">系统交易 · 不可永久删除</span>
+            <span v-if="item.is_system === true" class="trash__sys">{{ t('trash.systemKeptRow') }}</span>
           </span>
           <!-- 0.6.0 S6 AC-5.8：恢复按钮按服务端 can_restore 显隐（viewer 仍可查看回收站）。 -->
           <button
@@ -314,14 +324,14 @@ onMounted(() => {
             class="fb-btn-primary trash__restore"
             :disabled="busy"
             @click="restore(item)"
-          >{{ busyUuid === item.uuid ? '恢复中…' : '恢复' }}</button>
-          <span v-else class="trash__norestore">只读成员不能恢复</span>
+          >{{ busyUuid === item.uuid ? t('trash.restoring') : t('trash.restore') }}</button>
+          <span v-else class="trash__norestore">{{ t('trash.norestore') }}</span>
           <!-- B7：永久删除入口（owner-only，服务端逐条判定）。 -->
           <button
             v-if="item.can_purge === true"
             type="button"
             class="fb-btn-ghost trash__more"
-            aria-label="更多操作"
+            :aria-label="t('trash.moreActions')"
             :disabled="busy"
             @click="openMenu(item)"
           >⋯</button>
@@ -336,20 +346,20 @@ onMounted(() => {
           class="fb-btn-ghost trash__purge-all"
           :disabled="!canPurgeAll"
           @click="openPurgeAll"
-        >清空回收站</button>
+        >{{ t('trash.purgeAll') }}</button>
         <span v-if="summary.deletable > 0" class="trash__meta">
-          可永久删除 {{ summary.deletable }} 笔
+          {{ t('trash.deletableCount', { n: String(summary.deletable) }) }}
         </span>
       </div>
 
       <!-- 本机审计（不参与同步）：全体成员可见，含 viewer。 -->
       <section v-if="auditLog.length > 0" class="trash__audit">
-        <h2 class="trash__audit-title">永久删除记录</h2>
+        <h2 class="trash__audit-title">{{ t('trash.auditTitle') }}</h2>
         <ul class="trash__audit-list">
           <li v-for="row in auditLog" :key="`${row.purged_at}-${row.uuid}`" class="trash__audit-row">
             <span class="trash__audit-desc">{{ row.description }}</span>
             <span class="trash__meta">
-              {{ row.purged_at }} · {{ row.actor_name || '未知成员' }} · {{ row.amount_note }}
+              {{ t('trash.auditMeta', { time: row.purged_at, actor: row.actor_name || t('trash.unknownActor'), amount: row.amount_note }) }}
             </span>
           </li>
         </ul>
@@ -359,50 +369,50 @@ onMounted(() => {
     <SelectSheet
       :open="sheet !== 'none'"
       :title="sheetTitle"
-      dialog-label="回收站操作"
+      :dialog-label="t('trash.dialogLabel')"
       @close="closeSheet"
     >
       <!-- 一级：行内菜单 -->
       <div v-if="sheet === 'menu'" class="trash__sheet-rows">
         <p class="trash__sheet-desc">「{{ activeItem?.description }}」</p>
         <button type="button" class="trash__sheet-row trash__sheet-row--danger" @click="openRowConfirm">
-          永久删除
+          {{ t('trash.menuPurge') }}
         </button>
       </div>
 
       <!-- 二级：单笔永久删除确认 -->
       <div v-else-if="sheet === 'row-confirm'" class="trash__sheet-rows">
         <p class="trash__sheet-desc">
-          「{{ activeItem?.description }}」将被永久删除，<strong>无法恢复</strong>。
+          {{ t('trash.rowConfirmPrefix', { name: activeItem?.description || '' }) }}<strong>{{ t('trash.irreversible') }}</strong>{{ t('trash.rowConfirmSuffix') }}
         </p>
         <p v-if="activeItem?.pair_uuid" class="trash__sheet-warn">
-          将同时删除冲正配对交易（这笔交易被修改过，只删一半会让账本不再平衡）。
+          {{ t('trash.pairWarning') }}
         </p>
         <button
           type="button"
           class="trash__sheet-row trash__sheet-row--danger"
           :disabled="busy"
           @click="confirmPurgeRow"
-        >{{ busy ? '删除中…' : '确认永久删除' }}</button>
+        >{{ busy ? t('trash.deleting') : t('trash.confirmPurgeRow') }}</button>
         <button type="button" class="trash__sheet-row" :disabled="busy" @click="closeSheet">
-          取消
+          {{ t('trash.cancel') }}
         </button>
       </div>
 
       <!-- 二级：清空回收站（手输「清空」解锁） -->
       <div v-else-if="sheet === 'purge-all'" class="trash__sheet-rows">
         <p class="trash__sheet-desc">
-          <strong>无法恢复</strong>。请先确认下面三行数字：
+          <strong>{{ t('trash.irreversible') }}</strong>{{ t('trash.purgeAllIntro') }}
         </p>
         <ul class="trash__sheet-stats">
-          <li>可永久删除 {{ summary.deletable }} 笔</li>
-          <li>{{ summary.system_kept }} 笔将保留（系统交易及其冲正配对）</li>
+          <li>{{ t('trash.deletableCount', { n: String(summary.deletable) }) }}</li>
+          <li>{{ t('trash.systemKept', { n: String(summary.system_kept) }) }}</li>
           <li v-if="summary.paired > 0">
-            其中 {{ summary.paired }} 笔为冲正配对（不在回收站），将一并删除
+            {{ t('trash.pairedNote', { n: String(summary.paired) }) }}
           </li>
         </ul>
         <label class="trash__sheet-label" for="trash-purge-confirm">
-          请输入「{{ PURGE_ALL_PHRASE }}」以确认
+          {{ t('trash.typeToConfirm', { word: purgeAllPhrase }) }}
         </label>
         <input
           id="trash-purge-confirm"
@@ -417,9 +427,9 @@ onMounted(() => {
           class="trash__sheet-row trash__sheet-row--danger"
           :disabled="!purgeAllUnlocked || busy"
           @click="confirmPurgeAll"
-        >{{ busy ? '清空中…' : '确认清空' }}</button>
+        >{{ busy ? t('trash.purging') : t('trash.confirmPurgeAll') }}</button>
         <button type="button" class="trash__sheet-row" :disabled="busy" @click="closeSheet">
-          取消
+          {{ t('trash.cancel') }}
         </button>
       </div>
     </SelectSheet>

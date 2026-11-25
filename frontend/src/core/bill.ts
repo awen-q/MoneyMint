@@ -36,6 +36,8 @@
  *
  * 纯逻辑约束：零 Vue / 零 store / 零 DOM，只依赖 `core/Money` 与 `api/types` 的类型。
  */
+import { t } from '@/i18n'
+
 import { Money, formatCompact } from './Money'
 import type { TransactionView } from '../api/types'
 
@@ -323,14 +325,19 @@ export function billCells(
     } else if (kind === 'income-only') {
       text = incomeText(point.income)
     }
-    const dateLabel = `${monthLabel}月${point.day}日`
-    let ariaLabel = `${dateLabel}，无收支`
+    // 读屏文案同样走字典（访问时求值）：日期图案 + 该日四态。
+    const dateLabel = t('bills.dayPlain', { month: String(monthLabel), day: String(point.day) })
+    let ariaLabel = t('bills.ariaNoAmount', { date: dateLabel })
     if (kind === 'both') {
-      ariaLabel = `${dateLabel}，收入 ${point.income}，支出 ${point.expense}`
+      ariaLabel = t('bills.ariaBoth', {
+        date: dateLabel,
+        income: point.income,
+        expense: point.expense,
+      })
     } else if (kind === 'income-only') {
-      ariaLabel = `${dateLabel}，收入 ${point.income}`
+      ariaLabel = t('bills.ariaIncome', { date: dateLabel, income: point.income })
     } else if (kind === 'expense-only') {
-      ariaLabel = `${dateLabel}，支出 ${point.expense}`
+      ariaLabel = t('bills.ariaExpense', { date: dateLabel, expense: point.expense })
     }
     const cell: BillCell = {
       day: point.day,

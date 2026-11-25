@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { averagePerDay, dailyRows, statsTotals, tagShares, txnCount, UNTAGGED_LABEL } from '@/core/stats'
+import { averagePerDay, dailyRows, statsTotals, tagShares, txnCount, untaggedLabel } from '@/core/stats'
 import type { ReportTxn } from '@/core/reports'
 import type { SummaryAccount } from '@/core/record'
 
@@ -194,7 +194,7 @@ describe('tagShares：必须存在「未打标签」桶', () => {
   it('未打标签是一个正常桶，不是脏数据', () => {
     const shares = tagShares(TXNS, ACCOUNTS, 'CNY')
     const untagged = shares.find((share) => share.isUntagged)
-    expect(untagged === undefined ? '' : untagged.tag).toBe(UNTAGGED_LABEL)
+    expect(untagged === undefined ? '' : untagged.tag).toBe(untaggedLabel())
     expect(untagged === undefined ? '' : untagged.expense).toBe('30.00')
     expect(untagged === undefined ? '' : untagged.count).toBe(1)
   })

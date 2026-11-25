@@ -12,6 +12,7 @@
  * 3. 金额走 `MoneyText`（隐私遮挡与币种符号都在那一层）。
  */
 import type { AssetSeriesMonth } from '@/core/assetSeries'
+import { t } from '@/i18n'
 import MoneyText from '@/components/MoneyText.vue'
 
 withDefaults(
@@ -50,16 +51,16 @@ function deltaTone(delta: string | null): 'pos' | 'neg' | 'none' {
 <template>
   <section class="mo">
     <header class="mo__head">
-      <span class="mo__title">月度资产变化</span>
-      <span class="mo__note">月末总资产 · 环比变化额 · 环比变化占比</span>
+      <span class="mo__title">{{ t('assets.monthChangeTitle') }}</span>
+      <span class="mo__note">{{ t('assets.monthChangeNote') }}</span>
     </header>
 
-    <div class="mo__table" role="table" aria-label="月度资产变化">
+    <div class="mo__table" role="table" :aria-label="t('assets.monthChangeAria')">
       <div class="mo__row mo__row--head" role="row">
-        <span role="columnheader">月份</span>
-        <span role="columnheader" class="mo__r">月末总资产</span>
-        <span role="columnheader" class="mo__r">较上月</span>
-        <span role="columnheader" class="mo__r">变化占比</span>
+        <span role="columnheader">{{ t('assets.monthCol') }}</span>
+        <span role="columnheader" class="mo__r">{{ t('assets.monthEndAssets') }}</span>
+        <span role="columnheader" class="mo__r">{{ t('assets.vsPrevMonth') }}</span>
+        <span role="columnheader" class="mo__r">{{ t('assets.changeRatio') }}</span>
       </div>
 
       <div v-for="month in months" :key="month.month" class="mo__row" role="row">
@@ -76,7 +77,7 @@ function deltaTone(delta: string | null): 'pos' | 'neg' | 'none' {
             size="sm"
             signed
           />
-          <span v-else class="mo__dash" aria-label="无上月数据">—</span>
+          <span v-else class="mo__dash" :aria-label="t('assets.noPrevMonth')">—</span>
         </span>
         <span class="mo__r mo__ratio" :class="`mo__delta--${deltaTone(month.deltaAssets)}`">
           {{ ratioText(month.deltaRatio) }}

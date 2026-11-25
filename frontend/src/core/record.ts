@@ -14,6 +14,7 @@
  * - 报表（批 3）将带币种切换器，聚合一律在选定币种内进行。
  */
 import { Money } from './Money'
+import { t } from '../i18n'
 // 仅类型导入：编译后完全擦除，core 层零运行时依赖 api / Vue / store。
 // api/types.ts 的 TxnFlag 是唯一 flag 类型源，此处不重复定义。
 import type { TxnFlag } from '../api/types'
@@ -201,7 +202,7 @@ function isAmountOperator(ch: string): ch is AmountOperator {
 export function evaluateAmountExpression(expression: string): Money {
   const expr = expression.trim()
   if (expr === '' || !/^[0-9.]+(?:[+\-*/][0-9.]+)*$/.test(expr)) {
-    throw new RangeError('金额只能包含数字、小数点与加减乘除号')
+    throw new RangeError(t('core.record.errInvalidChars'))
   }
 
   const terms: AmountTerm[] = []
@@ -211,7 +212,7 @@ export function evaluateAmountExpression(expression: string): Money {
     const ch = expr.charAt(i)
     if (isAmountOperator(ch)) {
       if (buffer === '') {
-        throw new RangeError('金额表达式的运算符位置不正确')
+        throw new RangeError(t('core.record.errOperatorPosition'))
       }
       terms.push({ operator, value: normalizeNumberToken(buffer) })
       buffer = ''
@@ -221,7 +222,7 @@ export function evaluateAmountExpression(expression: string): Money {
     }
   }
   if (buffer === '') {
-    throw new RangeError('金额表达式不能以运算符结尾')
+    throw new RangeError(t('core.record.errTrailingOperator'))
   }
   terms.push({ operator, value: normalizeNumberToken(buffer) })
 
@@ -326,7 +327,7 @@ export function buildPostings(
 ): PostingDraft[] {
   const amount = evaluateAmountExpression(form.amountExpression)
   if (amount.isDisplayZero()) {
-    throw new RangeError('请输入大于 0 的金额')
+    throw new RangeError(t('core.record.errAmountPositive'))
   }
 
   const byId = new Map<number, SummaryAccount>()
@@ -335,11 +336,11 @@ export function buildPostings(
   }
   const resolve = (id: number | null, label: string): SummaryAccount => {
     if (id === null) {
-      throw new RangeError(`请选择${label}`)
+      throw new RangeError(t('core.record.errSelectAccount', { label }))
     }
     const found = byId.get(id)
     if (found === undefined) {
-      throw new RangeError(`${label}不在当前账本账户列表中`)
+      throw new RangeError(t('core.record.errAccountNotInLedger', { label }))
     }
     return found
   }
@@ -349,15 +350,15 @@ export function buildPostings(
   const postings: PostingDraft[] = []
 
   if (form.kind === 'transfer') {
-    const from = resolve(form.transferFromAccountId, '转出账户')
-    const to = resolve(form.transferToAccountId, '转入账户')
+    const from = resolve(form.transferFromAccountId, t('core.record.labelTransferOut'))
+    const to = resolve(form.transferToAccountId, t('core.record.labelTransferIn'))
     if (from.id === to.id) {
-      throw new RangeError('转出与转入账户不能相同')
+      throw new RangeError(t('core.record.errSameTransferAccount'))
     }
     const fromCommodity = resolveCommodity(from, defaultCommodity)
     const toCommodity = resolveCommodity(to, defaultCommodity)
     if (fromCommodity !== toCommodity) {
-      throw new RangeError('转出与转入账户币种需一致')
+      throw new RangeError(t('core.record.errTransferCommodity'))
     }
     postings.push({
       accountId: from.id,
@@ -374,13 +375,15 @@ export function buildPostings(
   } else {
     const category = resolve(
       form.categoryAccountId,
-      form.kind === 'income' ? '收入分类' : '支出分类',
+      form.kind === 'income'
+        ? t('core.record.labelIncomeCategory')
+        : t('core.record.labelExpenseCategory'),
     )
-    const fund = resolve(form.fundAccountId, '资金账户')
+    const fund = resolve(form.fundAccountId, t('core.record.labelFundAccount'))
     const categoryCommodity = resolveCommodity(category, defaultCommodity)
     const fundCommodity = resolveCommodity(fund, defaultCommodity)
     if (categoryCommodity !== fundCommodity) {
-      throw new RangeError('分类与资金账户币种需一致')
+      throw new RangeError(t('core.record.errCategoryCommodity'))
     }
     const isExpense = form.kind === 'expense'
     postings.push({
@@ -398,7 +401,7 @@ export function buildPostings(
   }
 
   if (!postingsBalanced(postings)) {
-    throw new RangeError('分录未配平，请检查金额')
+    throw new RangeError(t('core.record.errUnbalanced'))
   }
   return postings
 }

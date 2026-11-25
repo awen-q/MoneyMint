@@ -19,6 +19,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ledgerManageApi, transactionApi } from '@/api/client'
 import { ApiError, codeMessage } from '@/api/errors'
 import type { LedgerView } from '@/api/types'
+import { roleLabel } from '@/core/batch3'
 import { todayString } from '@/core/record'
 import { t } from '@/i18n'
 import { useSessionStore } from '@/stores/session'
@@ -80,20 +81,6 @@ const isOwner = computed(() => currentLedger.value !== null && currentLedger.val
 /** 兼容旧响应：统计字段 0.6.0 才下发，缺失按 0 处理，不用 `??` / `.at()` 等新 API。 */
 function statOf(value: number | undefined): number {
   return value === undefined ? 0 : value
-}
-
-/** 角色中文标签（值与原 core/batch3.roleLabel 逐字节一致，阶段 2 只迁视图）。 */
-function roleText(role: LedgerView['role'] | ''): string {
-  if (role === 'owner') {
-    return t('common.roleOwner')
-  }
-  if (role === 'editor') {
-    return t('common.roleEditor')
-  }
-  if (role === 'viewer') {
-    return t('common.roleViewer')
-  }
-  return t('common.roleNone')
 }
 
 /** 稳定错误码优先走集中映射，未知码回退后端可读文案，绝不展示 HTTP 原文。 */
@@ -338,7 +325,7 @@ onMounted(() => { void reload() })
           {{ ledger.name }}
           <small>
             {{ t('ledgers.rowMeta', {
-              role: roleText(ledger.role),
+              role: roleLabel(ledger.role),
               date: ledger.opening_date,
               accounts: String(statOf(ledger.account_count)),
               txns: String(statOf(ledger.transaction_count)),

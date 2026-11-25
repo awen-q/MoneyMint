@@ -10,6 +10,7 @@
  * `reports.incomeExpenseTotals`，保证与报表页、账单页的符号口径只有一份实现。
  */
 import { Money } from './Money'
+import { t } from '../i18n'
 import { elapsedDays } from './calendar'
 import { incomeExpenseTotals, type ReportTxn } from './reports'
 import type { SummaryAccount } from './record'
@@ -220,8 +221,15 @@ export interface TagShare {
   isUntagged: boolean
 }
 
-/** 「未打标签」桶的显示名（唯一字符串源，组件不得自造）。 */
-export const UNTAGGED_LABEL = '未打标签'
+/**
+ * 「未打标签」桶的显示名（唯一字符串源，组件不得自造）。
+ *
+ * 刻意是**函数**而非导出常量：常量在模块求值时就把当前语言固化下来，
+ * 切语言后标签页仍显示旧语言。所有消费方一律调用 `untaggedLabel()`。
+ */
+export function untaggedLabel(): string {
+  return t('core.stats.untagged')
+}
 
 /**
  * 标签聚合（T47 的数据源）。
@@ -267,7 +275,7 @@ export function tagShares(
       continue
     }
     if (tags.length === 0) {
-      const bucket = ensure(UNTAGGED_LABEL)
+      const bucket = ensure(untaggedLabel())
       bucket.expense = bucket.expense.plus(moneyOf(totals.expense))
       bucket.income = bucket.income.plus(moneyOf(totals.income))
       bucket.txns.push(txn.id)
@@ -292,7 +300,7 @@ export function tagShares(
       income: bucket.income.toString(),
       balance: bucket.income.minus(bucket.expense).toString(),
       count: bucket.txns.length,
-      isUntagged: tag === UNTAGGED_LABEL,
+      isUntagged: tag === untaggedLabel(),
     })
   }
   out.sort((left, right) => {

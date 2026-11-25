@@ -12,6 +12,7 @@
  *    它们在服务端是自由文本，没有独立字典接口。
  */
 import type { TransactionFilters } from '@/core/filters'
+import { t } from '@/i18n'
 
 /** 账户下拉的最小结构（与 `AccountView` 结构兼容，便于直接传 store 数据）。 */
 export interface FilterAccountOption {
@@ -105,51 +106,51 @@ function onMember(event: Event): void {
 <template>
   <div class="search-filters">
     <label class="search-filters__field">
-      <span class="search-filters__label">从</span>
+      <span class="search-filters__label">{{ t('search.filterFrom') }}</span>
       <input
         class="search-filters__control"
         type="date"
         :value="filters.from"
-        aria-label="起始日期"
+        :aria-label="t('search.dateFromAria')"
         @change="onDate('from', $event)"
       />
     </label>
 
     <label class="search-filters__field">
-      <span class="search-filters__label">到</span>
+      <span class="search-filters__label">{{ t('search.filterTo') }}</span>
       <input
         class="search-filters__control"
         type="date"
         :value="filters.to"
-        aria-label="截止日期"
+        :aria-label="t('search.dateToAria')"
         @change="onDate('to', $event)"
       />
     </label>
 
     <label class="search-filters__field">
-      <span class="search-filters__label">类型</span>
+      <span class="search-filters__label">{{ t('search.filterKind') }}</span>
       <select
         class="search-filters__control"
         :value="filters.kind"
-        aria-label="类型筛选"
+        :aria-label="t('search.kindAria')"
         @change="onKind"
       >
-        <option value="all">全部类型</option>
-        <option value="expense">支出</option>
-        <option value="income">收入</option>
-        <option value="transfer">转账</option>
+        <option value="all">{{ t('search.kindAll') }}</option>
+        <option value="expense">{{ t('common.expense') }}</option>
+        <option value="income">{{ t('common.income') }}</option>
+        <option value="transfer">{{ t('core.txnRow.kindTransfer') }}</option>
       </select>
     </label>
 
     <label class="search-filters__field">
-      <span class="search-filters__label">账户</span>
+      <span class="search-filters__label">{{ t('search.filterAccount') }}</span>
       <select
         class="search-filters__control"
         :value="filters.account === null ? '' : String(filters.account)"
-        aria-label="账户筛选"
+        :aria-label="t('search.accountAria')"
         @change="onAccount"
       >
-        <option value="">全部账户</option>
+        <option value="">{{ t('search.accountAll') }}</option>
         <option v-for="account in fundAccounts()" :key="account.id" :value="String(account.id)">
           {{ labelOf(account) }}
         </option>
@@ -157,14 +158,14 @@ function onMember(event: Event): void {
     </label>
 
     <label class="search-filters__field">
-      <span class="search-filters__label">分类</span>
+      <span class="search-filters__label">{{ t('search.filterCategory') }}</span>
       <select
         class="search-filters__control"
         :value="filters.category === null ? '' : String(filters.category)"
-        aria-label="分类筛选"
+        :aria-label="t('search.categoryAria')"
         @change="onCategory"
       >
-        <option value="">全部分类</option>
+        <option value="">{{ t('search.categoryAll') }}</option>
         <option v-for="account in categoryAccounts()" :key="account.id" :value="String(account.id)">
           {{ labelOf(account) }}
         </option>
@@ -172,27 +173,27 @@ function onMember(event: Event): void {
     </label>
 
     <label class="search-filters__field">
-      <span class="search-filters__label">标签</span>
+      <span class="search-filters__label">{{ t('search.filterTag') }}</span>
       <select
         class="search-filters__control"
         :value="filters.tag"
-        aria-label="标签筛选"
+        :aria-label="t('search.tagAria')"
         @change="onTag"
       >
-        <option value="">全部标签</option>
+        <option value="">{{ t('search.tagAll') }}</option>
         <option v-for="tag in tags" :key="tag" :value="tag">{{ tag }}</option>
       </select>
     </label>
 
     <label class="search-filters__field">
-      <span class="search-filters__label">成员</span>
+      <span class="search-filters__label">{{ t('search.filterMember') }}</span>
       <select
         class="search-filters__control"
         :value="filters.member"
-        aria-label="成员筛选"
+        :aria-label="t('search.memberAria')"
         @change="onMember"
       >
-        <option value="">全部成员</option>
+        <option value="">{{ t('search.memberAll') }}</option>
         <option v-for="member in members" :key="member" :value="member">{{ member }}</option>
       </select>
     </label>

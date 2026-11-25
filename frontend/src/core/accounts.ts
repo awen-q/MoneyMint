@@ -5,6 +5,7 @@
  * 后端余额本身带符号（负债为负），禁止 abs / 按类型乘系数。
  */
 import { Money } from './Money'
+import { t } from '../i18n'
 
 // SummaryAccount 由 core/record 定义（QA 契约测试从本模块 import 该类型）。
 export type { SummaryAccount } from './record'
@@ -71,12 +72,25 @@ export interface AccountGroup<T extends SummaryAccount = SummaryAccount> {
   subtotal: Record<string, string>
 }
 
-const GROUP_LABELS: { [type: string]: string } = {
-  Assets: '资产',
-  Liabilities: '负债',
-  Income: '收入分类',
-  Expenses: '支出分类',
-  Equity: '权益',
+/**
+ * 账户类型分组标题（访问时求值，禁止提到模块顶层做快照——
+ * 模块顶层常量会让切语言后标题停在旧语言）。
+ */
+function groupLabelOf(type: string): string {
+  switch (type) {
+    case 'Assets':
+      return t('core.accounts.group.Assets')
+    case 'Liabilities':
+      return t('core.accounts.group.Liabilities')
+    case 'Income':
+      return t('core.accounts.group.Income')
+    case 'Expenses':
+      return t('core.accounts.group.Expenses')
+    case 'Equity':
+      return t('core.accounts.group.Equity')
+    default:
+      return type
+  }
 }
 
 interface MoneyBucket {
@@ -126,7 +140,7 @@ export function groupAccountsByType<T extends SummaryAccount>(
     const bucket = buckets[type]
     groups.push({
       type,
-      label: GROUP_LABELS[type] === undefined ? type : GROUP_LABELS[type],
+      label: groupLabelOf(type),
       items: bucket.items,
       subtotal: bucketToStrings(bucket.money),
     })
