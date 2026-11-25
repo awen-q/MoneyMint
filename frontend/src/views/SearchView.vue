@@ -358,10 +358,6 @@ async function exportCsv(): Promise<void> {
 
     <header class="search__hero">
       <h1 class="search__title">搜索账单</h1>
-      <!-- 稿 906 的口径：**一个维度可以有两个控件**（日期范围 = 从 + 到），
-           所以「控件 7 个、维度 6 个」并不矛盾。这里按维度数说话（六维），
-           与后面列出的六项一一对应；不要写成「七维」却只列六项。 -->
-      <p class="search__sub">关键词 + 六维筛选：日期范围 / 类型 / 账户 / 分类 / 标签 / 成员</p>
     </header>
 
     <!-- 搜索卡在四态之外：空态不能让人失去出口（改到 StateCard 里，用例会红） -->
@@ -478,13 +474,6 @@ async function exportCsv(): Promise<void> {
   color: var(--fb-ink-deep);
   font-size: 20px;
   font-weight: 800;
-}
-
-.search__sub {
-  margin: 4px 0 0;
-  color: var(--fb-sub);
-  font-size: 12px;
-  line-height: 1.5;
 }
 
 .search__card {

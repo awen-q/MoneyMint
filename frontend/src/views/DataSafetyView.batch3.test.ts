@@ -79,6 +79,19 @@ function exportButton(wrapper: ReturnType<typeof mount>) {
   return wrapper.findAll('.ds__card')[0].findAll('button')[0]
 }
 
+describe('数据安全页：标题区', () => {
+  it('标题下纯说明副标题已删除，导出/导入能力本身仍在', async () => {
+    const wrapper = mount(DataSafetyView)
+    await flushPromises()
+
+    expect(wrapper.find('.ds__title').text()).toBe('数据安全')
+    expect(wrapper.find('.ds__sub').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('备份 · 导出 · 导入')
+    expect(wrapper.text()).toContain('导出 Beancount')
+    expect(wrapper.text()).toContain('导入 Beancount')
+  })
+})
+
 describe('批3-H：导出前不平阻断（§14.5 #3 / AC-31）', () => {
   it('恒等式不平时阻断导出、列出差额，且不调用导出端点', async () => {
     h.check.mockResolvedValue({ balanced: false, diffs: [{ commodity: 'CNY', sum: '0.01' }] })

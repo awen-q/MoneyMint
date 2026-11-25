@@ -115,6 +115,25 @@ beforeEach(() => {
   data.loaded = true
 })
 
+describe('SearchView：标题区', () => {
+  it('标题下纯说明副标题已删除；动态命中汇总仍是动态数据，原样保留', async () => {
+    h.listPage.mockResolvedValue(
+      pageWithSummary([1, 2], 57, [{ commodity: 'CNY', income: '5000.00', expense: '3200.00' }]),
+    )
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.find('h1.search__title').text()).toBe('搜索账单')
+    expect(wrapper.find('.search__sub').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('关键词 + 六维筛选')
+    // 六维筛选控件本身还在（删的是小标题，不是功能）
+    expect(wrapper.findComponent(SearchFilters).exists()).toBe(true)
+    // 动态汇总不能跟着副标题一起被误删
+    expect(wrapper.find('.search__summary').exists()).toBe(true)
+    expect(wrapper.find('.search__summary-total').text()).toBe('共 57 笔')
+  })
+})
+
 describe('SearchView：首屏与分页', () => {
   it('首屏请求带 limit: 20 且不带 cursor；「共 N 笔」取 total 不是行数', async () => {
     h.listPage.mockResolvedValue(

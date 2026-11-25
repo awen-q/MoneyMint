@@ -187,7 +187,6 @@ onMounted(() => { void loadBackups() })
   <section class="ds">
     <header class="ds__hero fb-hero">
       <span class="ds__title">数据安全</span>
-      <span class="ds__sub">备份 · 导出 · 导入</span>
     </header>
 
     <p v-if="notice" class="ds__notice ds__notice--ok" role="status">{{ notice }}</p>
@@ -299,7 +298,6 @@ onMounted(() => { void loadBackups() })
 .ds { padding-bottom: 20px; }
 .ds__hero { padding: calc(20px + env(safe-area-inset-top, 0px)) 20px 20px; border-radius: 0 0 24px 24px; }
 .ds__title { display: block; font-size: 16px; font-weight: 700; }
-.ds__sub { display: block; margin-top: 4px; font-size: 12px; color: var(--fb-on-hero-muted); }
 .ds__notice { margin: 10px 0 0; padding: 8px 12px; border-radius: var(--fb-radius-input); font-size: 12px; }
 .ds__notice--ok { background: var(--fb-green-soft); color: var(--fb-green-ink); }
 .ds__notice--err { background: var(--fb-danger-soft); color: var(--fb-danger-ink); }
