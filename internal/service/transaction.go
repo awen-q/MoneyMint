@@ -30,12 +30,15 @@ type PostingView struct {
 //
 // 0.6.0 S5/S6 additive：reversed_by / reversal_of / can_edit 为冲正与编辑所需，
 // 仅在线列表透出（禁止进 sync/pull loadEntity，AC-5.2）；omitempty 缺省即省略。
+// tags 同属列表透出字段：前端标签筛选与交易详情的原生语法片段依赖它；
+// 无标签交易按 omitempty 省略，前端 `tags?` 保持 optional。
 type TransactionView struct {
 	ID            int64         `json:"id"`
 	UUID          string        `json:"uuid"` // 批 2：列表透出 uuid（前端软删依赖）
 	Date          string        `json:"date"`
 	Flag          string        `json:"flag"`
 	Description   string        `json:"description"`
+	Tags          []string      `json:"tags,omitempty"`
 	CreatedByName string        `json:"created_by_name"` // 记账人显示名；无创建者时为空串
 	Postings      []PostingView `json:"postings"`
 	ReversedBy    string        `json:"reversed_by,omitempty"` // 非空 = 已被冲正（失效原交易）
@@ -85,6 +88,7 @@ func txnListView(t domain.Transaction, role string, userID int64) TransactionVie
 		Date:          t.Date,
 		Flag:          t.Flag,
 		Description:   t.Description,
+		Tags:          t.Tags,
 		CreatedByName: t.CreatedByName,
 		Postings:      make([]PostingView, 0, len(t.Postings)),
 		ReversedBy:    t.ReversedBy,

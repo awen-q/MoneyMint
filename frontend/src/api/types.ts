@@ -477,7 +477,7 @@ export interface TransactionView {
   flag: TxnFlag
   description: string
   created_by_name: string
-  /** 标签（迁移 005 起后端已持久化；报表 #tag 下钻用，旧响应可能缺失）。 */
+  /** 标签（迁移 005 持久化；列表响应已透出，无标签交易按 omitempty 缺省；报表 #tag 下钻与详情原生片段依赖）。 */
   tags?: string[]
   postings: PostingView[]
   /** 非空 = 已被冲正（失效原交易；0.6.0 S6，徽章数据源）。 */

@@ -498,6 +498,77 @@ func TestTxnListKeywordFiveRoutes(t *testing.T) {
 	}
 }
 
+// TestTxnListTagsExposedInFullResponse 覆盖 HTTP 真实链路的 tags 透出契约：
+// 带标签交易必须在 GET /api/transactions 的 transactions 数组里带 tags，
+// 否则前端 P0-1 原生语法片段的 tags 行会静默变空（mock 测试发现不了）。
+func TestTxnListTagsExposedInFullResponse(t *testing.T) {
+	e := newTxnListEnv(t)
+	cash := e.accountID(t, accCash)
+	food := e.accountID(t, accFood)
+
+	wantTags := []string{"早餐", "家庭"}
+	taggedID := e.txn(t, e.token, "2026-07-01", "带标签的早餐", wantTags,
+		postingEntry(cash, "-18.00"), postingEntry(food, "18.00"))
+
+	st, body := e.list(t, "")
+	if st != http.StatusOK {
+		t.Fatalf("GET /api/transactions 应 200，实际 %d: %v", st, body)
+	}
+	items, ok := body["transactions"].([]any)
+	if !ok {
+		t.Fatalf("transactions 不是数组: %#v", body["transactions"])
+	}
+
+	var found map[string]any
+	for i, item := range items {
+		m, ok := item.(map[string]any)
+		if !ok {
+			t.Fatalf("transactions[%d] 不是对象: %#v", i, item)
+		}
+		if txnQueryInt(t, m, "id") == taggedID {
+			found = m
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("全量列表未找到新记的交易 id=%d: %v", taggedID, idsFromBody(t, body))
+	}
+
+	raw, ok := found["tags"]
+	if !ok {
+		t.Fatalf("交易 id=%d 的列表项缺少 tags 字段（前端原生语法片段会静默变空）: %v", taggedID, found)
+	}
+	got, ok := raw.([]any)
+	if !ok {
+		t.Fatalf("交易 id=%d 的 tags 不是数组: %#v", taggedID, raw)
+	}
+	if len(got) != len(wantTags) {
+		t.Fatalf("交易 id=%d 的 tags 有 %d 项，期望 %d 项: %#v", taggedID, len(got), len(wantTags), got)
+	}
+	for i, want := range wantTags {
+		actual, ok := got[i].(string)
+		if !ok || actual != want {
+			t.Fatalf("交易 id=%d 的 tags[%d] = %#v，期望 %q", taggedID, i, got[i], want)
+		}
+	}
+
+	// 无标签交易仍按 omitempty 缺省，与前端 `tags?` optional 契约一致。
+	e.txn(t, e.token, "2026-07-02", "无标签交易", nil,
+		postingEntry(cash, "-2.00"), postingEntry(food, "2.00"))
+	st, body = e.list(t, "")
+	if st != http.StatusOK {
+		t.Fatalf("GET /api/transactions 应 200，实际 %d: %v", st, body)
+	}
+	for _, item := range body["transactions"].([]any) {
+		m := item.(map[string]any)
+		if txnQueryInt(t, m, "id") != taggedID {
+			if _, exists := m["tags"]; exists {
+				t.Fatalf("无标签交易不应带 tags 键（omitempty 契约）: %v", m)
+			}
+		}
+	}
+}
+
 // TestTxnListCursorInvalid 覆盖必测 6：非法 cursor → 400，不静默当第一页。
 //
 // 三个样本分别覆盖：非 base64、base64 但缺分隔符、base64 且分隔符在但 id 非数字。
