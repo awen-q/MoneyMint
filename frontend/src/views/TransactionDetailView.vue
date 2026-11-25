@@ -17,6 +17,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { accountApi, transactionApi } from '@/api/client'
 import { ApiError } from '@/api/errors'
 import type { AccountView, TransactionView } from '@/api/types'
+import { buildBeanSnippet } from '@/core/bean'
 import {
   displayEntryOf,
   displayKindOf,
@@ -133,6 +134,63 @@ const postingRows = computed<Array<{ account: string; commodity: string; amount:
     amount: posting.amount,
   }))
 })
+
+/**
+ * P0-1 原生语法片段：复用 `core/bean.ts` 的 `buildBeanSnippet`，
+ * 与后端导出的 .beancount 逐字对齐（标签走 `tags: "..."` 元数据行）。
+ *
+ * 只取 `TransactionView` 真实存在的字段（date / flag / description / tags / postings）。
+ * ^链接、成本批次 / FIFO、`@@` 兑换、金额表达式、附件在 transactions/postings
+ * 表中都没有字段 —— 不编造示例、不留空占位。期初 / 余额校准身份键同样未随
+ * 交易列表接口透出，故这里也不展示（不以描述文本反推语义）。
+ */
+const beanSnippet = computed<string>(() => {
+  const t = txn.value
+  if (t === null) {
+    return ''
+  }
+  return buildBeanSnippet({
+    date: t.date,
+    flag: t.flag === '!' ? '!' : '*',
+    description: t.description,
+    tags: Array.isArray(t.tags) ? t.tags : [],
+    postings: t.postings.map((posting) => ({
+      accountName: posting.account,
+      amount: posting.amount,
+      commodity: posting.commodity,
+    })),
+  })
+})
+
+interface BeanSemantic {
+  label: string
+  value: string
+}
+
+/** 片段的语义注脚：只列列表响应里确实有值的字段。 */
+const beanSemantics = computed<BeanSemantic[]>(() => {
+  const t = txn.value
+  if (t === null) {
+    return []
+  }
+  const out: BeanSemantic[] = []
+  if (t.flag === '!') {
+    out.push({ label: 'Flagged', value: '! 未完成（待核对）' })
+  }
+  if (t.postings.length > 2) {
+    out.push({ label: '分录拆分', value: `${t.postings.length} 条分录逐行列示` })
+  }
+  if ((t.reversal_of ?? '') !== '') {
+    out.push({ label: '冲正交易', value: `原交易 TXN ${shortCode(t.reversal_of ?? '')}` })
+  }
+  if ((t.reversed_by ?? '') !== '') {
+    out.push({ label: '已被冲正', value: `新交易 TXN ${shortCode(t.reversed_by ?? '')}` })
+  }
+  return out
+})
+
+/** 默认收起：详情层的高级视图，不干扰默认凭证视图。 */
+const beanOpen = ref(false)
 
 /** 票尾流水号：uuid 去连字符取前 8 位。 */
 function shortCode(uuid: string): string {
@@ -339,6 +397,26 @@ watch(
         />
       </div>
 
+      <!-- P0-1：默认收起的原生语法片段。列表 / 搜索页不渲染，默认视图保持干净。 -->
+      <section class="detail__bean" data-testid="bean-snippet">
+        <button
+          type="button"
+          class="detail__bean-toggle"
+          :aria-expanded="beanOpen"
+          @click="beanOpen = !beanOpen"
+        >{{ beanOpen ? '收起' : '展开' }}原生语法片段</button>
+        <div v-if="beanOpen" class="detail__bean-body">
+          <p class="detail__bean-note">与导出的 .beancount 逐字一致：标签写在 tags 元数据行。</p>
+          <pre class="detail__bean-code">{{ beanSnippet }}</pre>
+          <ul v-if="beanSemantics.length > 0" class="detail__bean-meta">
+            <li v-for="item in beanSemantics" :key="item.label">
+              <span>{{ item.label }}</span>
+              <span>{{ item.value }}</span>
+            </li>
+          </ul>
+        </div>
+      </section>
+
       <div class="detail__actions">
         <button type="button" class="detail__edit" :disabled="editDisabled" @click="onEdit">
           修改这笔交易
@@ -400,6 +478,71 @@ watch(
   display: flex;
   justify-content: center;
   padding: 12px 0 6px;
+}
+
+/* P0-1：原生语法片段（详情层高级视图，默认收起，不抢凭证视觉重心）。 */
+.detail__bean {
+  width: 100%;
+  max-width: 340px;
+  margin: 12px auto 0;
+}
+
+.detail__bean-toggle {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--fb-line);
+  border-radius: var(--fb-radius-input);
+  background: var(--fb-card);
+  color: var(--fb-blue);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.detail__bean-toggle:focus-visible {
+  outline: 2px solid var(--fb-blue);
+  outline-offset: 2px;
+}
+
+.detail__bean-body {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--fb-line);
+  border-radius: var(--fb-radius-card);
+  background: var(--fb-soft);
+}
+
+.detail__bean-note {
+  margin: 0 0 8px;
+  color: var(--fb-sub);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.detail__bean-code {
+  margin: 0;
+  overflow-x: auto;
+  color: var(--fb-ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.7;
+  white-space: pre;
+}
+
+.detail__bean-meta {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.detail__bean-meta li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 0;
+  color: var(--fb-sub);
+  font-size: 11px;
 }
 
 .detail__actions {

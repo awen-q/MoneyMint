@@ -35,6 +35,7 @@ const h = vi.hoisted(() => ({
   txnListPage: vi.fn(),
   me: vi.fn(),
   ledgerList: vi.fn(),
+  identityCheck: vi.fn(),
   login: vi.fn(),
   logout: vi.fn(),
   changePassword: vi.fn(),
@@ -47,6 +48,7 @@ vi.mock('@/api/client', () => ({
   transactionApi: { list: h.txnList, listPage: h.txnListPage },
   authApi: { me: h.me, login: h.login, logout: h.logout, changePassword: h.changePassword },
   ledgerApi: { list: h.ledgerList },
+  identityApi: { check: h.identityCheck },
   setLedgerIdProvider: h.setLedgerIdProvider,
 }))
 
@@ -167,6 +169,13 @@ beforeEach(async () => {
   // 批 I：首段窗口腿默认空窗口
   h.txnListPage.mockResolvedValue({ transactions: [] })
   h.ledgerList.mockResolvedValue({ ledgers: [] })
+  h.identityCheck.mockResolvedValue({
+    balanced: true,
+    diffs: [],
+    posting_count: 3360,
+    checked_at: '2026-11-25T00:00:00Z',
+    duration_ms: 3,
+  })
   h.me.mockResolvedValue({ user: null })
   // 先把 ledgerId 定下来再建 data store：`ledgerData` 会在 setup 里 watch ledgerId，
   // 若先建 store 再改 id，会凭空多触发一次 reset + ensure，干扰调用次数断言。
@@ -632,6 +641,74 @@ describe('BillsView：聚合骨架（骨架屏批）', () => {
 
     expect(wrapper.find('.bills__skel').exists()).toBe(false)
     expect(wrapper.findAll('.bills__row')).toHaveLength(1)
+    wrapper.unmount()
+  })
+})
+
+// ---------- P1-3：首页账本健康状态条 ----------
+describe('BillsView：账本健康状态条', () => {
+  it('balanced：一句人话 + 查看明细入口；不声称 bean-check 通过', async () => {
+    const wrapper = mountWith(TXNS)
+    await settle()
+
+    const bar = wrapper.find('[data-testid="ledger-health"]')
+    expect(bar.exists()).toBe(true)
+    expect(bar.classes()).toContain('bills__health--ok')
+    expect(bar.text()).toContain('分录借贷恒等式检查通过：3360 条分录按币种借贷平衡')
+    expect(bar.text()).not.toContain('bean-check 已通过')
+    expect(bar.text()).toContain('不是 bean-check')
+
+    const link = wrapper.find('.bills__health-link')
+    expect(link.text()).toBe('查看明细')
+    await link.trigger('click')
+    expect(h.push).toHaveBeenCalledWith({ name: 'data-safety' })
+  })
+
+  it('不平：按币种列差额并标红，口径说明保留', async () => {
+    h.identityCheck.mockResolvedValue({
+      balanced: false,
+      diffs: [
+        { commodity: 'CNY', sum: '0.01' },
+        { commodity: 'USD', sum: '-0.02' },
+      ],
+      posting_count: 3360,
+      checked_at: '2026-11-25T00:00:00Z',
+      duration_ms: 4,
+    })
+    const wrapper = mountWith(TXNS)
+    await settle()
+
+    const bar = wrapper.find('[data-testid="ledger-health"]')
+    expect(bar.classes()).toContain('bills__health--unbalanced')
+    expect(bar.text()).toContain('分录借贷恒等式检查未通过')
+    expect(bar.text()).toContain('CNY +0.01、USD -0.02')
+    expect(bar.text()).toContain('不是 bean-check')
+    expect(h.identityCheck).toHaveBeenCalled()
+  })
+
+  it('接口失败：不伪装成平衡，显示失败文案', async () => {
+    h.identityCheck.mockRejectedValue(new Error('offline'))
+    const wrapper = mountWith(TXNS)
+    await settle()
+
+    const bar = wrapper.find('[data-testid="ledger-health"]')
+    expect(bar.classes()).toContain('bills__health--unknown')
+    expect(bar.text()).toContain('分录借贷恒等式检查失败')
+  })
+
+  it('切账本后按新账本重取检查结果', async () => {
+    const wrapper = mountWith(TXNS)
+    await settle()
+    expect(h.identityCheck).toHaveBeenCalledTimes(1)
+
+    session.ledgers = [
+      { id: 7, name: '家庭账本', role: 'owner', opening_date: '2026-01-01' },
+      { id: 8, name: '旅行账本', role: 'editor', opening_date: '2026-01-01' },
+    ]
+    session.ledgerId = 8
+    await settle()
+
+    expect(h.identityCheck).toHaveBeenCalledTimes(2)
     wrapper.unmount()
   })
 })

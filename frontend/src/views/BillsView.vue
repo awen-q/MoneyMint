@@ -24,8 +24,11 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
+import { identityApi } from '@/api/client'
+import type { IdentityCheckResult } from '@/api/types'
 import { billCells, daySeries, monthTotals } from '@/core/bill'
 import { buildMonthGrid, type CalendarDay } from '@/core/calendar'
+import { buildLedgerHealthNotice } from '@/core/ledgerHealth'
 import type { LineSeriesInput } from '@/core/charts/option'
 import { PRIVACY_MASK } from '@/core/privacy'
 import { buildTxnRow, type TxnRowView } from '@/core/txnRow'
@@ -77,6 +80,7 @@ const monthPrefix = computed(() => `${year.value}-${twoDigits(month.value)}`)
 onMounted(() => {
   void data.setWindowMonth(monthPrefix.value)
   void data.ensure()
+  void loadHealth()
 })
 
 // 切账本时 `ledgerData` 的 `reset()` 会清空快照，本页要重新拉取并清掉选中的日。
@@ -88,6 +92,8 @@ watch(
     // reset() 后窗口集合已清空、store 只会重拉「自然当月」窗口；
     // 用户切账本前停留的月份要由这里重新声明，否则当月永远停在聚合等待态。
     void data.setWindowMonth(monthPrefix.value)
+    // 恒等式检查按当前账本计算，切账本必须重取，否则会把旧账本的健康结论显示在新账本上。
+    void loadHealth()
   },
 )
 
@@ -252,6 +258,28 @@ const showMonthSkeleton = computed(
 /** 有旧快照时的刷新失败：留在 ready，只出内联条。 */
 const staleError = computed(() => (data.error !== '' && data.loaded ? data.error : ''))
 
+// ---------- P1-3：首页账本健康状态条 ----------
+// 数据源只有 GET /api/identity/check（按币种的分录借贷恒等式，实时计算）。
+// 不声称 bean-check 通过，也不把 balance_key 的日初校准混进来。
+const health = ref<IdentityCheckResult | null>(null)
+const healthFailed = ref(false)
+const healthNotice = computed(() => buildLedgerHealthNotice(health.value, healthFailed.value))
+
+async function loadHealth(): Promise<void> {
+  try {
+    const result = await identityApi.check()
+    health.value = result
+    healthFailed.value = false
+  } catch {
+    health.value = null
+    healthFailed.value = true
+  }
+}
+
+function goDataSafety(): void {
+  void router.push({ name: 'data-safety' })
+}
+
 /** 四态卡的说明文案（标题用 StateCard 的默认：加载失败 / 暂无数据）。 */
 const cardDesc = computed(() => {
   if (pageState.value === 'error') {
@@ -367,6 +395,18 @@ function goStats(): void {
       <h1 class="bills__title">账单</h1>
       <p class="bills__summary">当月总览：日历 + 统计 + 收支折线 + 交易列表</p>
     </header>
+
+    <!-- P1-3：账本健康状态条。一句人话 + 查看明细入口；不属于收支指标，故不进 BillMetrics。 -->
+    <section
+      class="bills__health"
+      :class="`bills__health--${healthNotice.tone}`"
+      role="status"
+      data-testid="ledger-health"
+    >
+      <p class="bills__health-text">{{ healthNotice.text }}</p>
+      <button type="button" class="bills__health-link" @click="goDataSafety">查看明细</button>
+      <p class="bills__health-detail">{{ healthNotice.detail }}</p>
+    </section>
 
     <!-- ② 工具卡（B-01）：一张白卡承载两行工具，与下方日历卡同为「卡」，不再夹心。
          行1 = 账本 chip + spacer + 月份组；行2 = 币种 seg + spacer + 搜索 / 统计图标。 -->
@@ -551,6 +591,68 @@ function goStats(): void {
   margin: 4px 0 0;
   color: var(--fb-sub);
   font-size: 13px;
+  line-height: 1.5;
+}
+
+/* P1-3：健康状态条 —— 一行主文案 + 明细入口，口径说明另起小字。
+   配色只表达检查结果，不承载收支语义，故与指标带分离。 */
+.bills__health {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 6px 0 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--fb-line);
+  border-radius: var(--fb-radius-card);
+  background: var(--fb-soft);
+}
+
+.bills__health--ok {
+  border-color: var(--fb-blue-line);
+}
+
+.bills__health--unbalanced {
+  border-color: var(--fb-danger);
+  background: var(--fb-danger-soft);
+}
+
+.bills__health-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: var(--fb-ink);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.bills__health--unbalanced .bills__health-text {
+  color: var(--fb-danger-ink);
+}
+
+.bills__health-link {
+  flex: none;
+  padding: 2px 4px;
+  border: none;
+  background: transparent;
+  color: var(--fb-blue);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.bills__health-link:focus-visible {
+  outline: 2px solid var(--fb-blue);
+  outline-offset: 2px;
+}
+
+.bills__health-detail {
+  flex: 1 0 100%;
+  margin: 0;
+  color: var(--fb-sub);
+  font-size: 10.5px;
   line-height: 1.5;
 }
 
