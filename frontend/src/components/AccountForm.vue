@@ -21,6 +21,7 @@ import type { AccountView, OpeningDirection, OpeningView } from '@/api/types'
 import { buildAccountTree, flattenAccountTree, isClosed, validateIconCodePoints } from '@/core/accounts'
 import { validateOpeningForm } from '@/core/opening'
 import { accountOptionLabel, indentOptionLabel, todayString } from '@/core/record'
+import { t } from '@/i18n'
 import { markDirty } from '@/stores/dataFreshness'
 import { useSessionStore } from '@/stores/session'
 import MoneyText from '@/components/MoneyText.vue'
@@ -110,8 +111,8 @@ const parentOptionsFlat = computed(() =>
 )
 
 /** 「无」选项动态明示结果形态：随类型切换联动，避免「二级 / 三级」语义漂移。 */
-const noParentOptionText = computed(
-  () => `无 · 直接挂在类型根下（生成 ${accountType.value}:新段 两段全名）`,
+const noParentOptionText = computed(() =>
+  t('accounts.form.noParentOption', { type: accountType.value }),
 )
 
 function resolveParent(): AccountView | null {
@@ -165,10 +166,10 @@ const customAsciiHint = computed(() => {
     return ''
   }
   if (value.indexOf(':') >= 0 || /\s/.test(value)) {
-    return '英文账号不能包含冒号或空格，例如 Food'
+    return t('accounts.form.asciiColonSpace')
   }
   if (!/^[A-Z0-9]/.test(value)) {
-    return '英文账号需以大写字母或数字开头，例如 Food（中文请填显示名）'
+    return t('accounts.form.asciiStartUpper')
   }
   return ''
 })
@@ -246,7 +247,7 @@ async function loadOpening(): Promise<void> {
     }
     openingLoaded.value = true
   } catch (err) {
-    loadError.value = err instanceof ApiError ? err.message : '期初信息加载失败'
+    loadError.value = err instanceof ApiError ? err.message : t('accounts.form.errLoadOpening')
   } finally {
     loading.value = false
   }
@@ -265,7 +266,7 @@ async function submitOpening(accountUuid: string, commodity: string): Promise<vo
     return
   }
   if (validation.absAmount === '0.00') {
-    notice.value = '期初为 0，跳过期初录入'
+    notice.value = t('accounts.form.noticeZeroOpening')
     return
   }
   await openingApi.set(accountUuid, {
@@ -284,25 +285,28 @@ async function submit(): Promise<void> {
   }
   clearErrors()
   if (session.isViewer) {
-    submitError.value = '只读成员不能修改账户'
+    submitError.value = t('accounts.form.errViewer')
     return
   }
   submitting.value = true
   try {
     if (props.mode === 'opening') {
       if (props.account === null || props.account.uuid === undefined) {
-        submitError.value = '缺少账户上下文'
+        submitError.value = t('accounts.form.errNoAccount')
         return
       }
       await submitOpening(props.account.uuid, resolveCommodity(props.account))
     } else {
       const label = displayName.value.trim()
       if (label === '') {
-        submitError.value = '请输入账户 / 分类显示名'
+        submitError.value = t('accounts.form.errNameRequired')
         return
       }
       if (openDate.value > ledgerOpeningDate.value) {
-        submitError.value = `开户日（${openDate.value}）不得晚于账本期初日期（${ledgerOpeningDate.value}）`
+        submitError.value = t('accounts.form.errOpenDateTooLate', {
+          openDate: openDate.value,
+          ledgerDate: ledgerOpeningDate.value,
+        })
         return
       }
       const parent = resolveParent()
@@ -310,7 +314,7 @@ async function submit(): Promise<void> {
       // 批 II：图标非空才发键（缺省不发键 → 后端落 NULL）；码位校验同后端口径。
       const selectedIcon = icon.value.trim()
       if (selectedIcon !== '' && !validateIconCodePoints(selectedIcon)) {
-        submitError.value = '图标需不超过 8 个字符的 emoji，请删减后重试'
+        submitError.value = t('common.iconPicker.tooLong')
         return
       }
       const created = await accountApi.create({
@@ -326,13 +330,13 @@ async function submit(): Promise<void> {
       if (isFundType.value && openingAmount.value.trim() !== '') {
         await submitOpening(created.uuid, resolveCommodity(created as unknown as AccountView))
       } else {
-        notice.value = '账户已创建'
+        notice.value = t('accounts.form.noticeCreated')
       }
     }
     emit('saved')
     emit('close')
   } catch (err) {
-    submitError.value = err instanceof ApiError ? err.message : '保存失败，请稍后重试'
+    submitError.value = err instanceof ApiError ? err.message : t('accounts.form.errSave')
     if (err instanceof ApiError && err.balances !== undefined) {
       errorBalances.value = err.balances
     }
@@ -367,10 +371,10 @@ onMounted(() => {
 
 <template>
   <div class="af-mask" @click.self="close">
-    <section class="af-panel" role="dialog" aria-modal="true" :aria-label="mode === 'create' ? '新建账户' : '期初余额'">
+    <section class="af-panel" role="dialog" aria-modal="true" :aria-label="mode === 'create' ? t('accounts.form.dialogCreate') : t('accounts.form.dialogOpening')">
       <header class="af-head">
-        <h3>{{ mode === 'create' ? (parentFixed ? '增加下级' : '新建账户') : `期初余额 · ${account !== null ? account.name : ''}` }}</h3>
-        <button class="af-close" type="button" aria-label="关闭" @click="close">✕</button>
+        <h3>{{ mode === 'create' ? (parentFixed ? t('accounts.form.titleAddChild') : t('accounts.form.dialogCreate')) : t('accounts.form.titleOpening', { name: account !== null ? account.name : '' }) }}</h3>
+        <button class="af-close" type="button" :aria-label="t('common.close')" @click="close">✕</button>
       </header>
 
       <div v-if="loadError" class="af-alert af-alert--error">{{ loadError }}</div>
@@ -378,9 +382,9 @@ onMounted(() => {
       <div v-if="notice" class="af-alert af-alert--ok">{{ notice }}</div>
 
       <div v-if="errorBalances.length > 0" class="af-balances">
-        <p class="af-balances__label">按币种差额明细（关户 / 冲正守门）：</p>
+        <p class="af-balances__label">{{ t('accounts.form.balanceDiffLabel') }}</p>
         <table>
-          <thead><tr><th>币种</th><th>差额</th></tr></thead>
+          <thead><tr><th>{{ t('common.commodity') }}</th><th>{{ t('common.diff') }}</th></tr></thead>
           <tbody>
             <tr v-for="diff in errorBalances" :key="diff.commodity">
               <td>{{ diff.commodity }}</td>
@@ -390,36 +394,36 @@ onMounted(() => {
         </table>
       </div>
 
-      <div v-if="loading" class="af-body af-muted">正在加载期初信息…</div>
+      <div v-if="loading" class="af-body af-muted">{{ t('accounts.form.loadingOpening') }}</div>
 
       <div v-else class="af-body">
         <template v-if="mode === 'create'">
           <label class="af-field">
-            <span>类型{{ parentFixed ? '（继承父账户，不可修改）' : '' }}</span>
+            <span>{{ t('accounts.form.typeLabel') }}{{ parentFixed ? t('accounts.form.typeInheritedSuffix') : '' }}</span>
             <select class="fb-input" :disabled="parentFixed" :value="accountType" @change="switchType(($event.target as HTMLSelectElement).value as typeof accountType)">
-              <option value="Assets">资产（Assets）</option>
-              <option value="Liabilities">负债（Liabilities）</option>
-              <option value="Expenses">支出分类（Expenses）</option>
-              <option value="Income">收入分类（Income）</option>
-              <option value="Equity">权益（Equity）</option>
+              <option value="Assets">{{ t('accounts.form.typeAssets') }}</option>
+              <option value="Liabilities">{{ t('accounts.form.typeLiabilities') }}</option>
+              <option value="Expenses">{{ t('accounts.form.typeExpenses') }}</option>
+              <option value="Income">{{ t('accounts.form.typeIncome') }}</option>
+              <option value="Equity">{{ t('accounts.form.typeEquity') }}</option>
             </select>
           </label>
           <label class="af-field">
-            <span>显示名（中文，如：招商储蓄 / 早餐）</span>
-            <input class="fb-input" v-model="displayName" placeholder="如：招商储蓄 / 早餐" />
+            <span>{{ t('accounts.form.displayNameLabel') }}</span>
+            <input class="fb-input" v-model="displayName" :placeholder="t('accounts.form.displayNamePlaceholder')" />
           </label>
           <div class="af-field">
-            <span>图标（可选）</span>
+            <span>{{ t('accounts.form.iconLabel') }}</span>
             <IconPicker v-model="icon" />
           </div>
-          <p class="af-hint">系统自动生成 Beancount 合法的英文账户全名，中文只作为显示名；无需手工拼冒号层级。</p>
+          <p class="af-hint">{{ t('accounts.form.nameHint') }}</p>
           <label v-if="session.isOwner" class="af-field">
-            <span>英文账号（可选，留空自动生成）</span>
-            <input class="fb-input af-ascii" v-model="customAscii" placeholder="如 Food / Cash（留空自动生成）" />
+            <span>{{ t('accounts.form.asciiLabel') }}</span>
+            <input class="fb-input af-ascii" v-model="customAscii" :placeholder="t('accounts.form.asciiPlaceholder')" />
           </label>
           <p v-if="session.isOwner && customAsciiHint" class="af-hint af-hint--warn" role="status">{{ customAsciiHint }}</p>
           <label class="af-field">
-            <span>父账户{{ parentFixed ? '（已预填，不可修改）' : '（可选）' }}</span>
+            <span>{{ t('accounts.form.parentLabel') }}{{ parentFixed ? t('accounts.form.parentFixedSuffix') : t('accounts.form.parentOptionalSuffix') }}</span>
             <select
               class="fb-input"
               :disabled="parentFixed"
@@ -435,54 +439,54 @@ onMounted(() => {
             </select>
           </label>
           <label class="af-field">
-            <span>开户日（不得晚于账本期初日期 {{ ledgerOpeningDate }}）</span>
+            <span>{{ t('accounts.form.openDateLabel', { date: ledgerOpeningDate }) }}</span>
             <input class="fb-input" type="date" :value="openDate" @change="onOpenDateChange" />
           </label>
 
           <template v-if="isFundType">
-            <div class="af-section">期初余额（可选）</div>
+            <div class="af-section">{{ t('accounts.form.openingSection') }}</div>
             <div class="af-row">
               <label class="af-field">
-                <span>金额（绝对值）</span>
-                <input class="fb-input" :value="openingAmount" @change="onOpeningAmountChange" placeholder="如：3200" />
+                <span>{{ t('accounts.form.amountLabel') }}</span>
+                <input class="fb-input" :value="openingAmount" @change="onOpeningAmountChange" :placeholder="t('accounts.form.amountPlaceholderCreate')" />
               </label>
               <label class="af-field">
-                <span>方向</span>
+                <span>{{ t('accounts.form.directionLabel') }}</span>
                 <select class="fb-input" :value="openingDirection" @change="onDirectionChange">
-                  <option value="hold">持有</option>
-                  <option value="owe">欠款</option>
+                  <option value="hold">{{ t('accounts.form.directionHold') }}</option>
+                  <option value="owe">{{ t('accounts.form.directionOwe') }}</option>
                 </select>
               </label>
             </div>
-            <p class="af-hint">持有 = 正、欠款 = 负；期初交易日期固定为账本期初日期 {{ ledgerOpeningDate }}。</p>
+            <p class="af-hint">{{ t('accounts.form.openingHint', { date: ledgerOpeningDate }) }}</p>
           </template>
-          <p v-else class="af-hint">{{ accountType }} 类型账户不设期初余额。</p>
+          <p v-else class="af-hint">{{ t('accounts.form.notFundHint', { type: accountType }) }}</p>
         </template>
 
         <template v-else>
-          <p class="af-hint" v-if="openingHasExisting">当前账户已有期初，修改保存后由后端生成「冲正 + 新建」成对交易（重复提交由幂等键保证只生效一次）。</p>
-          <p class="af-hint" v-else>该账户尚未设置期初。</p>
+          <p class="af-hint" v-if="openingHasExisting">{{ t('accounts.form.openingExistingHint') }}</p>
+          <p class="af-hint" v-else>{{ t('accounts.form.openingNoneHint') }}</p>
           <div class="af-row">
             <label class="af-field">
-              <span>金额（绝对值）</span>
-              <input class="fb-input" :value="openingAmount" @change="onOpeningAmountChange" placeholder="如：12500" />
+              <span>{{ t('accounts.form.amountLabel') }}</span>
+              <input class="fb-input" :value="openingAmount" @change="onOpeningAmountChange" :placeholder="t('accounts.form.amountPlaceholderOpening')" />
             </label>
             <label class="af-field">
-              <span>方向</span>
+              <span>{{ t('accounts.form.directionLabel') }}</span>
               <select class="fb-input" :value="openingDirection" @change="onDirectionChange">
-                <option value="hold">持有</option>
-                <option value="owe">欠款</option>
+                <option value="hold">{{ t('accounts.form.directionHold') }}</option>
+                <option value="owe">{{ t('accounts.form.directionOwe') }}</option>
               </select>
             </label>
           </div>
-          <p class="af-hint">期初交易日期 = 账本期初日期 {{ ledgerOpeningDate }}；币种 {{ resolveCommodity(account) }}。</p>
+          <p class="af-hint">{{ t('accounts.form.openingDateHint', { date: ledgerOpeningDate, commodity: resolveCommodity(account) }) }}</p>
         </template>
       </div>
 
       <div class="af-foot">
-        <button type="button" class="fb-btn-ghost" @click="close">取消</button>
+        <button type="button" class="fb-btn-ghost" @click="close">{{ t('common.cancel') }}</button>
         <button type="button" class="fb-btn-primary" :disabled="submitting || loading" @click="submit">
-          {{ submitting ? '保存中…' : '保存' }}
+          {{ submitting ? t('common.saving') : t('common.save') }}
         </button>
       </div>
     </section>

@@ -13,6 +13,7 @@ import { sessionApi } from '@/api/client'
 import { ApiError } from '@/api/errors'
 import type { SessionItem } from '@/api/types'
 import { formatSessionTime } from '@/core/batch3'
+import { t } from '@/i18n'
 import { useSessionStore } from '@/stores/session'
 
 const session = useSessionStore()
@@ -29,7 +30,7 @@ const revokeTarget = ref<SessionItem | null>(null)
 const others = computed(() => sessions.value.filter((item) => item.current !== true))
 
 function messageOf(err: unknown): string {
-  return err instanceof ApiError ? err.message : '操作失败，请稍后重试'
+  return err instanceof ApiError ? err.message : t('sessions.errGeneric')
 }
 
 async function load(): Promise<void> {
@@ -40,11 +41,11 @@ async function load(): Promise<void> {
     sessions.value = Array.isArray(res.sessions) ? res.sessions : []
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) {
-      loadError.value = '登录已过期，请重新登录'
+      loadError.value = t('sessions.errExpired')
     } else {
       loadError.value = err instanceof ApiError
-        ? `加载失败（${err.status}）：${err.message}`
-        : '无法连接服务器，登录设备需要联网才能查看'
+        ? t('sessions.errLoadFailed', { status: String(err.status), message: err.message })
+        : t('sessions.errOffline')
     }
   } finally {
     loading.value = false
@@ -65,7 +66,7 @@ async function run(action: () => Promise<unknown>, success: string): Promise<voi
     await load()
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) {
-      actionError.value = '该会话已失效'
+      actionError.value = t('sessions.errSessionInvalid')
       revokeTarget.value = null
       await load()
     } else {
@@ -86,10 +87,10 @@ async function confirmRevoke(): Promise<void> {
       await sessionApi.revoke(target.id)
       await session.logout()
       await router.replace({ name: 'login' })
-    }, '已退出当前设备')
+    }, t('sessions.noticeCurrentLoggedOut'))
     return
   }
-  await run(() => sessionApi.revoke(target.id), '该设备已吊销，需重新输入密码登录')
+  await run(() => sessionApi.revoke(target.id), t('sessions.noticeRevoked'))
 }
 
 async function revokeOthers(): Promise<void> {
@@ -101,7 +102,9 @@ async function revokeOthers(): Promise<void> {
   notice.value = ''
   try {
     const res = await sessionApi.revokeOthers()
-    notice.value = res.revoked > 0 ? `已退出其他 ${res.revoked} 台设备` : '没有其他设备'
+    notice.value = res.revoked > 0
+      ? t('sessions.noticeOthersRevoked', { n: String(res.revoked) })
+      : t('sessions.noticeNoOthers')
     await load()
   } catch (err) {
     actionError.value = messageOf(err)
@@ -116,15 +119,15 @@ onMounted(() => { void load() })
 <template>
   <section class="ses">
     <header class="ses__hero fb-hero">
-      <span class="ses__title">登录设备</span>
-      <span class="ses__sub">发现不认识的设备就吊销它，对方需要重新登录</span>
+      <span class="ses__title">{{ t('sessions.title') }}</span>
+      <span class="ses__sub">{{ t('sessions.subtitle') }}</span>
     </header>
 
     <div class="fb-card ses__toolbar">
-      <span class="fb-muted">共 {{ sessions.length }} 台设备</span>
+      <span class="fb-muted">{{ t('sessions.totalDevices', { n: String(sessions.length) }) }}</span>
       <div class="ses__actions-inline">
-        <button v-if="others.length > 0" class="fb-btn-ghost ses__btn" type="button" :disabled="busy" @click="revokeOthers">退出其他设备</button>
-        <button class="fb-btn-ghost ses__btn" type="button" :disabled="loading" @click="load">刷新</button>
+        <button v-if="others.length > 0" class="fb-btn-ghost ses__btn" type="button" :disabled="busy" @click="revokeOthers">{{ t('sessions.revokeOthers') }}</button>
+        <button class="fb-btn-ghost ses__btn" type="button" :disabled="loading" @click="load">{{ t('sessions.refresh') }}</button>
       </div>
     </div>
 
@@ -132,37 +135,37 @@ onMounted(() => { void load() })
     <p v-if="actionError" class="ses__notice ses__notice--err" role="alert">{{ actionError }}</p>
 
     <div v-if="revokeTarget" class="fb-card ses__panel">
-      <h2>{{ revokeTarget.current ? '退出当前设备？' : '吊销这台设备？' }}</h2>
+      <h2>{{ revokeTarget.current ? t('sessions.revokeCurrentTitle') : t('sessions.revokeTitle') }}</h2>
       <p>
         {{ revokeTarget.current
-          ? '退出后需要重新登录，账本数据不会丢失。'
-          : '该设备会立即失效，需要重新输入密码登录。' }}
+          ? t('sessions.revokeCurrentBody')
+          : t('sessions.revokeBody') }}
       </p>
       <div class="ses__actions">
-        <button class="fb-btn-ghost" type="button" @click="revokeTarget = null">取消</button>
-        <button class="fb-btn-primary" type="button" :disabled="busy" @click="confirmRevoke">确定</button>
+        <button class="fb-btn-ghost" type="button" @click="revokeTarget = null">{{ t('sessions.cancel') }}</button>
+        <button class="fb-btn-primary" type="button" :disabled="busy" @click="confirmRevoke">{{ t('sessions.confirm') }}</button>
       </div>
     </div>
 
     <div v-if="loadError" class="fb-card ses__state ses__state--err">
       <p>{{ loadError }}</p>
-      <button class="fb-btn-ghost" type="button" @click="load">重试</button>
+      <button class="fb-btn-ghost" type="button" @click="load">{{ t('sessions.retry') }}</button>
     </div>
-    <div v-else-if="loading" class="fb-card ses__state">正在读取登录设备…</div>
-    <div v-else-if="sessions.length === 0" class="fb-card ses__state">没有登录设备记录。</div>
+    <div v-else-if="loading" class="fb-card ses__state">{{ t('sessions.loading') }}</div>
+    <div v-else-if="sessions.length === 0" class="fb-card ses__state">{{ t('sessions.empty') }}</div>
     <div v-else class="fb-card ses__list">
       <div v-for="item in sessions" :key="item.id" class="ses__row">
         <span class="ses__icon">{{ item.current ? '▣' : '▢' }}</span>
         <span class="ses__info">
-          <strong>{{ item.device }}<em v-if="item.current" class="ses__current">当前设备</em></strong>
+          <strong>{{ item.device }}<em v-if="item.current" class="ses__current">{{ t('sessions.currentDevice') }}</em></strong>
           <small>
-            登录 {{ formatSessionTime(item.created_at) }} ·
-            最近活跃 {{ formatSessionTime(item.last_seen_at) }}
+            {{ t('sessions.loginAt', { time: formatSessionTime(item.created_at) }) }} ·
+            {{ t('sessions.lastActiveAt', { time: formatSessionTime(item.last_seen_at) }) }}
             <template v-if="item.ip !== ''"> · IP {{ item.ip }}</template>
           </small>
         </span>
         <button class="fb-btn-ghost ses__btn" :class="{ 'ses__btn--danger': item.current }" type="button" :disabled="busy" @click="revokeTarget = item">
-          {{ item.current ? '退出' : '吊销' }}
+          {{ item.current ? t('sessions.logoutDevice') : t('sessions.revoke') }}
         </button>
       </div>
     </div>

@@ -17,7 +17,6 @@ import { setThemePreference, theme, themePreference, type ThemePreference } from
 import { LOCALES, locale, setLocale, t, type Locale } from '@/i18n'
 import { ApiError } from '@/api/errors'
 import type { AccountView } from '@/api/types'
-import { roleLabel } from '@/core/batch3'
 import {
   DEFAULT_ACCOUNT_KINDS,
   DEFAULT_ACCOUNT_LABELS,
@@ -54,18 +53,19 @@ interface AppearanceOption {
 }
 
 /** 外观三段选项：与 useTheme 偏好层一一对应（跟随系统 / 强制浅纸 / 强制夜纸）。 */
-const APPEARANCE_OPTIONS: AppearanceOption[] = [
-  { value: 'system', label: '跟随系统' },
-  { value: 'light', label: '浅纸' },
-  { value: 'dark', label: '夜纸' },
-]
+const APPEARANCE_OPTIONS = computed<AppearanceOption[]>(() => [
+  { value: 'system', label: t('settings.appearanceSystem') },
+  { value: 'light', label: t('settings.appearanceLight') },
+  { value: 'dark', label: t('settings.appearanceDark') },
+])
 
 /** 跟随系统态的说明：显示当前实际生效主题，帮用户理解「跟随」的含义。 */
 const appearanceHint = computed<string>(() => {
   if (themePreference.value !== 'system') {
-    return '选择全站配色，切换后立即生效'
+    return t('settings.appearanceHintCustom')
   }
-  return `当前跟随系统（生效：${theme.value === 'night' ? '夜纸' : '浅纸'}）`
+  const active = theme.value === 'night' ? t('settings.appearanceDark') : t('settings.appearanceLight')
+  return t('settings.appearanceHintSystem', { theme: active })
 })
 
 function pickAppearance(value: ThemePreference): void {
@@ -102,25 +102,44 @@ interface LinkItem {
   disabled?: boolean
 }
 
+/** 角色中文标签（本页徽章用；值与原 core/batch3.roleLabel 逐字节一致，阶段 2 只迁视图）。 */
+function roleText(role: string): string {
+  if (role === 'owner') {
+    return t('common.roleOwner')
+  }
+  if (role === 'editor') {
+    return t('common.roleEditor')
+  }
+  if (role === 'viewer') {
+    return t('common.roleViewer')
+  }
+  return t('common.roleNone')
+}
+
 const links = computed<LinkItem[]>(() => [
-  { key: 'ledgers', label: '账本管理', hint: `${session.ledgerName}（当前）`, to: '/ledgers' },
+  {
+    key: 'ledgers',
+    label: t('settings.ledgers'),
+    hint: t('settings.ledgersCurrentHint', { name: session.ledgerName }),
+    to: '/ledgers',
+  },
   {
     key: 'members',
-    label: '成员管理',
-    hint: currentRole.value === 'owner' ? '所有者' : '仅 owner',
+    label: t('settings.members'),
+    hint: currentRole.value === 'owner' ? t('common.roleOwner') : t('settings.membersHintNotOwner'),
     to: '/members',
     disabled: currentRole.value !== 'owner',
   },
-  { key: 'sessions', label: '登录设备', hint: '查看 / 吊销', to: '/sessions' },
-  { key: 'password', label: '修改密码', hint: '', to: '/change-password' },
-  { key: 'data', label: '数据安全', hint: '备份 / 导出', to: '/data-safety' },
-  { key: 'reports', label: '报表分析', hint: '趋势 / 占比', to: '/reports' },
-  { key: 'sync', label: '同步状态', hint: '服务端水位', to: '/sync' },
+  { key: 'sessions', label: t('settings.sessions'), hint: t('settings.sessionsHint'), to: '/sessions' },
+  { key: 'password', label: t('settings.changePassword'), hint: '', to: '/change-password' },
+  { key: 'data', label: t('settings.dataSafety'), hint: t('settings.dataSafetyHint'), to: '/data-safety' },
+  { key: 'reports', label: t('settings.reports'), hint: t('settings.reportsHint'), to: '/reports' },
+  { key: 'sync', label: t('settings.sync'), hint: t('settings.syncHint'), to: '/sync' },
 ])
 
 function go(item: LinkItem): void {
   if (item.disabled === true) {
-    notice.value = '仅账本所有者（owner）可以管理成员'
+    notice.value = t('settings.membersOwnerOnly')
     return
   }
   void router.push(item.to)
@@ -149,10 +168,12 @@ async function toggleRegistration(): Promise<void> {
   try {
     const res = await settingsApi.setRegistration({ enabled: next })
     registrationEnabled.value = res.enabled === true
-    notice.value = next ? '已开放注册' : '已关闭注册'
+    notice.value = next ? t('settings.registrationOpenNotice') : t('settings.registrationClosedNotice')
   } catch (err) {
     actionError.value =
-      err instanceof ApiError ? `切换失败（需系统管理员）：${err.message}` : '切换失败，请稍后重试'
+      err instanceof ApiError
+        ? t('settings.registrationToggleFailedAdmin', { message: err.message })
+        : t('settings.registrationToggleFailed')
   } finally {
     registrationBusy.value = false
   }
@@ -176,14 +197,28 @@ async function loadDefaults(): Promise<void> {
 function defaultLabel(kind: DefaultAccountKind): string {
   const uuid = defaults.value[kind]
   if (uuid === undefined || uuid === '') {
-    return '未设置'
+    return t('settings.notSet')
   }
   for (const account of accounts.value) {
     if (account.uuid === uuid) {
       return account.display_name || account.name
     }
   }
-  return '（已删除）'
+  return t('settings.defaultDeleted')
+}
+
+/** 「已删除」占位判定：走同一字典键，避免模板里硬编码中文比较（en 下也会失配）。 */
+function isDefaultMissing(kind: DefaultAccountKind): boolean {
+  const uuid = defaults.value[kind]
+  if (uuid === undefined || uuid === '') {
+    return false
+  }
+  for (const account of accounts.value) {
+    if (account.uuid === uuid) {
+      return false
+    }
+  }
+  return true
 }
 
 function clearDefaults(): void {
@@ -193,7 +228,7 @@ function clearDefaults(): void {
   }
   clearDefaultAccounts(id)
   defaults.value = {}
-  notice.value = '已清除全部默认账户'
+  notice.value = t('settings.defaultsCleared')
 }
 
 async function logout(): Promise<void> {
@@ -211,8 +246,8 @@ onMounted(() => {
 <template>
   <section class="set">
     <header class="set__hero fb-hero">
-      <span class="set__title">设置</span>
-      <span class="set__sub">账号、账本与数据</span>
+      <span class="set__title">{{ t('settings.title') }}</span>
+      <span class="set__sub">{{ t('settings.subtitle') }}</span>
     </header>
 
     <div class="fb-card set__identity">
@@ -220,13 +255,13 @@ onMounted(() => {
         {{ session.user ? (session.user.display_name || session.user.username).charAt(0) : '?' }}
       </span>
       <span class="set__who">
-        <strong>{{ session.user ? session.user.display_name || session.user.username : '未登录' }}</strong>
+        <strong>{{ session.user ? session.user.display_name || session.user.username : t('settings.notLoggedIn') }}</strong>
         <small>@{{ session.user ? session.user.username : '—' }}</small>
       </span>
       <span class="set__badges">
-        <em v-if="isAdmin" class="set__badge set__badge--admin">系统管理员</em>
+        <em v-if="isAdmin" class="set__badge set__badge--admin">{{ t('settings.admin') }}</em>
         <em class="set__badge" :class="{ 'set__badge--owner': currentRole === 'owner' }">
-          账本{{ roleLabel(currentRole) }}
+          {{ t('settings.ledgerRoleBadge', { role: roleText(currentRole) }) }}
         </em>
       </span>
     </div>
@@ -236,30 +271,30 @@ onMounted(() => {
 
     <div class="fb-card set__card">
       <div class="set__card-head">
-        <h2>默认账户</h2>
+        <h2>{{ t('settings.defaultAccounts') }}</h2>
         <button
           v-if="Object.keys(defaults).length > 0"
           class="fb-btn-ghost set__btn set__btn--danger"
           type="button"
           @click="clearDefaults"
-        >清除全部默认</button>
+        >{{ t('settings.clearAllDefaults') }}</button>
       </div>
-      <p v-if="!accountsLoaded" class="set__state">正在读取默认账户…</p>
+      <p v-if="!accountsLoaded" class="set__state">{{ t('settings.readingDefaults') }}</p>
       <dl v-else class="set__defaults">
         <template v-for="kind in DEFAULT_ACCOUNT_KINDS" :key="kind">
           <dt>{{ DEFAULT_ACCOUNT_LABELS[kind] }}</dt>
-          <dd :class="{ 'set__missing': defaultLabel(kind) === '（已删除）' }">{{ defaultLabel(kind) }}</dd>
+          <dd :class="{ 'set__missing': isDefaultMissing(kind) }">{{ defaultLabel(kind) }}</dd>
         </template>
       </dl>
-      <p class="set__hint">记一笔会记住上次选择；账户被删除或关户后自动回退为未选。</p>
+      <p class="set__hint">{{ t('settings.defaultHint') }}</p>
     </div>
 
     <div class="fb-card set__card set__appearance">
       <div>
-        <strong>外观</strong>
+        <strong>{{ t('settings.appearance') }}</strong>
         <p class="fb-muted">{{ appearanceHint }}</p>
       </div>
-      <div class="set__seg" role="radiogroup" aria-label="外观主题">
+      <div class="set__seg" role="radiogroup" :aria-label="t('settings.appearanceThemeLabel')">
         <button
           v-for="option in APPEARANCE_OPTIONS"
           :key="option.value"
@@ -319,8 +354,8 @@ onMounted(() => {
 
     <div v-if="isAdmin" class="fb-card set__card set__registration">
       <div>
-        <strong>开放注册</strong>
-        <p class="fb-muted">关闭后登录页不显示注册入口；仅系统管理员可切换。</p>
+        <strong>{{ t('settings.registration') }}</strong>
+        <p class="fb-muted">{{ t('settings.registrationHint') }}</p>
       </div>
       <button
         class="set__switch"
@@ -331,7 +366,7 @@ onMounted(() => {
         @click="toggleRegistration"
       >
         <i :class="{ on: registrationEnabled === true }" />
-        <span>{{ registrationBusy ? '切换中…' : registrationEnabled === null ? '…' : registrationEnabled ? '开放' : '关闭' }}</span>
+        <span>{{ registrationBusy ? t('settings.switching') : registrationEnabled === null ? '…' : registrationEnabled ? t('settings.registrationOn') : t('settings.registrationOff') }}</span>
       </button>
     </div>
 
@@ -342,7 +377,7 @@ onMounted(() => {
 
     <div class="fb-card set__card">
       <button class="set__link set__link--danger" type="button" @click="logout">
-        <span>退出登录</span><span>›</span>
+        <span>{{ t('settings.logout') }}</span><span>›</span>
       </button>
     </div>
   </section>

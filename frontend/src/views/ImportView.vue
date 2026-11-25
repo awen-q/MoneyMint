@@ -9,6 +9,11 @@
  * - target=current 支持 pad/balance 结构化预览（累计/差额），但执行整体拒绝；
  * - 执行在服务端单一大事务内完成，失败不留半批数据；
  *   成功后展示批次标识，可一键撤销（仅回滚本批新建实体与本批交易）。
+ *
+ * i18n 阶段 2 子批 3（数据域）：用户可见文案走字典。**待收敛**：以下文案
+ * 原本由 `core/m2` 输出中文，本视图内做了等价映射（core 未改动）：
+ * `importSummaryRows` 的五行标签、`formatImportErrors` 的行号文案、
+ * `formatImportConflicts` 的冲突标签与拼接格式、`mapImportError` 的错误文案。
  */
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -16,13 +21,9 @@ import { useRouter } from 'vue-router'
 import { importApi } from '@/api/client'
 import { ApiError } from '@/api/errors'
 import type { ImportPreviewResult, ImportResult, ImportUndoResult, ImportWarning } from '@/api/types'
-import {
-  formatImportConflicts,
-  formatImportErrors,
-  importSummaryRows,
-  mapImportError,
-  type ImportSummaryRow,
-} from '@/core/m2'
+import type { ImportSummaryRow } from '@/core/m2'
+import { t } from '@/i18n'
+import type { MessageKey } from '@/i18n/zh-CN'
 import { markDirty } from '@/stores/dataFreshness'
 
 const router = useRouter()
@@ -39,23 +40,95 @@ const actionError = ref('')
 const fileInput = ref<HTMLInputElement | null>(null)
 
 const hasText = computed(() => text.value.trim() !== '')
-const summaryRows = computed<ImportSummaryRow[]>(() =>
-  preview.value === null ? [] : importSummaryRows(preview.value),
-)
-const errorLines = computed<string[]>(() =>
-  preview.value !== null && preview.value.errors !== undefined
-    ? formatImportErrors(preview.value.errors)
-    : [],
-)
-const conflictLines = computed<string[]>(() =>
-  preview.value !== null && preview.value.conflicts.length > 0
-    ? formatImportConflicts(preview.value.conflicts)
-    : [],
-)
+
+/** 预检摘要行（core/m2.importSummaryRows 的视图内等价映射，待收敛）。 */
+const summaryRows = computed<ImportSummaryRow[]>(() => {
+  if (preview.value === null) {
+    return []
+  }
+  return [
+    { label: t('import.summaryNewAccounts'), value: preview.value.new_accounts },
+    { label: t('import.summaryReuseAccounts'), value: preview.value.reuse_accounts },
+    { label: t('import.summaryNewTransactions'), value: preview.value.new_transactions },
+    { label: t('import.summarySkipTransactions'), value: preview.value.skip_transactions },
+    { label: t('import.summaryNewCommodities'), value: preview.value.new_commodities },
+  ]
+})
+
+/** 解析错误逐行文案（core/m2.formatImportErrors 的视图内等价映射，待收敛）。 */
+const errorLines = computed<string[]>(() => {
+  if (preview.value === null || preview.value.errors === undefined) {
+    return []
+  }
+  return preview.value.errors.map((e) => t('import.errorLine', { line: String(e.line), msg: e.msg }))
+})
+
+/** 冲突类型短标签（core/m2.importConflictTypeLabel 的视图内等价映射，待收敛）。 */
+function conflictTypeLabel(type: string): string {
+  const keys: Record<string, MessageKey> = {
+    account_conflict: 'import.conflict.account_conflict',
+    commodity_conflict: 'import.conflict.commodity_conflict',
+    undeclared_account: 'import.conflict.undeclared_account',
+    unbalanced: 'import.conflict.unbalanced',
+    pad_balance_unsupported: 'import.conflict.pad_balance_unsupported',
+  }
+  const key = keys[type]
+  return key === undefined ? t('import.conflict.generic') : t(key)
+}
+
+/** 冲突逐行文案（core/m2.formatImportConflicts 的视图内等价映射，待收敛）。 */
+const conflictLines = computed<string[]>(() => {
+  if (preview.value === null || preview.value.conflicts.length === 0) {
+    return []
+  }
+  return preview.value.conflicts.map((c) => {
+    const line = c.line > 0 ? t('import.lineRef', { line: String(c.line) }) : ''
+    const name = c.name !== '' ? ` ${c.name}` : ''
+    const raw = `${line}${name}`
+    const where = raw !== '' ? t('import.conflictWhere', { where: raw }) : ''
+    return t('import.conflictEntry', { label: conflictTypeLabel(c.type), where, reason: c.reason })
+  })
+})
+
 // 非阻断性警告（如负债正余额疑似符号填反）：仅提示，不进冲突清单、不影响导入。
 const warnings = computed<ImportWarning[]>(() =>
   preview.value === null || preview.value.warnings === undefined ? [] : preview.value.warnings,
 )
+
+/** 新建账本的确认句（含来源 title 时追加括号说明，与原模板逐字节一致）。 */
+const newLedgerLine = computed<string>(() => {
+  if (preview.value === null) {
+    return ''
+  }
+  if (preview.value.title !== '') {
+    return t('import.confirmNewLedgerWithTitle', { name: preview.value.ledger_name, title: preview.value.title })
+  }
+  return t('import.confirmNewLedger', { name: preview.value.ledger_name })
+})
+
+/** current 模式结果句（跳过重复计数 > 0 时追加一段，与原模板逐字节一致）。 */
+const resultCurrentLine = computed<string>(() => {
+  if (result.value === null) {
+    return ''
+  }
+  const params = {
+    accounts: String(result.value.new_accounts),
+    reused: String(result.value.reused_accounts),
+    txns: String(result.value.created_transactions),
+    skipped: String(result.value.skipped_transactions),
+  }
+  return result.value.skipped_transactions > 0
+    ? t('import.resultCurrentSkipped', params)
+    : t('import.resultCurrent', params)
+})
+
+/** 导入端点错误文案（core/m2.mapImportError 的视图内等价映射，待收敛）。 */
+function importErrorText(status: number, message: string): string {
+  if (status === 401) return t('import.errLogin')
+  if (status === 400) return message !== '' ? message : t('import.errInvalid')
+  if (status >= 500) return t('import.errServer')
+  return message !== '' ? message : t('import.errGeneric')
+}
 
 function onFileChange(event: Event): void {
   const input = event.target as HTMLInputElement
@@ -72,7 +145,7 @@ function onFileChange(event: Event): void {
       actionError.value = ''
     })
     .catch(() => {
-      actionError.value = '读取文件失败，请重试或直接粘贴文本'
+      actionError.value = t('import.readFileFailed')
     })
 }
 
@@ -100,7 +173,7 @@ async function runPreview(): Promise<void> {
     preview.value = await importApi.preview(text.value, target.value)
   } catch (err) {
     actionError.value =
-      err instanceof ApiError ? mapImportError(err.status, err.message) : mapImportError(0, '')
+      err instanceof ApiError ? importErrorText(err.status, err.message) : importErrorText(0, '')
   } finally {
     busy.value = false
   }
@@ -119,7 +192,7 @@ async function runImport(): Promise<void> {
     markDirty('local-write')
   } catch (err) {
     actionError.value =
-      err instanceof ApiError ? mapImportError(err.status, err.message) : mapImportError(0, '')
+      err instanceof ApiError ? importErrorText(err.status, err.message) : importErrorText(0, '')
   } finally {
     busy.value = false
   }
@@ -136,7 +209,7 @@ async function runUndo(): Promise<void> {
     markDirty('local-write')
   } catch (err) {
     actionError.value =
-      err instanceof ApiError ? mapImportError(err.status, err.message) : mapImportError(0, '')
+      err instanceof ApiError ? importErrorText(err.status, err.message) : importErrorText(0, '')
   } finally {
     undoing.value = false
   }
@@ -150,11 +223,9 @@ function gotoLedgers(): void {
 <template>
   <section class="im">
     <header class="im__hero fb-hero">
-      <span class="im__title">导入 Beancount</span>
+      <span class="im__title">{{ t('import.title') }}</span>
       <span class="im__sub">{{
-        target === 'current'
-          ? '解析后写入当前账本：同名账户自动复用，重复内容自动跳过'
-          : '解析为独立新账本，不覆盖既有数据'
+        target === 'current' ? t('import.heroCurrent') : t('import.heroNew')
       }}</span>
     </header>
 
@@ -162,7 +233,7 @@ function gotoLedgers(): void {
 
     <!-- 目标切换 -->
     <div class="fb-card im__card">
-      <h2>① 选择导入目标</h2>
+      <h2>{{ t('import.step1Title') }}</h2>
       <div class="im__targets">
         <button
           type="button"
@@ -170,7 +241,7 @@ function gotoLedgers(): void {
           :class="{ 'im__target--on': target === 'current' }"
           @click="target = 'current'"
         >
-          导入到当前账本
+          {{ t('import.targetCurrent') }}
         </button>
         <button
           type="button"
@@ -178,82 +249,78 @@ function gotoLedgers(): void {
           :class="{ 'im__target--on': target === 'new' }"
           @click="target = 'new'"
         >
-          新建独立账本
+          {{ t('import.targetNew') }}
         </button>
       </div>
       <p class="im__desc">
-        {{
-          target === 'current'
-            ? '写入当前所选账本：同名账户复用（类型/币种限制须一致），重复交易按内容自动跳过；不支持 pad/balance。'
-            : '新建独立账本：同名账本自动加序号；pad 自动展开为补平交易，balance 转导入后自检。'
-        }}
+        {{ target === 'current' ? t('import.targetCurrentDesc') : t('import.targetNewDesc') }}
       </p>
     </div>
 
     <!-- 输入 -->
     <div class="fb-card im__card">
-      <h2>② 提供文件内容</h2>
-      <p class="im__desc">支持粘贴文本或上传 .beancount 文件；仅支持本系统导出用到的语法子集。</p>
+      <h2>{{ t('import.step2Title') }}</h2>
+      <p class="im__desc">{{ t('import.inputDesc') }}</p>
       <input ref="fileInput" class="im__file" type="file" accept=".beancount,.txt,text/plain" @change="onFileChange" />
       <textarea
         v-model="text"
         class="im__textarea"
         rows="8"
         spellcheck="false"
-        placeholder='option "title" "家庭账本"&#10;2026-11-01 open Assets:Cash:CNY&#10;2026-11-02 * "早餐"&#10;  Expenses:食品:CNY -12.50 CNY&#10;  Assets:Cash:CNY'
+        :placeholder="t('import.placeholder')"
       ></textarea>
-      <p v-if="filename !== ''" class="im__desc">已读入文件：{{ filename }}</p>
+      <p v-if="filename !== ''" class="im__desc">{{ t('import.fileLoaded', { name: filename }) }}</p>
       <div class="im__buttons">
         <button class="fb-btn-primary im__btn" type="button" :disabled="!hasText || busy" @click="runPreview">
-          {{ busy ? '解析中…' : '解析预览' }}
+          {{ busy ? t('import.parsing') : t('import.parsePreview') }}
         </button>
-        <button class="fb-btn-ghost im__btn" type="button" :disabled="busy" @click="clearInput">清空</button>
+        <button class="fb-btn-ghost im__btn" type="button" :disabled="busy" @click="clearInput">{{ t('import.clear') }}</button>
       </div>
     </div>
 
     <!-- 预检结果 -->
     <template v-if="preview !== null">
       <div v-if="!preview.valid" class="fb-card im__card im__reject" role="alert">
-        <h2>预检未通过，已整体拒绝</h2>
+        <h2>{{ t('import.rejectTitle') }}</h2>
         <p v-if="preview.errors !== undefined && preview.errors.length > 0" class="im__desc">
-          {{ preview.error || '文件含不支持的语法，已整体拒绝' }}
+          {{ preview.error || t('import.rejectFallback') }}
         </p>
         <ul v-if="errorLines.length > 0" class="im__errors">
           <li v-for="line in errorLines" :key="line">{{ line }}</li>
         </ul>
         <p v-if="conflictLines.length > 0" class="im__desc">
-          与目标账本存在 {{ conflictLines.length }} 处冲突：
+          {{ t('import.conflictCount', { n: String(conflictLines.length) }) }}
         </p>
         <ul v-if="conflictLines.length > 0" class="im__errors">
           <li v-for="line in conflictLines" :key="line">{{ line }}</li>
         </ul>
         <div v-if="warnings.length > 0" class="im__warnbox">
-          <p class="im__warnbox-title">发现 {{ warnings.length }} 条警告（不阻断导入，请核对源文件）：</p>
+          <p class="im__warnbox-title">{{ t('import.warningsTitle', { n: String(warnings.length) }) }}</p>
           <ul class="im__warnlist">
             <li v-for="w in warnings" :key="`r-${w.line}-${w.account}-${w.message}`">{{ w.message }}</li>
           </ul>
         </div>
         <div v-if="preview.pad_balance.length > 0" class="im__padbox">
-          <p class="im__desc">文件含 pad / balance 指令（{{ preview.pad_balance.length }} 条），按当前账本重算：</p>
+          <p class="im__desc">{{ t('import.padBalanceReprocess', { n: String(preview.pad_balance.length) }) }}</p>
           <table class="im__table">
             <tbody>
               <tr v-for="pb in preview.pad_balance" :key="`r-${pb.line}-${pb.account}-${pb.type}`">
-                <td>第 {{ pb.line }} 行</td>
-                <td>{{ pb.type === 'pad' ? '补平(pad)' : '断言(balance)' }}</td>
+                <td>{{ t('import.padRowLine', { line: String(pb.line) }) }}</td>
+                <td>{{ pb.type === 'pad' ? t('import.padTag') : t('import.balanceTag') }}</td>
                 <td>{{ pb.account }}</td>
-                <td>目标 {{ pb.target_amount }} · 累计 {{ pb.cumulative }} · 差额 {{ pb.diff }}</td>
+                <td>{{ t('import.padAmounts', { target: pb.target_amount, cumulative: pb.cumulative, diff: pb.diff }) }}</td>
               </tr>
             </tbody>
           </table>
           <p v-if="target === 'current'" class="im__must" role="alert">
-            当前账本模式不支持 pad/balance：请展开为普通交易后重导，或改用新建账本模式。
+            {{ t('import.padNotSupportedCurrent') }}
           </p>
         </div>
-        <p class="im__desc">修改文件或切换导入目标后重新解析即可；不会产生任何账本数据。</p>
+        <p class="im__desc">{{ t('import.rejectFooter') }}</p>
       </div>
 
       <div v-else class="fb-card im__card">
-        <h2>③ 确认导入内容</h2>
+        <h2>{{ t('import.step3Title') }}</h2>
         <table class="im__table">
           <tbody>
             <tr v-for="row in summaryRows" :key="row.label">
@@ -263,80 +330,87 @@ function gotoLedgers(): void {
           </tbody>
         </table>
         <p v-if="target === 'new'" class="im__desc">
-          将创建新账本「{{ preview.ledger_name }}」<span v-if="preview.title !== ''">（来源 title：{{ preview.title }}）</span>。
+          {{ newLedgerLine }}
         </p>
         <p v-else class="im__desc">
-          将写入当前账本；同名账户复用、重复交易自动跳过，不覆盖既有数据。
+          {{ t('import.confirmCurrent') }}
         </p>
         <p v-if="target === 'new' && preview.duplicate" class="im__must" role="alert">
-          已存在同名账本且交易数相同，疑似重复导入；确认无误可继续（不会覆盖原账本）。
+          {{ t('import.duplicateWarning') }}
         </p>
         <div v-if="warnings.length > 0" class="im__warnbox">
-          <p class="im__warnbox-title">发现 {{ warnings.length }} 条警告（不阻断导入，请核对源文件）：</p>
+          <p class="im__warnbox-title">{{ t('import.warningsTitle', { n: String(warnings.length) }) }}</p>
           <ul class="im__warnlist">
             <li v-for="w in warnings" :key="`c-${w.line}-${w.account}-${w.message}`">{{ w.message }}</li>
           </ul>
         </div>
         <div v-if="preview.pad_balance.length > 0" class="im__padbox">
-          <p class="im__desc">文件含 pad / balance 指令（{{ preview.pad_balance.length }} 条）：</p>
+          <p class="im__desc">{{ t('import.padBalanceList', { n: String(preview.pad_balance.length) }) }}</p>
           <table class="im__table">
             <tbody>
               <tr v-for="pb in preview.pad_balance" :key="`${pb.line}-${pb.account}-${pb.type}`">
-                <td>第 {{ pb.line }} 行</td>
-                <td>{{ pb.type === 'pad' ? '补平(pad)' : '断言(balance)' }}</td>
+                <td>{{ t('import.padRowLine', { line: String(pb.line) }) }}</td>
+                <td>{{ pb.type === 'pad' ? t('import.padTag') : t('import.balanceTag') }}</td>
                 <td>{{ pb.account }}</td>
-                <td>目标 {{ pb.target_amount }} · 累计 {{ pb.cumulative }} · 差额 {{ pb.diff }}</td>
+                <td>{{ t('import.padAmounts', { target: pb.target_amount, cumulative: pb.cumulative, diff: pb.diff }) }}</td>
               </tr>
             </tbody>
           </table>
           <p v-if="target === 'current'" class="im__must" role="alert">
-            当前账本模式不支持 pad/balance：请展开为普通交易后重导，或改用新建账本模式。
+            {{ t('import.padNotSupportedCurrent') }}
           </p>
         </div>
         <div class="im__buttons">
           <button class="fb-btn-primary im__btn" type="button" :disabled="busy" @click="runImport">
-            {{ busy ? '导入中…' : '执行导入' }}
+            {{ busy ? t('import.importing') : t('import.execute') }}
           </button>
-          <button class="fb-btn-ghost im__btn" type="button" :disabled="busy" @click="clearInput">取消</button>
+          <button class="fb-btn-ghost im__btn" type="button" :disabled="busy" @click="clearInput">{{ t('import.cancel') }}</button>
         </div>
       </div>
     </template>
 
     <!-- 导入结果 -->
     <div v-if="result !== null" class="fb-card im__card">
-      <h2>导入完成</h2>
+      <h2>{{ t('import.doneTitle') }}</h2>
       <p v-if="result.mode === 'new'" class="im__desc">
-        新账本「{{ result.ledger_name }}」：新建账户 {{ result.new_accounts }} · 交易 {{ result.created_transactions }}。
+        {{ t('import.resultNew', {
+          name: result.ledger_name,
+          accounts: String(result.new_accounts),
+          txns: String(result.created_transactions),
+        }) }}
       </p>
       <p v-else class="im__desc">
-        已写入当前账本：新建账户 {{ result.new_accounts }} · 复用账户 {{ result.reused_accounts }} ·
-        新建交易 {{ result.created_transactions }}<span v-if="result.skipped_transactions > 0"> · 跳过重复 {{ result.skipped_transactions }}</span>。
+        {{ resultCurrentLine }}
       </p>
       <template v-if="undoResult === null">
-        <p class="im__desc">批次 {{ result.import_batch_id }}：导入有误可撤销（仅回滚本批新建内容）。</p>
+        <p class="im__desc">{{ t('import.batchNote', { id: result.import_batch_id }) }}</p>
         <div class="im__buttons">
           <button
             v-if="result.mode === 'new'"
             class="fb-btn-primary im__btn"
             type="button"
             @click="gotoLedgers"
-          >去账本页查看</button>
+          >{{ t('import.gotoLedgers') }}</button>
           <button
             class="fb-btn-ghost im__btn"
             type="button"
             :disabled="undoing"
             @click="runUndo"
-          >{{ undoing ? '撤销中…' : '撤销本次导入' }}</button>
-          <button class="fb-btn-ghost im__btn" type="button" @click="clearInput">再导入一份</button>
+          >{{ undoing ? t('import.undoing') : t('import.undo') }}</button>
+          <button class="fb-btn-ghost im__btn" type="button" @click="clearInput">{{ t('import.importAnother') }}</button>
         </div>
       </template>
       <template v-else>
         <p class="im__desc" role="status">
-          已撤销：交易 {{ undoResult.removed_transactions }} · 分录 {{ undoResult.removed_postings }} ·
-          账户 {{ undoResult.removed_accounts }} · 币种 {{ undoResult.removed_commodities }}。
+          {{ t('import.undoResult', {
+            txns: String(undoResult.removed_transactions),
+            postings: String(undoResult.removed_postings),
+            accounts: String(undoResult.removed_accounts),
+            commodities: String(undoResult.removed_commodities),
+          }) }}
         </p>
         <div class="im__buttons">
-          <button class="fb-btn-ghost im__btn" type="button" @click="clearInput">关闭</button>
+          <button class="fb-btn-ghost im__btn" type="button" @click="clearInput">{{ t('import.close') }}</button>
         </div>
       </template>
     </div>

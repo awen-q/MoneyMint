@@ -16,6 +16,7 @@ import { accountApi, commodityApi, transactionApi } from '@/api/client'
 import { ApiError, codeMessage } from '@/api/errors'
 import type { AccountView, CommodityInUseDetails, CommodityView, TransactionView } from '@/api/types'
 import { computeBalanceSummary, type SummaryAccount } from '@/core/record'
+import { t } from '@/i18n'
 import { useSessionStore } from '@/stores/session'
 import MoneyText from '@/components/MoneyText.vue'
 
@@ -113,7 +114,7 @@ function messageOf(err: unknown): string {
     const mapped = err.code === undefined ? '' : codeMessage(err.code)
     return mapped !== '' ? mapped : err.message
   }
-  return '币种数据加载失败'
+  return t('commodities.errLoad')
 }
 
 /** 把 409 的四个分项明细拼成中文可读原因（容忍旧响应缺字段）。 */
@@ -124,20 +125,20 @@ function usageText(details: CommodityInUseDetails | null): string {
   const parts: string[] = []
   const names = details.accounts === undefined ? [] : details.accounts
   if (names.length > 0) {
-    parts.push(`${names.length} 个账户设为限定币种（如 ${names[0]}）`)
+    parts.push(t('commodities.usageAccounts', { n: String(names.length), name: names[0] }))
   }
   const postings = details.postings === undefined ? 0 : details.postings
   const prices = details.prices === undefined ? 0 : details.prices
   if (postings > 0) {
-    parts.push(`${postings} 笔交易分录`)
+    parts.push(t('commodities.usagePostings', { n: String(postings) }))
   }
   if (prices > 0) {
-    parts.push(`${prices} 条价格`)
+    parts.push(t('commodities.usagePrices', { n: String(prices) }))
   }
   if (details.is_default === true) {
-    parts.push('当前账本默认币种：请先在账本设置中改默认币种')
+    parts.push(t('commodities.usageDefault'))
   }
-  return parts.join('、')
+  return parts.join(t('commodities.usageSeparator'))
 }
 
 async function load(): Promise<void> {
@@ -165,7 +166,7 @@ async function submitCreate(): Promise<void> {
   }
   const symbol = newSymbol.value.trim()
   if (symbol === '') {
-    actionError.value = '请输入币种代码（如 USD，须以大写字母开头）'
+    actionError.value = t('commodities.errSymbolRequired')
     return
   }
   busy.value = true
@@ -176,7 +177,7 @@ async function submitCreate(): Promise<void> {
     await commodityApi.create({ symbol, name: newName.value.trim() })
     newSymbol.value = ''
     newName.value = ''
-    notice.value = `币种 ${symbol} 已添加`
+    notice.value = t('commodities.noticeCreated', { symbol })
     await load()
   } catch (err) {
     actionError.value = messageOf(err)
@@ -195,7 +196,7 @@ async function remove(row: CommodityView): Promise<void> {
   usage.value = null
   try {
     await commodityApi.remove(row.uuid)
-    notice.value = `币种 ${row.symbol} 已删除（同名再次添加即可恢复）`
+    notice.value = t('commodities.noticeRemoved', { symbol: row.symbol })
     await load()
   } catch (err) {
     actionError.value = messageOf(err)
@@ -225,41 +226,41 @@ onMounted(() => {
 <template>
   <section class="cmd">
     <header class="cmd__hero fb-hero">
-      <span class="cmd__label">币种管理 · 账本默认 {{ session.defaultCommodity }}</span>
+      <span class="cmd__label">{{ t('commodities.title', { commodity: session.defaultCommodity }) }}</span>
     </header>
 
     <div v-if="loadError" class="fb-card cmd__state cmd__state--error">
       <p>{{ loadError }}</p>
-      <button class="fb-btn-ghost" type="button" @click="load">重新加载</button>
+      <button class="fb-btn-ghost" type="button" @click="load">{{ t('commodities.reload') }}</button>
     </div>
-    <div v-else-if="loading" class="fb-card cmd__state">正在加载币种数据…</div>
+    <div v-else-if="loading" class="fb-card cmd__state">{{ t('commodities.loading') }}</div>
 
     <template v-else>
       <div class="fb-card cmd__card">
-        <h3 class="cmd__title">币种清单（{{ commodities.length }}）</h3>
-        <p v-if="commodities.length === 0" class="cmd__empty">账本里还没有登记币种。</p>
+        <h3 class="cmd__title">{{ t('commodities.listTitle', { n: String(commodities.length) }) }}</h3>
+        <p v-if="commodities.length === 0" class="cmd__empty">{{ t('commodities.listEmpty') }}</p>
         <div v-else class="cmd__tbl-wrap">
           <table class="cmd__table">
             <thead>
               <tr>
-                <th>代码</th>
-                <th>名称</th>
-                <th>精度</th>
-                <th>状态</th>
-                <th v-if="canWrite">操作</th>
+                <th>{{ t('commodities.colCode') }}</th>
+                <th>{{ t('commodities.colName') }}</th>
+                <th>{{ t('commodities.colPrecision') }}</th>
+                <th>{{ t('commodities.colStatus') }}</th>
+                <th v-if="canWrite">{{ t('commodities.colActions') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="row in commodities" :key="row.uuid">
                 <td>
                   {{ row.symbol }}
-                  <span v-if="row.is_default === true" class="cmd__main">默认</span>
+                  <span v-if="row.is_default === true" class="cmd__main">{{ t('commodities.default') }}</span>
                 </td>
                 <td>{{ row.name }}</td>
                 <td>{{ row.precision }}</td>
                 <td>
-                  <span v-if="row.used === true" class="cmd__used">被引用</span>
-                  <span v-else class="cmd__free">可删除</span>
+                  <span v-if="row.used === true" class="cmd__used">{{ t('commodities.used') }}</span>
+                  <span v-else class="cmd__free">{{ t('commodities.free') }}</span>
                 </td>
                 <td v-if="canWrite">
                   <button
@@ -267,7 +268,7 @@ onMounted(() => {
                     type="button"
                     :disabled="busy"
                     @click="remove(row)"
-                  >删除</button>
+                  >{{ t('commodities.delete') }}</button>
                 </td>
               </tr>
             </tbody>
@@ -276,49 +277,49 @@ onMounted(() => {
       </div>
 
       <div v-if="canWrite" class="fb-card cmd__card">
-        <h3 class="cmd__title">新增币种</h3>
+        <h3 class="cmd__title">{{ t('commodities.createTitle') }}</h3>
         <div class="cmd__create">
           <label class="cmd__field">
-            <span>币种代码（大写字母开头，如 USD）</span>
+            <span>{{ t('commodities.symbolLabel') }}</span>
             <input v-model="newSymbol" class="fb-input" type="text" placeholder="USD" />
           </label>
           <label class="cmd__field">
-            <span>名称（可选，如 美元）</span>
-            <input v-model="newName" class="fb-input" type="text" placeholder="美元" />
+            <span>{{ t('commodities.nameLabel') }}</span>
+            <input v-model="newName" class="fb-input" type="text" :placeholder="t('commodities.namePlaceholder')" />
           </label>
           <button class="fb-btn-primary" type="button" :disabled="busy" @click="submitCreate">
-            {{ busy ? '处理中…' : '添加' }}
+            {{ busy ? t('commodities.working') : t('commodities.add') }}
           </button>
         </div>
-        <p class="cmd__hint">精度固定为 2 位（本版不提供精度修改）；同名币种若曾被删除，会恢复原记录而不是新建一条。</p>
+        <p class="cmd__hint">{{ t('commodities.createHint') }}</p>
       </div>
-      <p v-else class="fb-card cmd__hint cmd__viewer">只读成员可查看币种，新增与删除需 editor / owner 权限。</p>
+      <p v-else class="fb-card cmd__hint cmd__viewer">{{ t('commodities.viewerHint') }}</p>
 
       <p v-if="notice" class="cmd__notice cmd__notice--ok" role="status">{{ notice }}</p>
       <p v-if="actionError" class="cmd__notice cmd__notice--err" role="alert">{{ actionError }}</p>
       <div v-if="usage !== null" class="fb-card cmd__usage" role="alert">
-        <p class="cmd__usage-title">无法删除：该币种仍被引用</p>
+        <p class="cmd__usage-title">{{ t('commodities.inUseTitle') }}</p>
         <p class="cmd__usage-text">{{ usageText(usage) }}</p>
       </div>
 
       <div class="fb-card cmd__card">
-        <h3 class="cmd__title">余额聚合（只读）</h3>
-        <p v-if="rows.length === 0" class="cmd__empty">账本里还没有任何币种余额。</p>
+        <h3 class="cmd__title">{{ t('commodities.summaryTitle') }}</h3>
+        <p v-if="rows.length === 0" class="cmd__empty">{{ t('commodities.summaryEmpty') }}</p>
         <div v-else class="cmd__tbl-wrap">
           <table class="cmd__table">
             <thead>
               <tr>
-                <th>币种</th>
-                <th>总资产</th>
-                <th>负债</th>
-                <th>净资产</th>
-                <th>账户</th>
-                <th>交易</th>
+                <th>{{ t('commodities.colCommodity') }}</th>
+                <th>{{ t('commodities.colAssets') }}</th>
+                <th>{{ t('commodities.colLiabilities') }}</th>
+                <th>{{ t('commodities.colNetWorth') }}</th>
+                <th>{{ t('commodities.colAccounts') }}</th>
+                <th>{{ t('commodities.colTxns') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="row in rows" :key="row.code">
-                <td>{{ row.code }}<span v-if="row.isMain" class="cmd__main">默认</span></td>
+                <td>{{ row.code }}<span v-if="row.isMain" class="cmd__main">{{ t('commodities.default') }}</span></td>
                 <td><MoneyText :amount="row.assets" :commodity="row.code" size="sm" /></td>
                 <td><MoneyText :amount="row.liabilities" :commodity="row.code" size="sm" /></td>
                 <td><MoneyText :amount="row.netWorth" :commodity="row.code" size="sm" /></td>
@@ -328,7 +329,7 @@ onMounted(() => {
             </tbody>
           </table>
         </div>
-        <p class="cmd__hint">聚合口径来自账户余额与交易分录，与后端删除门禁的引用检查相互独立。</p>
+        <p class="cmd__hint">{{ t('commodities.summaryHint') }}</p>
       </div>
     </template>
   </section>

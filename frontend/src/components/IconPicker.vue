@@ -14,6 +14,7 @@
 import { computed, ref, watch } from 'vue'
 
 import { ACCOUNT_ICON_PRESETS, validateIconCodePoints } from '@/core/accounts'
+import { t } from '@/i18n'
 
 const props = defineProps<{
   /** 当前值（空串 = 未设置）。 */
@@ -60,7 +61,7 @@ function clearIcon(): void {
 </script>
 
 <template>
-  <div class="ipick" role="group" aria-label="账户图标选择">
+  <div class="ipick" role="group" :aria-label="t('common.iconPicker.label')">
     <div class="ipick__grid">
       <button
         v-for="preset in ACCOUNT_ICON_PRESETS"
@@ -79,7 +80,7 @@ function clearIcon(): void {
         v-model="customInput"
         class="fb-input ipick__input"
         type="text"
-        placeholder="自定义 emoji 或字符（可选）"
+        :placeholder="t('common.iconPicker.customPlaceholder')"
         :disabled="disabled"
         @change="commitCustom"
       />
@@ -88,10 +89,10 @@ function clearIcon(): void {
       </span>
     </div>
     <p v-if="tooLong" class="ipick__hint ipick__hint--warn" role="status">
-      图标需不超过 8 个字符的 emoji，请删减后重试
+      {{ t('common.iconPicker.tooLong') }}
     </p>
     <button type="button" class="ipick__clear" :disabled="disabled" @click="clearIcon">
-      清除图标（恢复默认 📁）
+      {{ t('common.iconPicker.clear') }}
     </button>
   </div>
 </template>

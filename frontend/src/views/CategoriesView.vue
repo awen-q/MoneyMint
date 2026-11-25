@@ -25,6 +25,7 @@ import {
 import { buildSortOrders, moveItem, sortBySortOrder } from '@/core/ordering'
 import { accountLabel, accountOptionLabel, indentOptionLabel, todayString } from '@/core/record'
 import { readCategoryOrder, writeCategoryOrder } from '@/core/storage'
+import { t } from '@/i18n'
 import { markDirty } from '@/stores/dataFreshness'
 import { useSessionStore } from '@/stores/session'
 import MoneyText from '@/components/MoneyText.vue'
@@ -56,7 +57,7 @@ const editTarget = ref<AccountView | null>(null)
 
 function askEdit(account: AccountView): void {
   if (session.isViewer) {
-    notice.value = '只读成员不能修改账户'
+    notice.value = t('categories.errViewerEdit')
     return
   }
   notice.value = ''
@@ -141,7 +142,7 @@ function onDragOver(event: DragEvent): void {
  */
 async function onDrop(groupType: string, index: number): Promise<void> {
   if (session.isViewer) {
-    notice.value = '只读成员不能调整排序'
+    notice.value = t('categories.errViewerSort')
     return
   }
   if (sorting.value || dragGroup.value !== groupType || dragIndex.value === null) {
@@ -180,7 +181,7 @@ async function onDrop(groupType: string, index: number): Promise<void> {
     return
   }
   sorting.value = true
-  notice.value = '正在保存排序…'
+  notice.value = t('categories.sortSaving')
   try {
     const res = await accountApi.updateSortOrders({ orders })
     if (res.updated === orders.length) {
@@ -204,16 +205,19 @@ async function onDrop(groupType: string, index: number): Promise<void> {
       if (session.ledgerId !== null) {
         writeCategoryOrder(session.ledgerId, remaining)
       }
-      notice.value = `排序已保存（${res.updated} 项，其他端刷新后同步）`
+      notice.value = t('categories.sortSaved', { n: String(res.updated) })
       markDirty('local-write')
     } else {
-      notice.value = `排序仅更新 ${res.updated}/${orders.length} 项，请刷新后核对`
+      notice.value = t('categories.sortPartial', {
+        n: String(res.updated),
+        total: String(orders.length),
+      })
     }
   } catch (err) {
     notice.value =
       err instanceof ApiError
-        ? `排序草稿已存本设备，但同步失败：${err.message}`
-        : '排序草稿已存本设备，但同步失败，请稍后重试'
+        ? t('categories.sortSyncFailedWith', { message: err.message })
+        : t('categories.sortSyncFailed')
   } finally {
     sorting.value = false
   }
@@ -239,9 +243,20 @@ const parentOptionsFlat = computed(() =>
 )
 
 /** 「无上级」动态明示结果形态：随类型切换联动（与 AccountForm 同文案口径）。 */
-const noParentOptionText = computed(
-  () => `无 · 直接挂在类型根下（生成 ${newType.value}:新段 两段全名）`,
+const noParentOptionText = computed(() =>
+  t('categories.noParentOption', { type: newType.value }),
 )
+
+/** 分组标题的本地化（core GROUP_LABELS 是中文，视图内等价映射，待 core 子批收敛）。 */
+function groupLabel(type: string): string {
+  if (type === 'Expenses') {
+    return t('categories.groupExpenses')
+  }
+  if (type === 'Income') {
+    return t('categories.groupIncome')
+  }
+  return type
+}
 
 function onNewNameChange(event: Event): void {
   newName.value = (event.target as HTMLInputElement).value
@@ -313,10 +328,10 @@ const customAsciiHint = computed(() => {
     return ''
   }
   if (value.indexOf(':') >= 0 || /\s/.test(value)) {
-    return '英文账号不能包含冒号或空格，例如 Food'
+    return t('accounts.form.asciiColonSpace')
   }
   if (!/^[A-Z0-9]/.test(value)) {
-    return '英文账号需以大写字母或数字开头，例如 Food（中文请填显示名）'
+    return t('accounts.form.asciiStartUpper')
   }
   return ''
 })
@@ -329,11 +344,11 @@ async function createCategory(): Promise<void> {
   notice.value = ''
   const label = newName.value.trim()
   if (label === '') {
-    notice.value = '请输入分类名称'
+    notice.value = t('categories.errNameRequired')
     return
   }
   if (label.split(':').some((part) => part.trim() === '')) {
-    notice.value = '分类名称的每一段都不能为空'
+    notice.value = t('categories.errNameSegmentEmpty')
     return
   }
   const parent = resolveNewParent()
@@ -352,11 +367,11 @@ async function createCategory(): Promise<void> {
     newName.value = ''
     newParentId.value = null
     customAscii.value = ''
-    notice.value = `分类「${label}」已创建`
+    notice.value = t('categories.noticeCreated', { name: label })
     markDirty('local-write')
     await load()
   } catch (err) {
-    notice.value = err instanceof ApiError ? err.message : '创建失败，请稍后重试'
+    notice.value = err instanceof ApiError ? err.message : t('categories.errCreate')
   } finally {
     creating.value = false
   }
@@ -373,7 +388,7 @@ function ledgerOpening(): string {
 
 function askDelete(account: AccountView): void {
   if (session.isViewer) {
-    notice.value = '只读成员不能删除分类'
+    notice.value = t('categories.errViewerDelete')
     return
   }
   notice.value = ''
@@ -389,12 +404,12 @@ async function confirmDelete(): Promise<void> {
   busyUuid.value = target.uuid
   try {
     await accountApi.close(target.uuid)
-    notice.value = `分类「${accountLabel(target)}」已关闭`
+    notice.value = t('categories.noticeClosed', { name: accountLabel(target) })
     deleteTarget.value = null
     markDirty('local-write')
     await load()
   } catch (err) {
-    notice.value = err instanceof ApiError ? `${err.message}` : '关闭失败，请稍后重试'
+    notice.value = err instanceof ApiError ? `${err.message}` : t('categories.errClose')
   } finally {
     busyUuid.value = null
   }
@@ -411,7 +426,7 @@ async function load(): Promise<void> {
       Object.assign(dragOrders, readCategoryOrder(session.ledgerId))
     }
   } catch (err) {
-    loadError.value = err instanceof ApiError ? err.message : '分类加载失败'
+    loadError.value = err instanceof ApiError ? err.message : t('categories.errLoad')
   } finally {
     loading.value = false
   }
@@ -439,18 +454,18 @@ onMounted(() => {
 <template>
   <section class="cats">
     <header class="cats__hero fb-hero">
-      <span class="cats__label">分类管理 · 分类即类型账户（三层命名）</span>
+      <span class="cats__label">{{ t('categories.hero') }}</span>
     </header>
 
     <div v-if="loadError" class="fb-card cats__state cats__state--error">
       <p>{{ loadError }}</p>
-      <button class="fb-btn-ghost" type="button" @click="load">重新加载</button>
+      <button class="fb-btn-ghost" type="button" @click="load">{{ t('common.reload') }}</button>
     </div>
-    <div v-else-if="loading" class="fb-card cats__state">正在加载分类…</div>
+    <div v-else-if="loading" class="fb-card cats__state">{{ t('categories.loading') }}</div>
 
     <template v-else>
       <div class="fb-card cats__card">
-        <h3>新建分类</h3>
+        <h3>{{ t('categories.createTitle') }}</h3>
         <div class="cats__create">
           <select
             class="fb-input cats__type"
@@ -458,8 +473,8 @@ onMounted(() => {
             :disabled="newParentId !== null"
             @change="onNewTypeChange"
           >
-            <option value="Expenses">支出分类</option>
-            <option value="Income">收入分类</option>
+            <option value="Expenses">{{ t('categories.typeExpenses') }}</option>
+            <option value="Income">{{ t('categories.typeIncome') }}</option>
           </select>
           <select
             class="fb-input cats__type"
@@ -473,29 +488,28 @@ onMounted(() => {
           <input
             class="fb-input cats__name"
             :value="newName"
-            placeholder="中文显示名，如：早餐"
+            :placeholder="t('categories.namePlaceholder')"
             @change="onNewNameChange"
           />
           <input
             v-if="session.isOwner"
             class="fb-input cats__ascii"
             v-model="customAscii"
-            placeholder="英文账号（可选），如 Food"
+            :placeholder="t('categories.asciiPlaceholder')"
           />
           <button type="button" class="fb-btn-primary cats__submit" :disabled="creating || session.isViewer" @click="createCategory">
-            {{ creating ? '创建中…' : '创建' }}
+            {{ creating ? t('categories.creating') : t('categories.create') }}
           </button>
         </div>
         <p class="cats__hint">
-          只填中文显示名即可，系统自动生成 Beancount 合法的英文全名；owner 可另填可选英文账号（留空仍自动生成）。
-          选中上级会通过 parent_uuid 建立显式父子关系，刷新 / 换端后层级不退化。拖拽行排序会自动保存并同步到其他端。
+          {{ t('categories.hint') }}
         </p>
         <p v-if="session.isOwner && customAsciiHint" class="cats__hint cats__hint--warn" role="status">{{ customAsciiHint }}</p>
       </div>
 
       <div v-for="group in groups" :key="group.type" class="fb-card cats__card">
-        <h3>{{ group.label }}（{{ group.rows.length }}）</h3>
-        <p v-if="group.rows.length === 0" class="cats__empty">暂无{{ group.label }}。</p>
+        <h3>{{ t('categories.groupHeading', { label: groupLabel(group.type), n: String(group.rows.length) }) }}</h3>
+        <p v-if="group.rows.length === 0" class="cats__empty">{{ t('categories.emptyGroup', { label: groupLabel(group.type) }) }}</p>
         <ul v-else class="cats__list">
           <li
             v-for="(row, index) in group.rows"
@@ -516,11 +530,11 @@ onMounted(() => {
             <span class="cats__info">
               <span class="cats__name">
                 {{ accountLabel(row.account) }}
-                <span v-if="isClosed(row.account)" class="cats__closed">已关闭</span>
+                <span v-if="isClosed(row.account)" class="cats__closed">{{ t('categories.closed') }}</span>
               </span>
               <span class="cats__meta">
                 {{ row.account.name }} · {{ balanceText(row.account) }}
-                <template v-if="row.childCount > 0"> · 小计 {{ rowSubtotalText(row) }}</template>
+                <template v-if="row.childCount > 0"> · {{ t('categories.subtotal') }} {{ rowSubtotalText(row) }}</template>
               </span>
             </span>
             <button
@@ -529,13 +543,13 @@ onMounted(() => {
               class="cats__edit"
               :disabled="busyUuid !== null"
               @click="askEdit(row.account)"
-            >编辑</button>
+            >{{ t('common.edit') }}</button>
             <button
               type="button"
               class="cats__delete"
               :disabled="busyUuid !== null || session.isViewer"
               @click="askDelete(row.account)"
-            >删除</button>
+            >{{ t('common.delete') }}</button>
           </li>
         </ul>
       </div>
@@ -551,16 +565,12 @@ onMounted(() => {
 
       <div v-if="deleteTarget !== null" class="cats__mask" @click.self="deleteTarget = null">
         <div class="cats__confirm">
-          <h3>关闭分类</h3>
-          <p class="cats__warn">
-            「{{ accountLabel(deleteTarget) }}」余额为
-            {{ balanceText(deleteTarget) }}。分类关闭走 Beancount close：
-            余额非 0 会被服务端拒绝并返回差额明细；确认继续？
-          </p>
+          <h3>{{ t('categories.closeTitle') }}</h3>
+          <p class="cats__warn">{{ t('categories.closeBody', { name: accountLabel(deleteTarget), balance: balanceText(deleteTarget) }) }}</p>
           <div class="cats__confirm-actions">
-            <button type="button" class="fb-btn-ghost" @click="deleteTarget = null">取消</button>
+            <button type="button" class="fb-btn-ghost" @click="deleteTarget = null">{{ t('common.cancel') }}</button>
             <button type="button" class="fb-btn-primary" :disabled="busyUuid !== null" @click="confirmDelete">
-              {{ busyUuid !== null ? '处理中…' : '确认关闭' }}
+              {{ busyUuid !== null ? t('categories.processing') : t('categories.confirmClose') }}
             </button>
           </div>
         </div>

@@ -14,6 +14,7 @@ import { ApiError } from '@/api/errors'
 import type { AccountView } from '@/api/types'
 import { balanceOf, buildAccountTree, flattenAccountTree, groupAccountsByType, isClosed } from '@/core/accounts'
 import { accountLabel } from '@/core/record'
+import { t } from '@/i18n'
 import { usePrivacyStore } from '@/stores/privacy'
 import { useSessionStore } from '@/stores/session'
 import MoneyText from '@/components/MoneyText.vue'
@@ -47,6 +48,17 @@ function subtotalOf(group: { subtotal: Record<string, string> }): string {
   return value === undefined ? '0.00' : value
 }
 
+/** 分组标题的本地化（core GROUP_LABELS 是中文，视图内等价映射，待 core 子批收敛）。 */
+function groupLabel(type: string): string {
+  if (type === 'Assets') {
+    return t('accounts.groupAssets')
+  }
+  if (type === 'Liabilities') {
+    return t('accounts.groupLiabilities')
+  }
+  return type
+}
+
 /** 父行（有子）显示聚合小计；叶子行显示自身余额。 */
 function rowBalanceText(row: {
   account: AccountView
@@ -69,7 +81,7 @@ function openDetail(account: AccountView): void {
 
 function openCreate(): void {
   if (session.isViewer) {
-    notice.value = '只读成员不能新建账户'
+    notice.value = t('accounts.errViewerCreate')
     return
   }
   notice.value = ''
@@ -80,11 +92,11 @@ function openCreate(): void {
 /** 0.6.0 S2：账户行「＋ 增加下级」，父项预填、类型继承且置灰。 */
 function openAddChild(account: AccountView): void {
   if (session.isViewer) {
-    notice.value = '只读成员不能增加下级'
+    notice.value = t('accounts.errViewerAddChild')
     return
   }
   if (isClosed(account)) {
-    notice.value = '已关户账户不能增加下级'
+    notice.value = t('accounts.errClosedAddChild')
     return
   }
   notice.value = ''
@@ -99,7 +111,7 @@ function closeForm(): void {
 
 function onFormSaved(): void {
   closeForm()
-  notice.value = '账户已保存，层级已刷新'
+  notice.value = t('accounts.noticeSaved')
   void load()
 }
 
@@ -110,7 +122,7 @@ async function load(): Promise<void> {
     const res = await accountApi.list({ includeClosed: true })
     accounts.value = Array.isArray(res.accounts) ? res.accounts : []
   } catch (err) {
-    loadError.value = err instanceof ApiError ? err.message : '账户加载失败'
+    loadError.value = err instanceof ApiError ? err.message : t('accounts.errLoad')
   } finally {
     loading.value = false
   }
@@ -133,24 +145,24 @@ onMounted(() => {
   <section class="accts">
     <header class="accts__hero fb-hero">
       <div class="accts__hero-top">
-        <span class="accts__label">账户管理 · {{ session.ledgerName }}</span>
-        <button type="button" class="accts__create" @click="openCreate">＋ 新建账户</button>
+        <span class="accts__label">{{ t('accounts.title', { name: session.ledgerName }) }}</span>
+        <button type="button" class="accts__create" @click="openCreate">{{ t('accounts.create') }}</button>
       </div>
     </header>
 
     <div v-if="loadError" class="fb-card accts__state accts__state--error">
       <p>{{ loadError }}</p>
-      <button class="fb-btn-ghost" type="button" @click="load">重新加载</button>
+      <button class="fb-btn-ghost" type="button" @click="load">{{ t('common.reload') }}</button>
     </div>
-    <div v-else-if="loading" class="fb-card accts__state">正在加载账户…</div>
+    <div v-else-if="loading" class="fb-card accts__state">{{ t('accounts.loading') }}</div>
 
     <template v-else>
       <div v-for="group in groups" :key="group.type" class="fb-card accts__card">
         <div class="accts__head">
-          <h3>{{ group.label }}</h3>
+          <h3>{{ groupLabel(group.type) }}</h3>
           <MoneyText :amount="subtotalOf(group)" :commodity="session.defaultCommodity" size="sm" />
         </div>
-        <p v-if="group.rows.length === 0" class="accts__empty">暂无{{ group.label }}账户。</p>
+        <p v-if="group.rows.length === 0" class="accts__empty">{{ t('accounts.emptyGroup', { label: groupLabel(group.type) }) }}</p>
         <ul v-else class="accts__list">
           <li
             v-for="row in group.rows"
@@ -161,8 +173,8 @@ onMounted(() => {
             <button type="button" class="accts__row-main" @click="openDetail(row.account)">
               <span class="accts__name">
                 {{ accountLabel(row.account) }}
-                <span v-if="row.childCount > 0" class="accts__closed">含 {{ row.childCount }} 个子账户</span>
-                <span v-if="isClosed(row.account)" class="accts__closed">已关户</span>
+                <span v-if="row.childCount > 0" class="accts__closed">{{ t('accounts.childCount', { n: String(row.childCount) }) }}</span>
+                <span v-if="isClosed(row.account)" class="accts__closed">{{ t('accounts.closed') }}</span>
               </span>
               <span class="accts__meta">{{ row.account.type }} · {{ row.account.open_date }} · {{ rowBalanceText(row) }}</span>
             </button>
@@ -171,12 +183,12 @@ onMounted(() => {
               type="button"
               class="fb-btn-ghost accts__child"
               @click="openAddChild(row.account)"
-            >＋ 下级</button>
+            >{{ t('accounts.addChild') }}</button>
           </li>
         </ul>
       </div>
 
-      <p class="accts__hint fb-muted">点击账户查看详情、设置期初余额或关户；「＋ 下级」可在该账户下增加子账户。</p>
+      <p class="accts__hint fb-muted">{{ t('accounts.hint') }}</p>
       <p v-if="notice" class="accts__notice" role="status">{{ notice }}</p>
     </template>
 

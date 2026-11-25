@@ -10,6 +10,11 @@
  *   并明确提示「请用备份中的账号重新登录」——本机登录态随用户表被替换而失效。
  *
  * 全库级操作：路由带 adminOnly 守卫，视图内再断言一次 is_admin（纵深防御）。
+ *
+ * i18n 阶段 2 子批 3（数据域）：用户可见文案走字典。**待收敛**：以下文案
+ * 原本由 `core/m2` 输出中文，本视图内做了等价映射（core 未改动）：
+ * `restoreCompareRows` 的四行表头、`restoreRejectionText` 的拒绝原因、
+ * `mapRestoreError` 的错误文案。
  */
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -17,12 +22,9 @@ import { useRouter } from 'vue-router'
 import { restoreApi } from '@/api/client'
 import { ApiError } from '@/api/errors'
 import type { RestorePreviewResult, RestoreResult } from '@/api/types'
-import {
-  RESTORE_CONFIRM_WORD,
-  mapRestoreError,
-  restoreCompareRows,
-  restoreRejectionText,
-} from '@/core/m2'
+import { RESTORE_CONFIRM_WORD } from '@/core/m2'
+import { t } from '@/i18n'
+import type { MessageKey } from '@/i18n/zh-CN'
 import { useSessionStore } from '@/stores/session'
 
 const session = useSessionStore()
@@ -41,9 +43,46 @@ const fileInput = ref<HTMLInputElement | null>(null)
 
 const isAdmin = computed(() => session.user !== null && session.user.is_admin === true)
 const confirmUnlocked = computed(() => confirmText.value === RESTORE_CONFIRM_WORD)
-const compareRows = computed(() =>
-  preview.value === null ? [] : restoreCompareRows(preview.value.backup, preview.value.current),
-)
+
+/** 「备份 vs 当前」覆盖量对比行（core/m2.restoreCompareRows 的视图内等价映射，待收敛）。 */
+const compareRows = computed(() => {
+  if (preview.value === null) {
+    return []
+  }
+  const backup = preview.value.backup
+  const current = preview.value.current
+  return [
+    { label: t('restore.compareUsers'), backup: backup.users, current: current.users },
+    { label: t('restore.compareLedgers'), backup: backup.ledgers, current: current.ledgers },
+    { label: t('restore.compareAccounts'), backup: backup.accounts, current: current.accounts },
+    { label: t('restore.compareTransactions'), backup: backup.transactions, current: current.transactions },
+  ]
+})
+
+/** 预检拒绝原因文案（core/m2.restoreRejectionText 的视图内等价映射，待收敛）。 */
+function rejectionText(target: RestorePreviewResult): string {
+  if (target.error !== undefined && target.error !== '') {
+    return target.error
+  }
+  const byReason: Record<string, MessageKey> = {
+    not_sqlite: 'restore.reject.not_sqlite',
+    integrity_failed: 'restore.reject.integrity_failed',
+    not_our_backup: 'restore.reject.not_our_backup',
+    future_version: 'restore.reject.future_version',
+    file_too_large: 'restore.reject.file_too_large',
+  }
+  const key = target.reason !== undefined ? byReason[target.reason] : undefined
+  return key === undefined ? t('restore.reject.generic') : t(key)
+}
+
+/** 恢复端点错误文案（core/m2.mapRestoreError 的视图内等价映射，待收敛）。 */
+function restoreErrorText(status: number, message: string): string {
+  if (status === 401) return t('restore.errLogin')
+  if (status === 403) return t('restore.errForbidden')
+  if (status === 400) return message !== '' ? message : t('restore.errUpload')
+  if (status >= 500) return t('restore.errServer')
+  return message !== '' ? message : t('restore.errGeneric')
+}
 
 function onFileChange(event: Event): void {
   const input = event.target as HTMLInputElement
@@ -74,7 +113,7 @@ async function runPreview(): Promise<void> {
     step.value = 'preview'
   } catch (err) {
     actionError.value =
-      err instanceof ApiError ? mapRestoreError(err.status, err.message) : mapRestoreError(0, '')
+      err instanceof ApiError ? restoreErrorText(err.status, err.message) : restoreErrorText(0, '')
   } finally {
     busy.value = false
   }
@@ -91,7 +130,7 @@ async function runRestore(): Promise<void> {
     step.value = 'done'
   } catch (err) {
     actionError.value =
-      err instanceof ApiError ? mapRestoreError(err.status, err.message) : mapRestoreError(0, '')
+      err instanceof ApiError ? restoreErrorText(err.status, err.message) : restoreErrorText(0, '')
   } finally {
     busy.value = false
   }
@@ -107,13 +146,13 @@ function backToLogin(): void {
 <template>
   <section class="rs">
     <header class="rs__hero fb-hero">
-      <span class="rs__title">还原备份</span>
-      <span class="rs__sub">从 .db 备份还原全库</span>
+      <span class="rs__title">{{ t('restore.title') }}</span>
+      <span class="rs__sub">{{ t('restore.subtitle') }}</span>
     </header>
 
     <div v-if="!isAdmin" class="fb-card rs__card" role="alert">
-      <h2>仅系统管理员可还原备份</h2>
-      <p>还原会替换全部账本与用户数据。请联系系统管理员操作。</p>
+      <h2>{{ t('restore.adminOnlyTitle') }}</h2>
+      <p>{{ t('restore.adminOnlyBody') }}</p>
     </div>
 
     <template v-else>
@@ -121,8 +160,8 @@ function backToLogin(): void {
 
       <!-- 第 1 步：选择备份文件 -->
       <div v-if="step === 'pick'" class="fb-card rs__card">
-        <h2>① 选择备份文件</h2>
-        <p class="rs__desc">支持本系统生成的 .db 备份文件（含从其他设备下载的副本）。</p>
+        <h2>{{ t('restore.step1Title') }}</h2>
+        <p class="rs__desc">{{ t('restore.step1Desc') }}</p>
         <input
           ref="fileInput"
           class="rs__file"
@@ -132,7 +171,7 @@ function backToLogin(): void {
         />
         <div class="rs__buttons">
           <button class="fb-btn-primary rs__btn" type="button" :disabled="file === null || busy" @click="runPreview">
-            {{ busy ? '预检中…' : '开始预检' }}
+            {{ busy ? t('restore.previewing') : t('restore.startPreview') }}
           </button>
         </div>
       </div>
@@ -140,18 +179,18 @@ function backToLogin(): void {
       <!-- 第 2 步：预检摘要 + 确认词解锁 -->
       <template v-else-if="step === 'preview' && preview !== null">
         <div v-if="!preview.valid" class="fb-card rs__card rs__reject" role="alert">
-          <h2>预检未通过，已拒绝还原</h2>
-          <p>{{ restoreRejectionText(preview) }}</p>
+          <h2>{{ t('restore.rejectTitle') }}</h2>
+          <p>{{ rejectionText(preview) }}</p>
           <div class="rs__buttons">
-            <button class="fb-btn-ghost rs__btn" type="button" @click="reset">重新选择文件</button>
+            <button class="fb-btn-ghost rs__btn" type="button" @click="reset">{{ t('restore.pickAgain') }}</button>
           </div>
         </div>
 
         <div v-else class="fb-card rs__card">
-          <h2>② 确认覆盖范围</h2>
+          <h2>{{ t('restore.step2Title') }}</h2>
           <table class="rs__table">
             <thead>
-              <tr><th>内容</th><th>备份中</th><th>当前</th></tr>
+              <tr><th>{{ t('restore.colContent') }}</th><th>{{ t('restore.colBackup') }}</th><th>{{ t('restore.colCurrent') }}</th></tr>
             </thead>
             <tbody>
               <tr v-for="row in compareRows" :key="row.label">
@@ -161,35 +200,39 @@ function backToLogin(): void {
               </tr>
             </tbody>
           </table>
-          <p class="rs__desc">schema 版本：备份 v{{ preview.schema_version }} / 当前 v{{ preview.current_version }}</p>
+          <p class="rs__desc">{{ t('restore.schemaVersion', { schema: String(preview.schema_version), current: String(preview.current_version) }) }}</p>
           <ul class="rs__warnings">
             <li v-for="w in preview.warnings" :key="w">{{ w }}</li>
           </ul>
           <label class="rs__confirm">
-            <span>输入 <strong>{{ RESTORE_CONFIRM_WORD }}</strong> 解锁执行：</span>
+            <span>{{ t('restore.confirmBefore') }}<strong>{{ RESTORE_CONFIRM_WORD }}</strong>{{ t('restore.confirmAfter') }}</span>
             <input v-model="confirmText" class="rs__input" type="text" autocomplete="off" :placeholder="RESTORE_CONFIRM_WORD" />
           </label>
           <div class="rs__buttons">
             <button class="fb-btn-primary rs__btn" type="button" :disabled="!confirmUnlocked || busy" @click="runRestore">
-              {{ busy ? '还原中…' : '执行还原' }}
+              {{ busy ? t('restore.restoring') : t('restore.execute') }}
             </button>
-            <button class="fb-btn-ghost rs__btn" type="button" :disabled="busy" @click="reset">取消</button>
+            <button class="fb-btn-ghost rs__btn" type="button" :disabled="busy" @click="reset">{{ t('restore.cancel') }}</button>
           </div>
         </div>
       </template>
 
       <!-- 第 3 步：结果 -->
       <div v-else-if="step === 'done' && result !== null" class="fb-card rs__card">
-        <h2>还原完成</h2>
+        <h2>{{ t('restore.doneTitle') }}</h2>
         <p class="rs__desc">
-          已替换：用户 {{ result.replaced.users }} · 账本 {{ result.replaced.ledgers }} ·
-          账户 {{ result.replaced.accounts }} · 交易 {{ result.replaced.transactions }}
+          {{ t('restore.replaced', {
+            users: String(result.replaced.users),
+            ledgers: String(result.replaced.ledgers),
+            accounts: String(result.replaced.accounts),
+            transactions: String(result.replaced.transactions),
+          }) }}
         </p>
-        <p v-if="result.snapshot" class="rs__desc">还原前快照：{{ result.snapshot }}（如需撤销，可再次还原此备份）</p>
-        <p class="rs__desc">库世代已更新：{{ result.new_instance_id }}，其他设备将自动全量重新同步。</p>
-        <p class="rs__must" role="alert">{{ result.warnings[0] || '请用备份中的账号重新登录' }}</p>
+        <p v-if="result.snapshot" class="rs__desc">{{ t('restore.snapshot', { snapshot: result.snapshot }) }}</p>
+        <p class="rs__desc">{{ t('restore.instanceUpdated', { id: result.new_instance_id }) }}</p>
+        <p class="rs__must" role="alert">{{ result.warnings[0] || t('restore.reloginHint') }}</p>
         <div class="rs__buttons">
-          <button class="fb-btn-primary rs__btn" type="button" @click="backToLogin">重新登录</button>
+          <button class="fb-btn-primary rs__btn" type="button" @click="backToLogin">{{ t('restore.relogin') }}</button>
         </div>
       </div>
     </template>

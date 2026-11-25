@@ -20,6 +20,7 @@ import { accountApi } from '@/api/client'
 import { ApiError, codeMessage } from '@/api/errors'
 import type { AccountView, UpdateAccountRequest } from '@/api/types'
 import { catIcon, validateIconCodePoints } from '@/core/accounts'
+import { t } from '@/i18n'
 import { markDirty } from '@/stores/dataFreshness'
 import { useSessionStore } from '@/stores/session'
 import IconPicker from '@/components/IconPicker.vue'
@@ -89,24 +90,24 @@ const canSubmit = computed(
     (color.value.trim() === '' || colorValid.value),
 )
 
-const offlineHint = computed(() => (online.value ? '' : '修改需联网'))
+const offlineHint = computed(() => (online.value ? '' : t('accounts.edit.offlineHint')))
 
 function colorMessageOf(err: unknown): string {
   if (err instanceof ApiError) {
     const mapped = err.code === undefined ? '' : codeMessage(err.code)
     return mapped !== '' ? mapped : err.message
   }
-  return '保存失败，请稍后重试'
+  return t('accounts.form.errSave')
 }
 
 /** 前置校验优先给可读文案；非法值不发出请求。 */
 function precheck(): string {
   if (!iconValid.value) {
-    return '图标需不超过 8 个字符的 emoji，请删减后重试'
+    return t('common.iconPicker.tooLong')
   }
   const trimmedColor = color.value.trim()
   if (trimmedColor !== '' && !colorValid.value) {
-    return '颜色需为 #RRGGBB 六位十六进制格式'
+    return t('accounts.edit.errColorInvalid')
   }
   return ''
 }
@@ -156,10 +157,10 @@ const previewIcon = computed(() => catIcon({ icon: icon.value }))
 
 <template>
   <div class="aes-mask" @click.self="close">
-    <section class="aes-panel" role="dialog" aria-modal="true" aria-label="编辑账户展示">
+    <section class="aes-panel" role="dialog" aria-modal="true" :aria-label="t('accounts.edit.dialogLabel')">
       <header class="aes-head">
-        <h3>编辑展示 · {{ account.name }}</h3>
-        <button class="aes-close" type="button" aria-label="关闭" @click="close">✕</button>
+        <h3>{{ t('accounts.edit.title', { name: account.name }) }}</h3>
+        <button class="aes-close" type="button" :aria-label="t('common.close')" @click="close">✕</button>
       </header>
 
       <div class="aes-body">
@@ -168,22 +169,22 @@ const previewIcon = computed(() => catIcon({ icon: icon.value }))
 
         <fieldset class="aes-fieldset" :disabled="!online || session.isViewer">
           <label class="aes-field">
-            <span>显示名（可选，清空即恢复显示 Beancount 全名）</span>
+            <span>{{ t('accounts.edit.displayNameLabel') }}</span>
             <input
               v-model="displayName"
               class="fb-input"
               type="text"
-              placeholder="如：招商储蓄 / 早餐"
+              :placeholder="t('accounts.form.displayNamePlaceholder')"
             />
           </label>
 
           <div class="aes-field">
-            <span>图标（可选）</span>
+            <span>{{ t('accounts.form.iconLabel') }}</span>
             <IconPicker v-model="icon" :disabled="!online || session.isViewer" />
           </div>
 
           <label class="aes-field">
-            <span>颜色（可选，#RRGGBB）</span>
+            <span>{{ t('accounts.edit.colorLabel') }}</span>
             <div class="aes-color-row">
               <span
                 class="aes-color-swatch"
@@ -194,30 +195,30 @@ const previewIcon = computed(() => catIcon({ icon: icon.value }))
                 v-model="color"
                 class="fb-input aes-color-input"
                 type="text"
-                placeholder="#RRGGBB（清空恢复默认）"
+                :placeholder="t('accounts.edit.colorPlaceholder')"
                 maxlength="7"
               />
             </div>
             <p v-if="color.trim() !== '' && !colorValid" class="aes-hint aes-hint--warn" role="status">
-              颜色需为 #RRGGBB 六位十六进制格式
+              {{ t('accounts.edit.errColorInvalid') }}
             </p>
           </label>
 
           <p class="aes-preview-line">
-            预览：<span
+            {{ t('accounts.edit.preview') }}<span
               class="aes-preview"
               :style="colorValid ? { color: color.trim() } : undefined"
             >{{ previewIcon }}</span>
             <span>{{ displayName.trim() !== '' ? displayName.trim() : account.display_name || account.name }}</span>
           </p>
         </fieldset>
-        <p class="aes-hint">展示字段不进 .beancount 导出，账目数字不受影响；其他端同步后一致。</p>
+        <p class="aes-hint">{{ t('accounts.edit.hint') }}</p>
       </div>
 
       <div class="aes-foot">
-        <button type="button" class="fb-btn-ghost" @click="close">取消</button>
+        <button type="button" class="fb-btn-ghost" @click="close">{{ t('common.cancel') }}</button>
         <button type="button" class="fb-btn-primary" :disabled="!canSubmit" @click="submit">
-          {{ submitting ? '保存中…' : '保存' }}
+          {{ submitting ? t('common.saving') : t('common.save') }}
         </button>
       </div>
     </section>

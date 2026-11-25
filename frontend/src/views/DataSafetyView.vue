@@ -11,6 +11,11 @@
  * §14.5 #3 不降级且按方案**补强**：旧版是导出后用响应头告警、不阻断；
  * 新版导出前先跑 `GET /api/identity/check`，不平即**阻断**并列出按币种差额。
  * 导出成功后仍读 `X-Ledger-*` 响应头做二次提示（双保险）。
+ *
+ * i18n 阶段 2 子批 3（数据域）：用户可见文案走字典。**待收敛**：以下文案
+ * 原本由 `core/batch3` 输出中文，本视图内做了等价映射（core 未改动）：
+ * `mapBackupError` 的错误文案、`formatIdentityDiffs` 的“、”分隔符；
+ * `relativeTime` / `formatBackupSize` 属日期/体积格式化，按约定不动。
  */
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -23,12 +28,12 @@ import {
   downloadBlob,
   downloadText,
   formatBackupSize,
-  formatIdentityDiffs,
   fromIdentityDiffs,
-  mapBackupError,
   relativeTime,
 } from '@/core/batch3'
 import { buildCsvRowsFromTransactions, buildTransactionsCsv } from '@/core/csv'
+import { formatAmount } from '@/core/Money'
+import { t } from '@/i18n'
 import { useSessionStore } from '@/stores/session'
 
 const session = useSessionStore()
@@ -57,7 +62,36 @@ const totalSize = computed(() => {
 })
 
 function messageOf(err: unknown): string {
-  return err instanceof ApiError ? err.message : '操作失败，请稍后重试'
+  return err instanceof ApiError ? err.message : t('dataSafety.errGeneric')
+}
+
+/** 备份错误码 → 文案（core/batch3.mapBackupError 的视图内等价映射，待收敛）。 */
+function backupErrorText(status: number, message: string): string {
+  switch (status) {
+    case 401:
+      return t('dataSafety.errLogin')
+    case 403:
+      return t('dataSafety.errForbidden')
+    case 409:
+      return t('dataSafety.errConflict')
+    case 503:
+      return t('dataSafety.errDisabled')
+    case 0:
+      return t('dataSafety.errNetwork')
+    default:
+      return message === '' ? t('dataSafety.errGeneric') : message
+  }
+}
+
+/** 差额明细文案（core/batch3.formatIdentityDiffs 的视图内等价映射，待收敛）。 */
+function identityDiffText(diffs: Array<{ commodity: string; amount: string }>): string {
+  const parts: string[] = []
+  for (const diff of diffs) {
+    const text = formatAmount(diff.amount)
+    const sign = text.charAt(0) === '-' || text === '0.00' ? '' : '+'
+    parts.push(`${diff.commodity} ${sign}${text}`)
+  }
+  return parts.join(t('dataSafety.diffSeparator'))
 }
 
 /** M2（P-19 / P-20）：导入 / 恢复向导页入口。 */
@@ -79,9 +113,7 @@ async function loadBackups(): Promise<void> {
     items.value = Array.isArray(res.items) ? res.items : []
   } catch (err) {
     backupError.value =
-      err instanceof ApiError
-        ? mapBackupError(err.status, err.message)
-        : mapBackupError(0, '')
+      err instanceof ApiError ? backupErrorText(err.status, err.message) : backupErrorText(0, '')
   } finally {
     backupLoading.value = false
   }
@@ -96,13 +128,11 @@ async function runBackup(): Promise<void> {
   notice.value = ''
   try {
     await backupApi.run()
-    notice.value = '备份已创建'
+    notice.value = t('dataSafety.noticeBackupCreated')
     await loadBackups()
   } catch (err) {
     backupError.value =
-      err instanceof ApiError
-        ? mapBackupError(err.status, err.message)
-        : mapBackupError(0, '')
+      err instanceof ApiError ? backupErrorText(err.status, err.message) : backupErrorText(0, '')
   } finally {
     backupBusy.value = false
   }
@@ -113,12 +143,10 @@ async function downloadBackup(name: string): Promise<void> {
   try {
     const blob = await backupApi.download(name)
     downloadBlob(name, blob)
-    notice.value = `已下载 ${name}`
+    notice.value = t('dataSafety.noticeDownloaded', { name })
   } catch (err) {
     backupError.value =
-      err instanceof ApiError
-        ? mapBackupError(err.status, err.message)
-        : mapBackupError(0, '')
+      err instanceof ApiError ? backupErrorText(err.status, err.message) : backupErrorText(0, '')
   }
 }
 
@@ -130,14 +158,14 @@ async function ensureBalanced(): Promise<boolean> {
     const res = await identityApi.check()
     if (!res.balanced) {
       unbalanced.value = true
-      diffText.value = formatIdentityDiffs(fromIdentityDiffs(res.diffs))
+      diffText.value = identityDiffText(fromIdentityDiffs(res.diffs))
       return false
     }
     unbalanced.value = false
     diffText.value = ''
     return true
   } catch (err) {
-    actionError.value = `导出前恒等式检查失败：${messageOf(err)}`
+    actionError.value = t('dataSafety.identityCheckFailed', { message: messageOf(err) })
     return false
   } finally {
     checking.value = false
@@ -156,12 +184,12 @@ async function exportFile(kind: 'beancount' | 'archive'): Promise<void> {
     const filename = kind === 'beancount' ? 'family.beancount' : 'ledger-beancount.zip'
     downloadBlob(filename, result.blob)
     if (!result.balanced) {
-      actionError.value = `已导出，但响应头提示账本不平：${formatIdentityDiffs(result.diffs)}`
+      actionError.value = t('dataSafety.exportedUnbalanced', { diffs: identityDiffText(result.diffs) })
     } else {
-      notice.value = `已导出 ${filename}`
+      notice.value = t('dataSafety.noticeExported', { filename })
     }
   } catch (err) {
-    actionError.value = `导出失败（需联网）：${messageOf(err)}`
+    actionError.value = t('dataSafety.exportFailed', { message: messageOf(err) })
   }
 }
 
@@ -173,10 +201,10 @@ async function exportCsv(): Promise<void> {
       Array.isArray(accountRes.accounts) ? accountRes.accounts : [],
     )
     downloadText('family-ledger.csv', buildTransactionsCsv(rows), 'text/csv')
-    notice.value = `已导出 CSV（${rows.length} 笔交易）`
+    notice.value = t('dataSafety.noticeExportedCsv', { n: String(rows.length) })
     actionError.value = ''
   } catch (err) {
-    actionError.value = `CSV 导出失败：${messageOf(err)}`
+    actionError.value = t('dataSafety.csvExportFailed', { message: messageOf(err) })
   }
 }
 
@@ -186,7 +214,7 @@ onMounted(() => { void loadBackups() })
 <template>
   <section class="ds">
     <header class="ds__hero fb-hero">
-      <span class="ds__title">数据安全</span>
+      <span class="ds__title">{{ t('dataSafety.title') }}</span>
     </header>
 
     <p v-if="notice" class="ds__notice ds__notice--ok" role="status">{{ notice }}</p>
@@ -194,77 +222,72 @@ onMounted(() => { void loadBackups() })
 
     <!-- 导出不平阻断：§14.5 #3 -->
     <div v-if="unbalanced" class="fb-card ds__block" role="alert">
-      <h2>账本不平，已阻断导出</h2>
-      <p>差额：{{ diffText || '（服务端未返回明细）' }}</p>
-      <p class="fb-muted">请先修正分录，确保按币种借贷平衡且导出能通过 bean-check。</p>
+      <h2>{{ t('dataSafety.unbalancedTitle') }}</h2>
+      <p>{{ t('dataSafety.diffLabel', { diffs: diffText || t('dataSafety.noDiffDetail') }) }}</p>
+      <p class="fb-muted">{{ t('dataSafety.unbalancedHint') }}</p>
     </div>
 
     <div class="fb-card ds__card">
-      <h2>导出</h2>
-      <p class="ds__desc">导出前会做恒等式检查；不平即阻断，并列出按币种差额。</p>
+      <h2>{{ t('dataSafety.exportTitle') }}</h2>
+      <p class="ds__desc">{{ t('dataSafety.exportDesc') }}</p>
       <div class="ds__buttons">
         <button class="fb-btn-primary ds__btn" type="button" :disabled="checking" @click="exportFile('beancount')">
-          {{ checking ? '检查中…' : '导出 Beancount' }}
+          {{ checking ? t('dataSafety.checking') : t('dataSafety.exportBeancount') }}
         </button>
-        <button class="fb-btn-ghost ds__btn" type="button" :disabled="checking" @click="exportFile('archive')">导出目录 zip</button>
-        <button class="fb-btn-ghost ds__btn" type="button" @click="exportCsv">导出 CSV</button>
+        <button class="fb-btn-ghost ds__btn" type="button" :disabled="checking" @click="exportFile('archive')">{{ t('dataSafety.exportArchive') }}</button>
+        <button class="fb-btn-ghost ds__btn" type="button" @click="exportCsv">{{ t('dataSafety.exportCsv') }}</button>
       </div>
     </div>
 
     <div class="fb-card ds__card">
-      <h2>导入</h2>
-      <p class="ds__desc">
-        Beancount 导入为独立新账本（不覆盖既有数据）；还原备份会替换全库并需要确认词解锁。
-      </p>
-      <p class="ds__desc">
-        恢复旧备份会让已删除的数据复活：备份文件里包含当时尚未删除的交易，
-        还原后这些交易会重新出现在账本与回收站里。永久删除只作用于当前库，无法从备份外恢复。
-      </p>
+      <h2>{{ t('dataSafety.importTitle') }}</h2>
+      <p class="ds__desc">{{ t('dataSafety.importDesc') }}</p>
+      <p class="ds__desc">{{ t('dataSafety.revivalNote') }}</p>
       <div class="ds__buttons">
-        <button class="fb-btn-primary ds__btn" type="button" @click="goImport">导入 Beancount</button>
-        <button v-if="isAdmin" class="fb-btn-ghost ds__btn" type="button" @click="goRestore">还原备份</button>
+        <button class="fb-btn-primary ds__btn" type="button" @click="goImport">{{ t('dataSafety.goImport') }}</button>
+        <button v-if="isAdmin" class="fb-btn-ghost ds__btn" type="button" @click="goRestore">{{ t('dataSafety.goRestore') }}</button>
       </div>
     </div>
 
     <!-- 备份：仅系统管理员渲染 -->
     <div v-if="isAdmin" class="fb-card ds__card">
       <div class="ds__card-head">
-        <h2>数据备份</h2>
-        <span v-if="backupBusy" class="fb-muted">正在备份…</span>
+        <h2>{{ t('dataSafety.backupTitle') }}</h2>
+        <span v-if="backupBusy" class="fb-muted">{{ t('dataSafety.backingUp') }}</span>
       </div>
-      <p v-if="backupLoading" class="ds__state">正在读取备份状态…</p>
+      <p v-if="backupLoading" class="ds__state">{{ t('dataSafety.loadingBackups') }}</p>
       <template v-else>
         <p v-if="backupError" class="ds__err">{{ backupError }}
-          <button class="fb-btn-ghost ds__btn" type="button" @click="loadBackups">重试</button>
+          <button class="fb-btn-ghost ds__btn" type="button" @click="loadBackups">{{ t('dataSafety.retry') }}</button>
         </p>
         <p v-else-if="items.length === 0" class="ds__state">
-          尚未创建备份。建议立即备份一次，并在其他设备保存一份。
+          {{ t('dataSafety.noBackups') }}
         </p>
         <p v-else class="ds__desc">
-          最近备份：{{ relativeTime(items[0].created_at) }} · 成功 {{ successfulItems.length }} 份 ·
-          占用 {{ formatBackupSize(totalSize) }}
+          {{ t('dataSafety.recentBackup', {
+            time: relativeTime(items[0].created_at),
+            count: String(successfulItems.length),
+            size: formatBackupSize(totalSize),
+          }) }}
         </p>
 
         <!-- B7：与「导入」卡片下方那段**逐字一致**（同一件事两种说法最容易被当成谣言）。 -->
-        <p class="ds__desc">
-          恢复旧备份会让已删除的数据复活：备份文件里包含当时尚未删除的交易，
-          还原后这些交易会重新出现在账本与回收站里。永久删除只作用于当前库，无法从备份外恢复。
-        </p>
+        <p class="ds__desc">{{ t('dataSafety.revivalNote') }}</p>
 
         <div class="ds__buttons">
-          <button class="fb-btn-primary ds__btn" type="button" :disabled="backupBusy" @click="runBackup">立即备份</button>
+          <button class="fb-btn-primary ds__btn" type="button" :disabled="backupBusy" @click="runBackup">{{ t('dataSafety.runBackup') }}</button>
           <button
             v-if="successfulItems.length > 0"
             class="fb-btn-ghost ds__btn"
             type="button"
             @click="downloadBackup(successfulItems[0].name)"
-          >下载最新备份</button>
+          >{{ t('dataSafety.downloadLatest') }}</button>
           <button
             v-if="items.length > 3"
             class="fb-btn-ghost ds__btn"
             type="button"
             @click="showAll = !showAll"
-          >{{ showAll ? '收起列表' : `查看全部（${items.length}）` }}</button>
+          >{{ showAll ? t('dataSafety.collapseList') : t('dataSafety.viewAll', { n: String(items.length) }) }}</button>
         </div>
 
         <ul v-if="showAll" class="ds__backups">
@@ -276,8 +299,12 @@ onMounted(() => { void loadBackups() })
               {{ item.name }}
               <small>
                 {{ backupSucceeded(item)
-                  ? `${item.trigger === 'manual' ? '手动' : '自动'} · ${formatBackupSize(item.size)} · ${relativeTime(item.created_at)}`
-                  : `失败：${item.error || '未知原因'}` }}
+                  ? t('dataSafety.backupMeta', {
+                    trigger: item.trigger === 'manual' ? t('dataSafety.triggerManual') : t('dataSafety.triggerAuto'),
+                    size: formatBackupSize(item.size),
+                    time: relativeTime(item.created_at),
+                  })
+                  : t('dataSafety.backupFailed', { reason: item.error || t('dataSafety.unknownReason') }) }}
               </small>
             </span>
             <button
@@ -285,11 +312,11 @@ onMounted(() => { void loadBackups() })
               class="fb-btn-ghost ds__btn"
               type="button"
               @click="downloadBackup(item.name)"
-            >下载</button>
+            >{{ t('dataSafety.download') }}</button>
           </li>
         </ul>
       </template>
-      <p class="ds__hint">备份包含全部账本的完整数据，建议把文件另存到其他磁盘。</p>
+      <p class="ds__hint">{{ t('dataSafety.backupHint') }}</p>
     </div>
   </section>
 </template>

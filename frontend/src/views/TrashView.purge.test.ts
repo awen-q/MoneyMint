@@ -25,6 +25,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 
 import { ApiError } from '@/api/errors'
 import type { PurgeLogEntry, PurgeSummary, TrashItemView } from '@/api/types'
+import { zhCN } from '@/i18n/zh-CN'
 import TrashView from '@/views/TrashView.vue'
 
 const h = vi.hoisted(() => ({
@@ -469,30 +470,30 @@ describe('B7-G：busy 期间所有入口 disabled（防双击）', () => {
 
 describe('B7-H：DataSafety 的「备份会让删除复活」提示两处逐字一致', () => {
   /**
-   * 定稿 §8.4：这句话必须同时出现在「数据备份」卡片（仅 isAdmin）与「导入」卡片
-   * （无门槛，普通成员也看得到），且**两处逐字一致**——同一件事两种说法最容易被
-   * 当成谣言。用源码文本断言（同 moneyTabular.test.ts 的先例），比挂载整个
-   * DataSafetyView 去比 textContent 更稳，也避开它的一大堆 backupApi mock。
+   * 定稿 §8.4：这句话必须同时出现在「导入」卡片（无门槛，普通成员也看得到）与
+   * 「数据备份」卡片（仅 isAdmin），且**两处逐字一致**——同一件事两种说法最容易被
+   * 当成谣言。
+   *
+   * i18n 迁移后断言形态调整：由源码中文字面量改为「单 key 双引用 + 字典值校验」
+   * （语义不变、保证更强）。迁移前两处各写一份中文，被改成两种说法也未必被发现；
+   * 现在两处共用 `dataSafety.revivalNote` 一个 key，只要锁死「该 key 在源码出现
+   * 恰为 2 次」即锁死「两处说法一致」，再叠加「字典值 === 定稿原句」锁死措辞本身。
    */
   // 用**渲染后**的形态（模板里换行 + 缩进会被压成一个空格），这才是用户看到的字。
   const SENTENCE =
     '恢复旧备份会让已删除的数据复活：备份文件里包含当时尚未删除的交易， ' +
     '还原后这些交易会重新出现在账本与回收站里。永久删除只作用于当前库，无法从备份外恢复。'
 
-  /** 把连续空白（含换行 + 模板缩进）压成单空格，等价于浏览器渲染后的文本。 */
-  function collapse(text: string): string {
-    return text.replace(/\s+/g, ' ')
-  }
-
-  it('两处（导入卡片 + 数据备份卡片）都写了同一段文案', () => {
+  it('两处（导入卡片 + 数据备份卡片）引用同一 key，且字典值与定稿原句逐字节一致', () => {
     // jsdom 环境下 import.meta.url 不是 file://（vite 用 http 代理模块），
     // 因此按 vitest 的 cwd（frontend/）取源文件，而不是 URL 相对定位。
-    const source = collapse(
-      readFileSync(resolve(process.cwd(), 'src/views/DataSafetyView.vue'), 'utf8'),
-    )
-    const occurrences = source.split(collapse(SENTENCE)).length - 1
-    expect(occurrences).toBe(2)
-    // 覆盖率护栏：不能被顺手挪进 isAdmin 分支后只剩一处。
-    expect(source).toContain('永久删除只作用于当前库')
+    const source = readFileSync(resolve(process.cwd(), 'src/views/DataSafetyView.vue'), 'utf8')
+    const reference = "{{ t('dataSafety.revivalNote') }}"
+    // 覆盖率护栏（等价改写自原「源码含中文字面量 2 次」）：两张卡片各一处，恰为 2；
+    // 不能被顺手挪进 isAdmin 备份卡片后只剩一处——导入卡片无门槛，普通成员也必须看到。
+    expect(source.split(reference).length - 1).toBe(2)
+    // 字典值即用户看到的字：与定稿原句逐字节相等（含「永久删除只作用于当前库」这句）。
+    expect(zhCN['dataSafety.revivalNote']).toBe(SENTENCE)
+    expect(SENTENCE).toContain('永久删除只作用于当前库')
   })
 })

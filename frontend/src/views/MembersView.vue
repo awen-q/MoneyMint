@@ -14,7 +14,7 @@ import { memberApi } from '@/api/client'
 import { ApiError } from '@/api/errors'
 import type { LedgerRole, MemberView } from '@/api/types'
 import PasswordInput from '@/components/PasswordInput.vue'
-import { roleLabel } from '@/core/batch3'
+import { t } from '@/i18n'
 import { useSessionStore } from '@/stores/session'
 
 const session = useSessionStore()
@@ -44,8 +44,22 @@ const currentRole = computed<LedgerRole | ''>(() => {
 })
 const isOwner = computed(() => currentRole.value === 'owner')
 
+/** 角色中文标签（值与原 core/batch3.roleLabel 逐字节一致，阶段 2 只迁视图）。 */
+function roleText(role: LedgerRole | ''): string {
+  if (role === 'owner') {
+    return t('common.roleOwner')
+  }
+  if (role === 'editor') {
+    return t('common.roleEditor')
+  }
+  if (role === 'viewer') {
+    return t('common.roleViewer')
+  }
+  return t('common.roleNone')
+}
+
 function messageOf(err: unknown): string {
-  return err instanceof ApiError ? err.message : '操作失败，请稍后重试'
+  return err instanceof ApiError ? err.message : t('members.errGeneric')
 }
 
 async function load(): Promise<void> {
@@ -92,20 +106,23 @@ function openInvite(): void {
 function submitInvite(): void {
   const username = inviteUsername.value.trim()
   if (username === '') {
-    actionError.value = '请输入用户名（对方需先注册）'
+    actionError.value = t('members.errUsernameRequired')
     return
   }
   void run(async () => {
     await memberApi.add({ username, role: inviteRole.value })
     inviteOpen.value = false
-  }, `已邀请「${username}」`)
+  }, t('members.noticeInvited', { name: username }))
 }
 
 function toggleRole(member: MemberView): void {
   const next: LedgerRole = member.role === 'viewer' ? 'editor' : 'viewer'
   void run(
     () => memberApi.updateRole(member.user_id, { role: next }),
-    `已将「${member.display_name || member.username}」改为${roleLabel(next)}`,
+    t('members.noticeRoleChanged', {
+      name: member.display_name || member.username,
+      role: roleText(next),
+    }),
   )
 }
 
@@ -117,7 +134,7 @@ function confirmRemove(): void {
   void run(async () => {
     await memberApi.remove(target.user_id)
     removeTarget.value = null
-  }, `已移除「${target.display_name || target.username}」`)
+  }, t('members.noticeRemoved', { name: target.display_name || target.username }))
 }
 
 function openReset(member: MemberView): void {
@@ -132,14 +149,14 @@ function submitReset(): void {
     return
   }
   if (resetPassword.value.length < 6) {
-    actionError.value = '新密码至少 6 位'
+    actionError.value = t('members.errPasswordTooShort')
     return
   }
   void run(async () => {
     await memberApi.resetPassword(target.user_id, { new_password: resetPassword.value })
     resetTarget.value = null
     resetPassword.value = ''
-  }, `已重置密码，该成员的全部会话已失效`)
+  }, t('members.noticeResetDone'))
 }
 
 watch(() => session.ledgerId, () => { void load() })
@@ -149,19 +166,19 @@ onMounted(() => { void load() })
 <template>
   <section class="mem">
     <header class="mem__hero fb-hero">
-      <span class="mem__title">成员管理</span>
-      <span class="mem__sub">成员通过用户名加入，需先注册账号</span>
+      <span class="mem__title">{{ t('members.title') }}</span>
+      <span class="mem__sub">{{ t('members.subtitle') }}</span>
     </header>
 
     <div v-if="!isOwner" class="fb-card mem__state">
-      仅账本所有者（owner）可以管理成员。
+      {{ t('members.ownerOnly') }}
     </div>
 
     <template v-else>
       <div class="fb-card mem__toolbar">
-        <span class="fb-muted">共 {{ members.length }} 位成员</span>
+        <span class="fb-muted">{{ t('members.totalMembers', { n: String(members.length) }) }}</span>
         <button class="fb-btn-primary mem__btn" type="button" :disabled="busy" @click="openInvite">
-          邀请成员
+          {{ t('members.invite') }}
         </button>
       </div>
 
@@ -169,65 +186,65 @@ onMounted(() => { void load() })
       <p v-if="actionError" class="mem__notice mem__notice--err" role="alert">{{ actionError }}</p>
 
       <div v-if="inviteOpen" class="fb-card mem__panel">
-        <h2>邀请成员</h2>
+        <h2>{{ t('members.invite') }}</h2>
         <label class="mem__field">
-          <span>用户名（对方需先注册）</span>
-          <input v-model="inviteUsername" class="fb-input" type="text" placeholder="如 alice" />
+          <span>{{ t('members.usernameLabel') }}</span>
+          <input v-model="inviteUsername" class="fb-input" type="text" :placeholder="t('members.usernamePlaceholder')" />
         </label>
         <label class="mem__field">
-          <span>角色</span>
+          <span>{{ t('members.roleLabel') }}</span>
           <select v-model="inviteRole" class="fb-input">
-            <option value="viewer">只读：仅查看</option>
-            <option value="editor">编辑：可记账改账</option>
+            <option value="viewer">{{ t('members.roleViewerOption') }}</option>
+            <option value="editor">{{ t('members.roleEditorOption') }}</option>
           </select>
         </label>
         <div class="mem__actions">
-          <button class="fb-btn-ghost" type="button" @click="inviteOpen = false">取消</button>
-          <button class="fb-btn-primary" type="button" :disabled="busy" @click="submitInvite">确认邀请</button>
+          <button class="fb-btn-ghost" type="button" @click="inviteOpen = false">{{ t('members.cancel') }}</button>
+          <button class="fb-btn-primary" type="button" :disabled="busy" @click="submitInvite">{{ t('members.confirmInvite') }}</button>
         </div>
       </div>
 
       <div v-if="resetTarget" class="fb-card mem__panel">
-        <h2>重置「{{ resetTarget.display_name || resetTarget.username }}」的密码</h2>
-        <p class="fb-muted">成功后该成员的全部登录会话立即失效，需重新登录。</p>
+        <h2>{{ t('members.resetTitle', { name: resetTarget.display_name || resetTarget.username }) }}</h2>
+        <p class="fb-muted">{{ t('members.resetHint') }}</p>
         <label class="mem__field">
-          <span>新密码（至少 6 位）</span>
-          <PasswordInput v-model="resetPassword" placeholder="至少 6 位" />
+          <span>{{ t('members.newPasswordLabel') }}</span>
+          <PasswordInput v-model="resetPassword" :placeholder="t('members.newPasswordPlaceholder')" />
         </label>
         <div class="mem__actions">
-          <button class="fb-btn-ghost" type="button" @click="resetTarget = null">取消</button>
-          <button class="fb-btn-primary" type="button" :disabled="busy" @click="submitReset">确认重置</button>
+          <button class="fb-btn-ghost" type="button" @click="resetTarget = null">{{ t('members.cancel') }}</button>
+          <button class="fb-btn-primary" type="button" :disabled="busy" @click="submitReset">{{ t('members.confirmReset') }}</button>
         </div>
       </div>
 
       <div v-if="removeTarget" class="fb-card mem__panel mem__panel--danger">
-        <h2>移除成员？</h2>
-        <p>移除后「{{ removeTarget.display_name || removeTarget.username }}」将无法访问共享账本，其本地数据仍保留。</p>
+        <h2>{{ t('members.removeTitle') }}</h2>
+        <p>{{ t('members.removeBody', { name: removeTarget.display_name || removeTarget.username }) }}</p>
         <div class="mem__actions">
-          <button class="fb-btn-ghost" type="button" @click="removeTarget = null">取消</button>
-          <button class="fb-btn-primary" type="button" :disabled="busy" @click="confirmRemove">确认移除</button>
+          <button class="fb-btn-ghost" type="button" @click="removeTarget = null">{{ t('members.cancel') }}</button>
+          <button class="fb-btn-primary" type="button" :disabled="busy" @click="confirmRemove">{{ t('members.confirmRemove') }}</button>
         </div>
       </div>
 
       <div v-if="loadError" class="fb-card mem__state mem__state--err">
-        <p>加载失败：{{ loadError }}</p>
-        <button class="fb-btn-ghost" type="button" @click="load">重新加载</button>
+        <p>{{ t('members.loadFailed', { message: loadError }) }}</p>
+        <button class="fb-btn-ghost" type="button" @click="load">{{ t('members.reload') }}</button>
       </div>
-      <div v-else-if="loading" class="fb-card mem__state">正在加载成员…</div>
-      <div v-else-if="members.length === 0" class="fb-card mem__state">还没有成员。</div>
+      <div v-else-if="loading" class="fb-card mem__state">{{ t('members.loading') }}</div>
+      <div v-else-if="members.length === 0" class="fb-card mem__state">{{ t('members.empty') }}</div>
       <div v-else class="fb-card mem__list">
         <div v-for="member in members" :key="member.user_id" class="mem__row">
           <span class="mem__avatar">{{ (member.display_name || member.username).charAt(0) }}</span>
           <span class="mem__name">
             {{ member.display_name || member.username }}
-            <small>@{{ member.username }} · {{ roleLabel(member.role) }}</small>
+            <small>@{{ member.username }} · {{ roleText(member.role) }}</small>
           </span>
           <template v-if="member.role !== 'owner'">
             <button class="fb-btn-ghost mem__btn" type="button" :disabled="busy" @click="toggleRole(member)">
-              {{ member.role === 'viewer' ? '设为编辑' : '设为只读' }}
+              {{ member.role === 'viewer' ? t('members.setEditor') : t('members.setViewer') }}
             </button>
-            <button class="fb-btn-ghost mem__btn" type="button" :disabled="busy" @click="openReset(member)">重置密码</button>
-            <button class="fb-btn-ghost mem__btn mem__btn--danger" type="button" :disabled="busy" @click="removeTarget = member">移除</button>
+            <button class="fb-btn-ghost mem__btn" type="button" :disabled="busy" @click="openReset(member)">{{ t('members.resetPassword') }}</button>
+            <button class="fb-btn-ghost mem__btn mem__btn--danger" type="button" :disabled="busy" @click="removeTarget = member">{{ t('members.remove') }}</button>
           </template>
         </div>
       </div>

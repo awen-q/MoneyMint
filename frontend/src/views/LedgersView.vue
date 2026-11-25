@@ -19,8 +19,8 @@ import { computed, onMounted, ref } from 'vue'
 import { ledgerManageApi, transactionApi } from '@/api/client'
 import { ApiError, codeMessage } from '@/api/errors'
 import type { LedgerView } from '@/api/types'
-import { roleLabel } from '@/core/batch3'
 import { todayString } from '@/core/record'
+import { t } from '@/i18n'
 import { useSessionStore } from '@/stores/session'
 
 const session = useSessionStore()
@@ -82,13 +82,27 @@ function statOf(value: number | undefined): number {
   return value === undefined ? 0 : value
 }
 
+/** 角色中文标签（值与原 core/batch3.roleLabel 逐字节一致，阶段 2 只迁视图）。 */
+function roleText(role: LedgerView['role'] | ''): string {
+  if (role === 'owner') {
+    return t('common.roleOwner')
+  }
+  if (role === 'editor') {
+    return t('common.roleEditor')
+  }
+  if (role === 'viewer') {
+    return t('common.roleViewer')
+  }
+  return t('common.roleNone')
+}
+
 /** 稳定错误码优先走集中映射，未知码回退后端可读文案，绝不展示 HTTP 原文。 */
 function messageOf(err: unknown): string {
   if (err instanceof ApiError) {
     const mapped = err.code === undefined ? '' : codeMessage(err.code)
     return mapped !== '' ? mapped : err.message
   }
-  return '操作失败，请稍后重试'
+  return t('ledgers.errGeneric')
 }
 
 async function reload(): Promise<void> {
@@ -124,7 +138,7 @@ async function run(action: () => Promise<unknown>, success: string): Promise<voi
 function submitCreate(): void {
   const name = newName.value.trim()
   if (name === '') {
-    actionError.value = '请输入账本名称'
+    actionError.value = t('ledgers.errNameRequired')
     return
   }
   void run(async () => {
@@ -133,7 +147,7 @@ function submitCreate(): void {
     session.selectLedger(created.id)
     createOpen.value = false
     newName.value = ''
-  }, `已创建「${name}」并切换过去`)
+  }, t('ledgers.noticeCreated', { name }))
 }
 
 function openRename(id: number, name: string): void {
@@ -149,7 +163,7 @@ function submitRename(): void {
   }
   const name = renameValue.value.trim()
   if (name === '') {
-    actionError.value = '账本名称不能为空'
+    actionError.value = t('ledgers.errNameEmpty')
     return
   }
   let targetName = name
@@ -163,7 +177,7 @@ function submitRename(): void {
   void run(async () => {
     await ledgerManageApi.update(id, { name: targetName, default_commodity: commodity })
     renameTargetId.value = null
-  }, '账本已改名')
+  }, t('ledgers.noticeRenamed'))
 }
 
 /** 打开删除确认：owner 且除 owner 外无其他成员才可用（AC-1.2）。 */
@@ -175,7 +189,7 @@ function openDelete(ledger: LedgerView): void {
   }
   const others = statOf(ledger.member_count)
   if (others > 0) {
-    actionError.value = `还有 ${others} 位成员，需先移除后再删除账本`
+    actionError.value = t('ledgers.errHasMembers', { n: String(others) })
     return
   }
   deleteTargetId.value = ledger.id
@@ -199,7 +213,7 @@ function submitDelete(): void {
     closeDelete()
     // run 内的 reload() 会刷新清单；若删的是当前账本，
     // session.refreshLedgers() 兜底切到最小有效账本（AC-1.4）。
-  }, `已删除「${name}」`)
+  }, t('ledgers.noticeDeleted', { name }))
 }
 
 async function openOpening(): Promise<void> {
@@ -227,7 +241,7 @@ async function openOpening(): Promise<void> {
       bound = earliest
     }
   } catch (err) {
-    actionError.value = `期初日期仅在线可修改：${messageOf(err)}`
+    actionError.value = t('ledgers.errOpeningOnlineOnly', { message: messageOf(err) })
     return
   }
   openingBound.value = bound
@@ -243,11 +257,11 @@ function submitOpening(): void {
   }
   const value = openingValue.value
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    actionError.value = '请选择合法日期（YYYY-MM-DD）'
+    actionError.value = t('ledgers.errOpeningDateInvalid')
     return
   }
   if (value > openingBound.value) {
-    actionError.value = `期初日期不得晚于 ${openingBound.value}`
+    actionError.value = t('ledgers.errOpeningTooLate', { bound: openingBound.value })
     return
   }
   void run(async () => {
@@ -257,7 +271,7 @@ function submitOpening(): void {
       opening_date: value,
     })
     openingOpen.value = false
-  }, `期初日期已调整为 ${value}，期初交易已重建`)
+  }, t('ledgers.noticeOpeningUpdated', { date: value }))
 }
 
 function switchTo(id: number, name: string): void {
@@ -265,7 +279,7 @@ function switchTo(id: number, name: string): void {
     return
   }
   session.selectLedger(id)
-  notice.value = `已切换到「${name}」，各页面数据将按新账本重新加载`
+  notice.value = t('ledgers.noticeSwitched', { name })
   actionError.value = ''
 }
 
@@ -275,129 +289,137 @@ onMounted(() => { void reload() })
 <template>
   <section class="ldg">
     <header class="ldg__hero fb-hero">
-      <span class="ldg__title">账本管理</span>
-      <span class="ldg__sub">切换账本会重新拉取该账本数据</span>
+      <span class="ldg__title">{{ t('ledgers.title') }}</span>
+      <span class="ldg__sub">{{ t('ledgers.subtitle') }}</span>
     </header>
 
     <div class="fb-card ldg__toolbar">
-      <span class="fb-muted">共 {{ session.ledgers.length }} 个账本</span>
-      <button class="fb-btn-primary ldg__btn" type="button" :disabled="busy" @click="createOpen = true">新建账本</button>
+      <span class="fb-muted">{{ t('ledgers.totalLedgers', { n: String(session.ledgers.length) }) }}</span>
+      <button class="fb-btn-primary ldg__btn" type="button" :disabled="busy" @click="createOpen = true">{{ t('ledgers.create') }}</button>
     </div>
 
     <p v-if="notice" class="ldg__notice ldg__notice--ok" role="status">{{ notice }}</p>
     <p v-if="actionError" class="ldg__notice ldg__notice--err" role="alert">{{ actionError }}</p>
 
     <div v-if="createOpen" class="fb-card ldg__panel">
-      <h2>新建账本</h2>
+      <h2>{{ t('ledgers.create') }}</h2>
       <label class="ldg__field">
-        <span>账本名称（默认币种 CNY）</span>
-        <input v-model="newName" class="fb-input" type="text" placeholder="如 家庭日常" />
+        <span>{{ t('ledgers.nameLabel') }}</span>
+        <input v-model="newName" class="fb-input" type="text" :placeholder="t('ledgers.namePlaceholder')" />
       </label>
       <div class="ldg__actions">
-        <button class="fb-btn-ghost" type="button" @click="createOpen = false">取消</button>
-        <button class="fb-btn-primary" type="button" :disabled="busy" @click="submitCreate">创建并切换</button>
+        <button class="fb-btn-ghost" type="button" @click="createOpen = false">{{ t('ledgers.cancel') }}</button>
+        <button class="fb-btn-primary" type="button" :disabled="busy" @click="submitCreate">{{ t('ledgers.createAndSwitch') }}</button>
       </div>
     </div>
 
     <div v-if="renameTargetId !== null" class="fb-card ldg__panel">
-      <h2>重命名账本</h2>
+      <h2>{{ t('ledgers.renameTitle') }}</h2>
       <label class="ldg__field">
-        <span>新名称</span>
+        <span>{{ t('ledgers.newNameLabel') }}</span>
         <input v-model="renameValue" class="fb-input" type="text" />
       </label>
       <div class="ldg__actions">
-        <button class="fb-btn-ghost" type="button" @click="renameTargetId = null">取消</button>
-        <button class="fb-btn-primary" type="button" :disabled="busy" @click="submitRename">保存</button>
+        <button class="fb-btn-ghost" type="button" @click="renameTargetId = null">{{ t('ledgers.cancel') }}</button>
+        <button class="fb-btn-primary" type="button" :disabled="busy" @click="submitRename">{{ t('ledgers.save') }}</button>
       </div>
     </div>
 
     <div v-if="loadError" class="fb-card ldg__state ldg__state--err">
-      <p>加载失败：{{ loadError }}</p>
-      <button class="fb-btn-ghost" type="button" @click="reload">重新加载</button>
+      <p>{{ t('ledgers.loadFailed', { message: loadError }) }}</p>
+      <button class="fb-btn-ghost" type="button" @click="reload">{{ t('ledgers.reload') }}</button>
     </div>
-    <div v-else-if="loading" class="fb-card ldg__state">正在加载账本…</div>
-    <div v-else-if="session.ledgers.length === 0" class="fb-card ldg__state">还没有账本，创建一个吧。</div>
+    <div v-else-if="loading" class="fb-card ldg__state">{{ t('ledgers.loading') }}</div>
+    <div v-else-if="session.ledgers.length === 0" class="fb-card ldg__state">{{ t('ledgers.empty') }}</div>
     <div v-else class="fb-card ldg__list">
       <div v-for="ledger in session.ledgers" :key="ledger.id" class="ldg__row">
         <span class="ldg__icon">▤</span>
         <span class="ldg__name">
           {{ ledger.name }}
           <small>
-            {{ roleLabel(ledger.role) }} · 期初 {{ ledger.opening_date }} ·
-            {{ statOf(ledger.account_count) }} 个账户 / {{ statOf(ledger.transaction_count) }} 笔交易
+            {{ t('ledgers.rowMeta', {
+              role: roleText(ledger.role),
+              date: ledger.opening_date,
+              accounts: String(statOf(ledger.account_count)),
+              txns: String(statOf(ledger.transaction_count)),
+            }) }}
           </small>
-          <em v-if="ledger.id === session.ledgerId" class="ldg__current">当前</em>
+          <em v-if="ledger.id === session.ledgerId" class="ldg__current">{{ t('ledgers.current') }}</em>
         </span>
         <button
           v-if="ledger.id !== session.ledgerId"
           class="fb-btn-ghost ldg__btn"
           type="button"
           @click="switchTo(ledger.id, ledger.name)"
-        >切换</button>
+        >{{ t('ledgers.switch') }}</button>
         <button
           v-if="ledger.role === 'owner'"
           class="fb-btn-ghost ldg__btn"
           type="button"
           :disabled="busy"
           @click="openRename(ledger.id, ledger.name)"
-        >改名</button>
+        >{{ t('ledgers.rename') }}</button>
         <button
           v-if="ledger.role === 'owner'"
           class="fb-btn-ghost ldg__btn ldg__btn--danger"
           type="button"
           :disabled="busy || statOf(ledger.member_count) > 0"
-          :title="statOf(ledger.member_count) > 0 ? '还有 ' + statOf(ledger.member_count) + ' 位成员，需先移除' : '删除账本'"
+          :title="statOf(ledger.member_count) > 0 ? t('ledgers.deleteBlockedTitle', { n: String(statOf(ledger.member_count)) }) : t('ledgers.deleteTooltip')"
           @click="openDelete(ledger)"
-        >删除</button>
+        >{{ t('ledgers.delete') }}</button>
       </div>
     </div>
 
     <div v-if="isOwner && currentLedger" class="fb-card ldg__panel ldg__opening">
-      <h2>期初日期</h2>
-      <p class="fb-muted">当前：{{ currentLedger.opening_date }}。修改会冲正并重建全部期初交易，仅在线可操作。</p>
-      <button class="fb-btn-ghost" type="button" :disabled="busy" @click="openOpening">调整期初日期</button>
+      <h2>{{ t('ledgers.openingTitle') }}</h2>
+      <p class="fb-muted">{{ t('ledgers.openingHint', { date: currentLedger.opening_date }) }}</p>
+      <button class="fb-btn-ghost" type="button" :disabled="busy" @click="openOpening">{{ t('ledgers.openingAdjust') }}</button>
     </div>
 
     <div v-if="openingOpen" class="fb-card ldg__panel ldg__panel--danger">
-      <h2>修改期初日期？</h2>
+      <h2>{{ t('ledgers.openingConfirmTitle') }}</h2>
       <p>
-        期初日期将从 {{ currentLedger ? currentLedger.opening_date : '—' }} 调整为
-        {{ openingValue }}。将重建 {{ openingCount }} 笔期初交易（旧期初冲正后重新生成），确认继续吗？
+        {{ t('ledgers.openingConfirmBody', {
+          from: currentLedger ? currentLedger.opening_date : '—',
+          to: openingValue,
+          n: String(openingCount),
+        }) }}
       </p>
       <label class="ldg__field">
-        <span>新期初日期（不得晚于 {{ openingBound }}）</span>
+        <span>{{ t('ledgers.openingDateLabel', { bound: openingBound }) }}</span>
         <input v-model="openingValue" class="fb-input" type="date" :max="openingBound" />
       </label>
       <div class="ldg__actions">
-        <button class="fb-btn-ghost" type="button" @click="openingOpen = false">取消</button>
-        <button class="fb-btn-primary" type="button" :disabled="busy" @click="submitOpening">确认并重建</button>
+        <button class="fb-btn-ghost" type="button" @click="openingOpen = false">{{ t('ledgers.cancel') }}</button>
+        <button class="fb-btn-primary" type="button" :disabled="busy" @click="submitOpening">{{ t('ledgers.openingConfirmSubmit') }}</button>
       </div>
     </div>
 
     <div v-if="deleteTargetId !== null" class="fb-card ldg__panel ldg__panel--danger">
-      <h2>删除账本「{{ deleteName }}」？</h2>
+      <h2>{{ t('ledgers.deleteTitle', { name: deleteName }) }}</h2>
       <p>
-        该账本含 {{ deleteAccountCount }} 个账户、{{ deleteTxnCount }} 笔交易，
-        除你之外还有 {{ deleteMemberCount }} 位成员。删除前会自动生成一份
-        pre-ledger-delete 一致性快照（可在备份清单中恢复）；删除后账本不再出现在列表里，
-        本地残留的账本 id 由会话自动切换到最小有效账本。
+        {{ t('ledgers.deleteBody', {
+          accounts: String(deleteAccountCount),
+          txns: String(deleteTxnCount),
+          members: String(deleteMemberCount),
+        }) }}
       </p>
       <label class="ldg__field">
-        <span>请输入账本名「{{ deleteName }}」确认删除</span>
+        <span>{{ t('ledgers.deleteConfirmLabel', { name: deleteName }) }}</span>
         <input v-model="deleteConfirm" class="fb-input" type="text" :placeholder="deleteName" />
       </label>
       <div class="ldg__actions">
-        <button class="fb-btn-ghost" type="button" @click="closeDelete">取消</button>
+        <button class="fb-btn-ghost" type="button" @click="closeDelete">{{ t('ledgers.cancel') }}</button>
         <button
           class="fb-btn-primary"
           type="button"
           :disabled="busy || !canSubmitDelete"
           @click="submitDelete"
-        >确认删除</button>
+        >{{ t('ledgers.deleteConfirmSubmit') }}</button>
       </div>
     </div>
 
-    <p class="ldg__hint">提示：切换账本会重新加载该账本数据；旧账本尚未同步的离线变更将在批 5 的同步内核中处理。</p>
+    <p class="ldg__hint">{{ t('ledgers.hint') }}</p>
   </section>
 </template>
 

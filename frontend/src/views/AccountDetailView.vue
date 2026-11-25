@@ -29,6 +29,7 @@ import {
   postingAmountForAccount,
   todayString,
 } from '@/core/record'
+import { t } from '@/i18n'
 import { markDirty } from '@/stores/dataFreshness'
 import { useSessionStore } from '@/stores/session'
 import MoneyText from '@/components/MoneyText.vue'
@@ -226,7 +227,7 @@ function balanceMessageOf(err: unknown): string {
     const mapped = err.code === undefined ? '' : codeMessage(err.code)
     return mapped !== '' ? mapped : err.message
   }
-  return '余额校准失败，请稍后重试'
+  return t('accountDetail.errBalance')
 }
 
 /** 账户侧 journal（批 2.5 修 4a）：行金额取该账户自身分录的原值原符号。 */
@@ -270,12 +271,12 @@ function kindLabel(txn: TransactionView): string {
   // 统计 / postings / 后端 kind 口径均不受影响。
   const kind = displayKindOf(txn.postings, accounts.value)
   if (kind === 'transfer') {
-    return '转账'
+    return t('accountDetail.kindTransfer')
   }
   if (kind === 'opening') {
-    return '期初'
+    return t('accountDetail.kindOpening')
   }
-  return kind === 'income' ? '收入' : '支出'
+  return kind === 'income' ? t('accountDetail.kindIncome') : t('accountDetail.kindExpense')
 }
 
 function commodityBalance(code: string): string {
@@ -284,7 +285,7 @@ function commodityBalance(code: string): string {
 
 async function load(): Promise<void> {
   if (accountId.value === null) {
-    loadError.value = '缺少账户 id，请从账户列表进入'
+    loadError.value = t('accountDetail.errMissingId')
     return
   }
   loading.value = true
@@ -294,10 +295,10 @@ async function load(): Promise<void> {
     accounts.value = Array.isArray(accountRes.accounts) ? accountRes.accounts : []
     transactions.value = Array.isArray(txnRes.transactions) ? txnRes.transactions : []
     if (account.value === null) {
-      loadError.value = '未找到该账户（可能已关闭或不在当前账本）'
+      loadError.value = t('accountDetail.errNotFound')
     }
   } catch (err) {
-    loadError.value = err instanceof ApiError ? err.message : '账户详情加载失败'
+    loadError.value = err instanceof ApiError ? err.message : t('accountDetail.errLoad')
   } finally {
     loading.value = false
   }
@@ -322,7 +323,7 @@ async function loadBalancePreview(): Promise<void> {
 
 function openBalancePanel(): void {
   if (!canCalibrate.value) {
-    notice.value = '仅未关户的资产 / 负债 / 权益账户可校准余额'
+    notice.value = t('accountDetail.errCalibrateNotAllowed')
     return
   }
   notice.value = ''
@@ -334,7 +335,7 @@ function openBalancePanel(): void {
 
 function openBalanceConfirm(): void {
   if (!isPlainDecimal(balanceTarget.value)) {
-    balanceError.value = '请输入合法的定点十进制目标余额（可带负号）'
+    balanceError.value = t('accountDetail.errTargetInvalid')
     return
   }
   balanceError.value = ''
@@ -356,8 +357,8 @@ async function confirmBalance(): Promise<void> {
     balanceResult.value = result
     showBalanceConfirm.value = false
     balanceNotice.value = result.status === 'updated'
-      ? `已生成 v${result.version} 校准（旧版本仅标记失效，不删除）`
-      : `已生成校准交易（落账日 ${result.date}）`
+      ? t('accountDetail.noticeCalibrated', { version: String(result.version) })
+      : t('accountDetail.noticeCalibratedTxn', { date: result.date })
     markDirty('local-write')
     await Promise.all([load(), loadBalancePreview()])
   } catch (err) {
@@ -369,11 +370,11 @@ async function confirmBalance(): Promise<void> {
 
 function openOpening(): void {
   if (session.isViewer) {
-    notice.value = '只读成员不能修改期初'
+    notice.value = t('accountDetail.errViewerOpening')
     return
   }
   if (closed.value) {
-    notice.value = '已关户账户不能修改期初'
+    notice.value = t('accountDetail.errClosedOpening')
     return
   }
   notice.value = ''
@@ -382,11 +383,11 @@ function openOpening(): void {
 
 function openCloseConfirm(): void {
   if (session.isViewer) {
-    notice.value = '只读成员不能关户'
+    notice.value = t('accountDetail.errViewerClose')
     return
   }
   if (closed.value) {
-    notice.value = '该账户已关户'
+    notice.value = t('accountDetail.errAlreadyClosed')
     return
   }
   notice.value = ''
@@ -406,11 +407,11 @@ async function confirmClose(): Promise<void> {
   try {
     await accountApi.close(account.value.uuid)
     showCloseConfirm.value = false
-    notice.value = `已关户「${accountLabel(account.value)}」`
+    notice.value = t('accountDetail.noticeClosed', { name: accountLabel(account.value) })
     markDirty('local-write')
     await load()
   } catch (err) {
-    closeError.value = err instanceof ApiError ? err.message : '关户失败，请稍后重试'
+    closeError.value = err instanceof ApiError ? err.message : t('accountDetail.errClose')
     if (err instanceof ApiError && err.balances !== undefined) {
       closeBalances.value = err.balances
     }
@@ -420,7 +421,7 @@ async function confirmClose(): Promise<void> {
 }
 
 function onOpeningSaved(): void {
-  notice.value = '期初已保存（修改期初会由后端生成冲正 + 新建成对交易）'
+  notice.value = t('accountDetail.noticeOpeningSaved')
   void load()
 }
 
@@ -445,9 +446,9 @@ onMounted(() => {
 <template>
   <section class="acctd">
     <header class="acctd__hero fb-hero">
-      <button type="button" class="acctd__back" @click="goBack">‹ 返回</button>
+      <button type="button" class="acctd__back" @click="goBack">{{ t('accountDetail.back') }}</button>
       <div v-if="account !== null" class="acctd__hero-body">
-        <div class="acctd__label">{{ account.type }} · 开户 {{ account.open_date }}<template v-if="closed"> · 已关户（{{ account.close_date }}）</template></div>
+        <div class="acctd__label">{{ t('accountDetail.meta', { type: account.type, date: account.open_date }) }}<template v-if="closed">{{ t('accountDetail.closedMeta', { date: account.close_date ?? '' }) }}</template></div>
         <h1 class="acctd__name">
           <span
             class="acctd__icon"
@@ -467,66 +468,66 @@ onMounted(() => {
 
     <div v-if="loadError" class="fb-card acctd__state acctd__state--error">
       <p>{{ loadError }}</p>
-      <button class="fb-btn-ghost" type="button" @click="load">重新加载</button>
+      <button class="fb-btn-ghost" type="button" @click="load">{{ t('common.reload') }}</button>
     </div>
-    <div v-else-if="loading" class="fb-card acctd__state">正在加载账户详情…</div>
+    <div v-else-if="loading" class="fb-card acctd__state">{{ t('accountDetail.loading') }}</div>
 
     <template v-else-if="account !== null">
       <div class="fb-card acctd__card">
-        <button type="button" class="acctd__action" :disabled="!canManage" @click="openOpening">期初余额设置</button>
-        <button type="button" class="acctd__action acctd__action--ghost" :disabled="!canCalibrate" @click="openBalancePanel">余额校准</button>
-        <button type="button" class="acctd__action acctd__action--ghost" @click="openInGlobalTxns">在全局流水中查看本账户</button>
-        <button v-if="canEditVisual" type="button" class="acctd__action acctd__action--ghost" @click="openEditSheet">编辑展示（显示名 / 图标 / 颜色）</button>
+        <button type="button" class="acctd__action" :disabled="!canManage" @click="openOpening">{{ t('accountDetail.openingSetting') }}</button>
+        <button type="button" class="acctd__action acctd__action--ghost" :disabled="!canCalibrate" @click="openBalancePanel">{{ t('accountDetail.balanceCalibrate') }}</button>
+        <button type="button" class="acctd__action acctd__action--ghost" @click="openInGlobalTxns">{{ t('accountDetail.viewInGlobal') }}</button>
+        <button v-if="canEditVisual" type="button" class="acctd__action acctd__action--ghost" @click="openEditSheet">{{ t('accountDetail.editVisual') }}</button>
         <button type="button" class="acctd__action acctd__action--danger" :disabled="!canManage" @click="openCloseConfirm">
-          关闭账户（Beancount close）
+          {{ t('accountDetail.closeAccount') }}
         </button>
         <p v-if="notice" class="acctd__notice" role="status">{{ notice }}</p>
-        <p v-if="closed" class="acctd__hint">已关户账户保留全部历史交易，仅只读。</p>
+        <p v-if="closed" class="acctd__hint">{{ t('accountDetail.closedHint') }}</p>
       </div>
 
       <div v-if="showBalancePanel" class="fb-card acctd__card acctd__balance-panel">
-        <h3>余额校准</h3>
-        <p class="acctd__hint">口径为「截至 D 日初（前一日日终）」：累计只统计 D 之前的交易，补平分录自动落在 D-1。</p>
+        <h3>{{ t('accountDetail.balanceCalibrate') }}</h3>
+        <p class="acctd__hint">{{ t('accountDetail.calibrateHint') }}</p>
         <div class="acctd__balance-fields">
           <label class="acctd__field">
-            <span>指定日期 D</span>
+            <span>{{ t('accountDetail.asOfDate') }}</span>
             <input v-model="balanceAsOf" class="fb-input" type="date" />
           </label>
           <label class="acctd__field">
-            <span>币种</span>
+            <span>{{ t('common.commodity') }}</span>
             <select v-model="balanceCommodity" class="fb-input">
               <option v-for="code in balanceCommodityOptions" :key="code" :value="code">{{ code }}</option>
             </select>
           </label>
           <label class="acctd__field">
-            <span>目标余额（可带负号）</span>
-            <input v-model="balanceTarget" class="fb-input" type="text" placeholder="如 12350.00" />
+            <span>{{ t('accountDetail.targetLabel') }}</span>
+            <input v-model="balanceTarget" class="fb-input" type="text" :placeholder="t('accountDetail.targetPlaceholder')" />
           </label>
-          <button class="fb-btn-ghost" type="button" :disabled="balanceLoading" @click="loadBalancePreview">刷新预检</button>
+          <button class="fb-btn-ghost" type="button" :disabled="balanceLoading" @click="loadBalancePreview">{{ t('accountDetail.refreshPreview') }}</button>
         </div>
 
-        <p v-if="balanceLoading" class="acctd__hint">正在加载预检…</p>
+        <p v-if="balanceLoading" class="acctd__hint">{{ t('accountDetail.loadingPreview') }}</p>
         <p v-if="balancePreviewText" class="acctd__preview">{{ balancePreviewText }} {{ balanceCommodity }}</p>
         <p v-if="balanceError" class="acctd__warn acctd__warn--error" role="alert">{{ balanceError }}</p>
         <p v-if="balanceNotice" class="acctd__notice" role="status">{{ balanceNotice }}</p>
 
         <div v-if="balancePreview !== null && balancePreview.cumulative.length > 0" class="acctd__diff">
-          <p class="acctd__diff-label">各币种日初累计：</p>
+          <p class="acctd__diff-label">{{ t('accountDetail.cumulativeLabel') }}</p>
           <p v-for="item in balancePreview.cumulative" :key="item.commodity" class="acctd__hint">
             {{ item.commodity }} {{ item.amount }}
           </p>
         </div>
 
         <div v-if="balanceHistory.length > 0" class="acctd__diff">
-          <p class="acctd__diff-label">校准版本历史：</p>
+          <p class="acctd__diff-label">{{ t('accountDetail.historyLabel') }}</p>
           <ul class="acctd__list">
             <li v-for="item in balanceHistory" :key="item.transaction_uuid" class="acctd__row">
               <span class="acctd__row-info">
-                <span class="acctd__row-desc">{{ item.version }} · {{ item.reversed ? '已失效（被新版本冲正）' : '当前生效' }}</span>
+                <span class="acctd__row-desc">{{ item.version }} · {{ item.reversed ? t('accountDetail.reversed') : t('accountDetail.active') }}</span>
                 <span class="acctd__row-meta">
                   {{ item.created_at }} · {{ item.created_by_name || '—' }}
                   <template v-if="item.entries && item.entries.length > 0">
-                    · 差额 <template v-for="entry in item.entries" :key="entry.commodity">{{ entry.commodity }} {{ entry.amount }} </template>
+                    · {{ t('accountDetail.diffLabel') }} <template v-for="entry in item.entries" :key="entry.commodity">{{ entry.commodity }} {{ entry.amount }} </template>
                   </template>
                 </span>
               </span>
@@ -535,56 +536,55 @@ onMounted(() => {
         </div>
 
         <div class="acctd__confirm-actions">
-          <button type="button" class="fb-btn-ghost" @click="showBalancePanel = false">收起</button>
+          <button type="button" class="fb-btn-ghost" @click="showBalancePanel = false">{{ t('accountDetail.collapse') }}</button>
           <button
             type="button"
             class="fb-btn-primary"
             :disabled="balanceSubmitting || balancePreviewText === ''"
             @click="openBalanceConfirm"
-          >生成校准交易</button>
+          >{{ t('accountDetail.generate') }}</button>
         </div>
       </div>
 
       <div v-if="showBalanceConfirm" class="fb-card acctd__card acctd__confirm">
-        <h3>确认生成校准交易</h3>
+        <h3>{{ t('accountDetail.confirmTitle') }}</h3>
         <p class="acctd__warn">{{ balancePreviewText }} {{ balanceCommodity }}</p>
         <p v-if="laterTxns" class="acctd__warn acctd__warn--error">
-          此操作会改变 D 之后的所有余额，请确认目标值无误。
+          {{ t('accountDetail.confirmLaterWarn') }}
         </p>
         <!-- 负债账户目标余额为正：疑似方向填反，强制显式确认后才能生成。 -->
         <p v-if="liabilityPositiveTarget" class="acctd__warn acctd__warn--error" role="alert">
-          负债账户目标余额为正数，疑似方向填反（本系统欠款记为负数，如 -11398.55），请确认。
+          {{ t('accountDetail.liabilityWarn') }}
         </p>
         <label v-if="liabilityPositiveTarget" class="acctd__confirm-check">
           <input v-model="liabilityConfirmChecked" type="checkbox" />
-          <span>我已确认目标余额方向无误</span>
+          <span>{{ t('accountDetail.liabilityConfirm') }}</span>
         </label>
         <p class="acctd__hint">
-          将新增一笔普通交易（日期 {{ balanceAsOf }} 的前一日），差额记入 Equity:Opening-Balances；
-          同一日期再次设置会冲正旧校准并生成新版本，不覆盖原交易。
+          {{ t('accountDetail.confirmHint', { date: balanceAsOf }) }}
         </p>
         <div class="acctd__confirm-actions">
-          <button type="button" class="fb-btn-ghost" @click="showBalanceConfirm = false">取消</button>
+          <button type="button" class="fb-btn-ghost" @click="showBalanceConfirm = false">{{ t('common.cancel') }}</button>
           <button
             type="button"
             class="fb-btn-primary"
             :disabled="balanceSubmitting || (liabilityPositiveTarget && !liabilityConfirmChecked)"
             @click="confirmBalance"
           >
-            {{ balanceSubmitting ? '生成中…' : '确认生成' }}
+            {{ balanceSubmitting ? t('accountDetail.generating') : t('accountDetail.confirmGenerate') }}
           </button>
         </div>
       </div>
 
       <div v-if="showCloseConfirm" class="fb-card acctd__card acctd__confirm">
-        <h3>确认关闭账户</h3>
-        <p class="acctd__warn">该账户出现在 <strong>{{ affectedCount }}</strong> 笔未删除交易中；关闭后会置 close_date 并保留全部交易引用，操作前请确认余额已清零。</p>
+        <h3>{{ t('accountDetail.closeConfirmTitle') }}</h3>
+        <p class="acctd__warn">{{ t('accountDetail.closeConfirmBefore') }}<strong>{{ affectedCount }}</strong>{{ t('accountDetail.closeConfirmAfter') }}</p>
         <div v-if="closeError" class="acctd__close-error">
           <p class="acctd__warn acctd__warn--error">{{ closeError }}</p>
           <div v-if="closeBalances.length > 0" class="acctd__diff">
-            <p class="acctd__diff-label">按币种差额明细：</p>
+            <p class="acctd__diff-label">{{ t('accountDetail.balanceDiffLabel') }}</p>
             <table>
-              <thead><tr><th>币种</th><th>差额</th></tr></thead>
+              <thead><tr><th>{{ t('common.commodity') }}</th><th>{{ t('common.diff') }}</th></tr></thead>
               <tbody>
                 <tr v-for="diff in closeBalances" :key="diff.commodity">
                   <td>{{ diff.commodity }}</td>
@@ -595,16 +595,16 @@ onMounted(() => {
           </div>
         </div>
         <div class="acctd__confirm-actions">
-          <button type="button" class="fb-btn-ghost" @click="showCloseConfirm = false">取消</button>
+          <button type="button" class="fb-btn-ghost" @click="showCloseConfirm = false">{{ t('common.cancel') }}</button>
           <button type="button" class="fb-btn-primary" :disabled="closing" @click="confirmClose">
-            {{ closing ? '关闭中…' : '确认关户' }}
+            {{ closing ? t('accountDetail.closing') : t('accountDetail.confirmClose') }}
           </button>
         </div>
       </div>
 
       <div class="fb-card acctd__card">
-        <h3>该账户流水（{{ accountTxns.length }} 笔）</h3>
-        <p v-if="accountTxns.length === 0" class="acctd__empty">暂无流水。</p>
+        <h3>{{ t('accountDetail.txnsTitle', { n: String(accountTxns.length) }) }}</h3>
+        <p v-if="accountTxns.length === 0" class="acctd__empty">{{ t('accountDetail.txnsEmpty') }}</p>
         <ul v-else class="acctd__list">
           <li v-for="txn in accountTxns" :key="txn.id" class="acctd__row">
             <span class="acctd__row-info">
@@ -612,7 +612,7 @@ onMounted(() => {
               <span class="acctd__row-meta">{{ kindLabel(txn) }}</span>
             </span>
             <span class="acctd__row-balance">
-              <span class="acctd__row-balance-label">余额</span>
+              <span class="acctd__row-balance-label">{{ t('accountDetail.runningBalance') }}</span>
               <MoneyText :amount="runningBalanceOf(txn)" :commodity="session.defaultCommodity" size="sm" />
             </span>
             <MoneyText
