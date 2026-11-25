@@ -33,12 +33,16 @@
 **当前阶段**：M7 六批 + 0.6.0（S0~S6）+ **报表重设计 v4.1（B1~B6 六批）** + **B7 回收站永久删除（2026-11-19）** + **0.6.1 四页视觉对齐设计稿（2026-11-19，纯前端样式）全部交付**，仓库只剩一套前端（Vue 3 SPA）；当前版本 **v0.6.1**（tag / CHANGELOG / `frontend/package.json` 三处一致，发布与校验走 `scripts/verify-version.sh`）；迁移至 **017**（下一个 018）；§7 端点表 **44 条路径 / 55 个 `path×method`**（表 48 行；`routes.ts` 44 常量，与 44 条路径一一对应）已与 `internal/server/router.go` 逐条核对一致（T62 审计：零孤儿、零缺失）。**测试数与下限以 CI 实测为准**（见 `.github/workflows/docker-image.yml`，勿硬编码）。剩余边界见 §9。
 
 **报表重设计 v4.1 已交付**（2026-11-19，前端大改 + 后端只增读路径）：
-- **五视图**：账单 `/`（`BillsView`，日历 + 四指标 + 逐日折线 + 按日分组列表）、搜索 `/search`（`SearchView`，七维筛选 + 分币种汇总 + CSV + 加载更多）、统计 `/stats`（`StatsView`，统计/标签双子页、五指标、双环 + 排行、柱状点柱下钻、每日明细含日均）、资产 `/assets`（`AssetsView`）、资产统计 `/assets/stats`（`AssetStatsView`，三线 + 月度变化）。
+- **五视图**：账单 `/`（`BillsView`，日历 + 四指标 + 逐日折线 + 按日分组列表；点日弹 `DayTransactionsSheet` 当日交易抽屉、外部列表不过滤；标题栏健康图标跳数据安全页）、搜索 `/search`（`SearchView`，七维筛选 + 分币种汇总 + CSV + 加载更多）、统计 `/stats`（`StatsView`，统计/标签双子页、五指标、双环 + 排行、柱状点柱下钻、每日明细含日均）、资产 `/assets`（`AssetsView`）、资产统计 `/assets/stats`（`AssetStatsView`，三线 + 月度变化）。
 - **壳层**：PC 侧栏 5 项直达 + 「管理 · 10」折叠组；移动底栏 4 Tab + 中央 FAB（`repeat(5,1fr)`）；顶栏账本行 + 待同步 / 隐私 / 更多三小件；断点 **900**（消除 769~1023 空白带）；导航清单单一来源 `components/shell/navItems.ts`（`ready === true ⟺ 路由可解析`，由 `shellNav.test.ts` 守）。
 - **图表**：ECharts 5.6.0 + SVG renderer，唯一入口 `core/charts/echarts.ts`；`check:bundle` 有「echarts 单点入口」断言。
 - **数据层**：五视图共用 `stores/ledgerData.ts`（内存快照 + stale-while-revalidate）；`GET /api/transactions` 增加 `from`/`to`/`limit`/`cursor` → **keyset 游标分页**（`limit` 缺省 = 全量，禁止改成默认截断）；新增只读端点 `GET /api/assets/series`（见 §7 B6 小节）。
 - **旧三页已下线**：`HomeView` / `TransactionsView` / `ReportsView` + `ReportCharts.vue` 已删除；`/transactions` 保留**同名路由 + 函数式重定向**（透传 query，`AccountDetailView` 等 3 处仍按名称跳转）。CSV 导出、行点击、四态、AC-16 query 化随迁至新页，**不降级**。
-- **三处刻意差异**（非缺陷，勿当遗漏）：① 资产统计只做**按月**（D-2，稿子的按日 seg 主动削减）；② 日历点日**不弹抽屉**，改为「选中当日 → 列表就地过滤 + 查看整月 ✕ + 笔数」；③ 未建 `TxnDrawer` 组件——分类下钻走页内状态机、标签下钻跳搜索页（`TxnRow` 的 `drawer` 档保留但无调用方）。
+- **刻意差异与已反转决策**（非缺陷，勿当遗漏）：
+  - ① 仍有效：资产统计只做**按月**（D-2，稿子的按日 seg 主动削减）。
+  - ② **已反转**（老板 2026-11 决策）：日历点日弹**底部 drawer**（`DayTransactionsSheet`）显示当日交易，**外部整月列表恒定不过滤**。旧「选中当日 → 列表就地过滤 + 查看整月 ✕ + 笔数」已作废，勿再当作现状。PC（≥900px）按老板拍板沿用 `SelectSheet` 居中模态、移动端贴底。
+  - ③ 部分有效：未建通用 `TxnDrawer` 组件，分类下钻走页内状态机、标签下钻跳搜索页；但 `TxnRow` 的 `drawer` 档**已有调用方** —— 账单页 `components/bill/DayTransactionsSheet.vue`。
+- **交易详情与账核可视化**（`TransactionDetailView`）：小票下方有默认收起的「原生语法片段」折叠区，复用 `core/bean.ts` 的 `buildBeanSnippet()`，与导出 `.beancount` 逐字对齐（标签写 `tags: "…"` 元数据行，**不是 `#tag`**）。只展示真实存在的字段（flag / tags / postings / 冲正）；`^链接` / 成本批次 / `@@` 兑换在当前数据模型无字段，**不得编造或留空占位**。
 
 **0.6.0 已交付**（2026-11-15）：迁移 015_ledger_ops、账本删除、币种 CRUD、账户下级（`parent_uuid` 必传）、余额校准（`balance_key` 独立列，D-1 日初口径）、Beancount 导入（默认 `target=current` + 批次撤销；导入端点移出账本上下文豁免）、修改交易（`PATCH /api/transactions/{uuid}` = 冲正 + 新建，无版本链；权限收紧：editor 仅可改本人交易）。**两条破坏性变更**（导入语义反转 / 交易权限收紧）详见 `CHANGELOG.md` [0.6.0]。0.6.0 产品口径以交付包留档为准（N-12：本文只引用、不复制 AC）。
 
@@ -98,7 +102,7 @@ python -m pip install beancount    # 激活 .venv 后执行
 - `core/charts/`：`echarts.ts`（唯一注册入口）、`option.ts`（折线/环图/柱状 option 构造）、`liveCount.ts`（实例计数，**统计页上限 4，零余量**）、`register.ts`。
 - `core/sync/`：离线同步内核——`models.ts`（本地实体/死信分类，`DEAD_CODES` 与后端稳定码同源）、`localStore.ts`（Memory 实现）、`idbStore.ts`（离线提交队列的本地持久化，单事务原子写）、`engine.ts`（SyncEngine：pull→push 重映射→pull、库世代隔离、指数退避、CAS 多标签页租约）+ 9 份真实契约样本（`fixtures/`，其中 6 份被 `engine.test.ts` 引用）。
 - `api/{types,routes,errors,client}.ts`：**44 条**路由常量（= 后端 44 条 `/api/` 路径，一一对应）手写 TS 类型 / 路由常量 / `ApiError` / 类型化 fetch 客户端（401 single-flight / 428 / `X-Ledger-Id` 断言 / FormData 上传 / DELETE 带 body；**不生成** OpenAPI）。
-- `stores/`：`session / privacy / recordSheet / sync / ledgerData / period`；views **22 页** + components（`bill/ search/ stats/ assets/ charts/ shell/` 六个子目录 + AppLayout / RecordSheet / TxnRow / MoneyText / SyncBadge 等，共 39 个 `.vue`）。
+- `stores/`：`session / privacy / recordSheet / sync / ledgerData / period`；views + components（`bill/ search/ stats/ assets/ charts/ shell/` 六个子目录，其中 `bill/DayTransactionsSheet.vue` 为当日交易抽屉；另有 AppLayout / RecordSheet / TxnRow / MoneyText / SyncBadge 等）。页面与组件数量以仓库实际为准，勿在此硬编码。
 - `vite.config.ts`：`base: './'`、`build.target: 'es2015'`、`@vitejs/plugin-legacy`（`targets: Safari >= 14`）、`outDir: 'dist'`、`server.proxy['/api'] → 127.0.0.1:8080`、alias `@`、`define.__APP_VERSION__` 读 package.json。
 - PWA：`public/sw.js` 只缓存应用壳与静态资源（`/api/*` 绝不拦截），activate 清理非 fambean 前缀旧缓存（含 Flutter 时代 SW 缓存）；`core/pwa.ts` 更新提示不自动打断录入（AC-35）。
 - **兼容基线**：语法门禁 es2020 + `compat.mjs` API/CSS 特性扫描；禁用 Safari 14.1 缺失 API（`.at()` / `structuredClone` 等）。
@@ -195,8 +199,8 @@ python -m pip install beancount    # 激活 .venv 后执行
 | `/api/accounts` | GET/POST | 登录+成员 | 账户列表（含余额；`?include_closed` 按**取值**解析：缺省 / `0` / `false` / `no` / 无法识别 = 不含已关户账户，`1` / `true` / `yes` / 裸写 = 含，见 `handler.includeClosedFromQuery`）/ 新建 |
 | `/api/accounts/{uuid}/opening` | GET/POST | 登录+成员 | 读取 / 设置期初余额（含冲正，走 `opening_key`） |
 | `/api/accounts/{uuid}` | DELETE | 登录+成员 | 软删账户（连带引用交易，写 sync_log delete）；幂等 404 |
-| `/api/identity/check` | GET | 登录+成员 | 恒等式检查 |
-| `/api/transactions` | GET/POST | 登录+成员 | 流水 / 记一笔（postings 用 `account_id`；按币种借贷平衡校验；**支持 `client_request_id` 幂等**） |
+| `/api/identity/check` | GET | 登录+成员 | 分录借贷恒等式检查（按币种实时核对；**不是 bean-check，也不是余额校准**）；账单页 banner 只显示状态图标，详情在数据安全页 |
+| `/api/transactions` | GET/POST | 登录+成员 | 流水 / 记一笔（postings 用 `account_id`；按币种借贷平衡校验；**支持 `client_request_id` 幂等**）；列表响应透出 `tags`（无标签按 `omitempty` 缺省，前端原生片段与搜索标签下钻依赖） |
 | `/api/transactions/trash` | GET | 登录+成员 | 回收站列表 |
 | `/api/transactions/{uuid}/restore` | POST | 登录+成员 | 恢复软删交易 |
 | `/api/transactions/{uuid}` | DELETE | 登录+成员 | 软删交易；幂等 404 |
