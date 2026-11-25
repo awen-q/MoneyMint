@@ -4,19 +4,22 @@
  *
  * 覆盖四类契约：
  * 1. **装载**：`onMounted` 必须调 `ensure()`（`!loaded → loading` 的判据让「漏调」表现为
- *    永久骨架屏，只能靠这条测试守）；切账本后回到首屏加载态并清掉日筛选。
+ *    永久骨架屏，只能靠这条测试守）；切账本后回到首屏加载态并关掉当日抽屉。
  * 2. **四态**（v3.2）：`!loaded → loading`、`error && !loaded → error`、
  *    `txns 为空 → empty`、否则 `ready`；**有旧快照 + 刷新失败仍是 ready**，只出内联条。
- * 3. **日历**：42 格、四态渲染、双有日有收入圆点、点日过滤 + chip、再点取消。
+ * 3. **日历**：42 格、四态渲染、双有日有收入圆点；点日开底部抽屉看当日交易，
+ *    **外部整月列表恒定不变**（旧「就地过滤 + 查看整月 ✕」已按老板决策删除）。
  * 4. **数据一致性**：指标数字直接等于 `monthTotals` 返回值；折线的 `amount` 与
  *    `daySeries` 逐项相同（防「用 value*100 反算金额」回归）；隐私开启后不出现真值。
+ * 5. **健康图标**：恒等式结论收进 banner 图标的 tone / aria-label / title，
+ *    点击跳设置的数据安全页，状态条 DOM 不再存在。
  *
  * store 用真实例（不 mock 模块），只 mock `@/api/client` 与 `vue-router`：
  * 页面与 store 的接线本身就是要验证的对象，mock 掉 store 等于把接线留在测试之外。
  */
 import { createPinia, setActivePinia } from 'pinia'
-import { flushPromises, mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { daySeries, monthTotals } from '@/core/bill'
 import { formatMoney } from '@/core/Money'
@@ -28,6 +31,9 @@ import { usePrivacyStore } from '@/stores/privacy'
 import { useSessionStore } from '@/stores/session'
 
 import BillsView from './BillsView.vue'
+
+// 抽屉打开会锁 body 滚动；每个用例结束自动卸载，保证锁深度归零。
+enableAutoUnmount(afterEach)
 
 const h = vi.hoisted(() => ({
   accountList: vi.fn(),
@@ -161,6 +167,14 @@ beforeEach(async () => {
   pinia = createPinia()
   setActivePinia(pinia)
   localStorage.clear()
+  document.body.style.position = ''
+  document.body.style.top = ''
+  document.body.style.overflow = ''
+  Object.defineProperty(window, 'scrollTo', {
+    value: vi.fn(),
+    writable: true,
+    configurable: true,
+  })
   for (const spy of Object.values(h)) {
     spy.mockReset()
   }
@@ -201,10 +215,10 @@ describe('BillsView：装载', () => {
     expect(data.txns).toHaveLength(3)
   })
 
-  it('切账本后重新拉取（账本接口被再次调用）并清掉已选日期', async () => {
+  it('切账本后重新拉取（账本接口被再次调用）并关掉当日抽屉', async () => {
     const wrapper = mountWith(TXNS)
     await wrapper.findAll('button.cal__cell')[2].trigger('click')
-    expect(wrapper.findAll('.bills__row')).toHaveLength(1)
+    expect(wrapper.find('[data-testid="day-transactions-sheet"]').exists()).toBe(true)
 
     const callsBefore = h.txnList.mock.calls.length
     session.ledgers = [
@@ -216,8 +230,8 @@ describe('BillsView：装载', () => {
 
     // store 内部 watch 做了 reset() + ensure()：账本接口必须被再次调用
     expect(h.txnList.mock.calls.length).toBe(callsBefore + 1)
-    // 页面侧的日筛选必须清掉（否则新账本会带着旧账本的「已选 11-03」）
-    expect(wrapper.find('.bills__filter-chip').exists()).toBe(false)
+    // 旧账本打开的当日抽屉必须关掉，否则会拿新账本数据填旧日期
+    expect(wrapper.find('[data-testid="day-transactions-sheet"]').exists()).toBe(false)
   })
 })
 
@@ -316,29 +330,48 @@ describe('BillsView：日历', () => {
     expect(cells[15].classes()).toContain('cal__cell--income-only')
   })
 
-  it('点某日 → 列表只剩该日并出现日筛选行；再点同日 → 恢复整月', async () => {
+  it('点某日 → 打开底部抽屉显示当日交易；外部列表仍是整月 3 行', async () => {
     const wrapper = mountWith(TXNS)
     expect(wrapper.findAll('.bills__row')).toHaveLength(3)
 
     await wrapper.findAll('button.cal__cell')[2].trigger('click')
-    expect(wrapper.findAll('.bills__row')).toHaveLength(1)
-    // 稿 app.js:634「已选 11-03 · 1 笔」：笔数必须跟着变
-    const chip = wrapper.find('.bills__dayfilter-chip')
-    expect(chip.text()).toContain('已选 11-03')
-    expect(chip.text()).toContain('1 笔')
+    // 抽屉：11-03 一笔，标题带笔数，行是 drawer 档
+    const sheet = wrapper.find('[data-testid="day-transactions-sheet"]')
+    expect(sheet.exists()).toBe(true)
+    expect(sheet.find('.ss-title').text()).toBe('11月3日 · 1 笔')
+    expect(sheet.findAll('.txn-row--drawer')).toHaveLength(1)
+    expect(sheet.text()).toContain('工资与午饭')
 
-    await wrapper.findAll('button.cal__cell')[2].trigger('click')
-    expect(wrapper.findAll('.bills__row')).toHaveLength(3)
-    expect(wrapper.find('.bills__dayfilter-chip').exists()).toBe(false)
-  })
-
-  it('点「查看整月 ✕」也能取消日期筛选', async () => {
-    const wrapper = mountWith(TXNS)
-    await wrapper.findAll('button.cal__cell')[2].trigger('click')
-    expect(wrapper.findAll('.bills__row')).toHaveLength(1)
-    await wrapper.find('.bills__dayfilter-clear').trigger('click')
+    // 关键回归：外部列表一动不动，旧的「查看整月 ✕」日筛选条彻底不存在
     expect(wrapper.findAll('.bills__row')).toHaveLength(3)
     expect(wrapper.find('.bills__dayfilter').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('查看整月')
+  })
+
+  it('抽屉内点行跳详情；ESC 关闭后外部列表仍不变', async () => {
+    const wrapper = mountWith(TXNS)
+    await wrapper.findAll('button.cal__cell')[2].trigger('click')
+
+    await wrapper.find('[data-testid="day-transactions-sheet"] .txn-row').trigger('click')
+    expect(h.push).toHaveBeenCalledWith({
+      name: 'transaction-detail',
+      query: { id: '101' },
+    })
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="day-transactions-sheet"]').exists()).toBe(false)
+    expect(wrapper.findAll('.bills__row')).toHaveLength(3)
+  })
+
+  it('点无交易的日期 → 抽屉显示空态，外部列表不受影响', async () => {
+    const wrapper = mountWith(TXNS)
+    // 11-05 无交易
+    await wrapper.findAll('button.cal__cell')[4].trigger('click')
+    const sheet = wrapper.find('[data-testid="day-transactions-sheet"]')
+    expect(sheet.find('.ss-title').text()).toBe('11月5日 · 0 笔')
+    expect(sheet.text()).toContain('当日无交易')
+    expect(wrapper.findAll('.bills__row')).toHaveLength(3)
   })
 })
 
@@ -645,26 +678,32 @@ describe('BillsView：聚合骨架（骨架屏批）', () => {
   })
 })
 
-// ---------- P1-3：首页账本健康状态条 ----------
-describe('BillsView：账本健康状态条', () => {
-  it('balanced：一句人话 + 查看明细入口；不声称 bean-check 通过', async () => {
+// ---------- banner 上的账本健康图标 ----------
+describe('BillsView：账本健康图标', () => {
+  it('balanced：绿勾 tone，口径写进 title，点图标跳数据安全页', async () => {
     const wrapper = mountWith(TXNS)
     await settle()
 
-    const bar = wrapper.find('[data-testid="ledger-health"]')
-    expect(bar.exists()).toBe(true)
-    expect(bar.classes()).toContain('bills__health--ok')
-    expect(bar.text()).toContain('分录借贷恒等式检查通过：3360 条分录按币种借贷平衡')
-    expect(bar.text()).not.toContain('bean-check 已通过')
-    expect(bar.text()).toContain('不是 bean-check')
+    // 旧状态条整块 DOM 必须消失（不再占位置）
+    expect(wrapper.find('[data-testid="ledger-health"]').exists()).toBe(false)
+    expect(wrapper.find('.bills__summary').exists()).toBe(false)
 
-    const link = wrapper.find('.bills__health-link')
-    expect(link.text()).toBe('查看明细')
-    await link.trigger('click')
+    const icon = wrapper.find('[data-testid="ledger-health-icon"]')
+    expect(icon.exists()).toBe(true)
+    expect(icon.classes()).toContain('bills__health-icon--ok')
+    expect(icon.text()).toBe('✓')
+    expect(icon.attributes('aria-label')).toContain('分录借贷恒等式检查')
+    const hint = icon.attributes('title') ?? ''
+    expect(hint).toContain('分录借贷恒等式检查通过：3360 条分录按币种借贷平衡')
+    expect(hint).toContain('不是 bean-check')
+    expect(hint).toContain('不是余额校准')
+    expect(hint).toContain('设置的数据安全页')
+
+    await icon.trigger('click')
     expect(h.push).toHaveBeenCalledWith({ name: 'data-safety' })
   })
 
-  it('不平：按币种列差额并标红，口径说明保留', async () => {
+  it('不平：警示 tone，title 按币种列差额且口径保留', async () => {
     h.identityCheck.mockResolvedValue({
       balanced: false,
       diffs: [
@@ -678,22 +717,32 @@ describe('BillsView：账本健康状态条', () => {
     const wrapper = mountWith(TXNS)
     await settle()
 
-    const bar = wrapper.find('[data-testid="ledger-health"]')
-    expect(bar.classes()).toContain('bills__health--unbalanced')
-    expect(bar.text()).toContain('分录借贷恒等式检查未通过')
-    expect(bar.text()).toContain('CNY +0.01、USD -0.02')
-    expect(bar.text()).toContain('不是 bean-check')
+    const icon = wrapper.find('[data-testid="ledger-health-icon"]')
+    expect(icon.classes()).toContain('bills__health-icon--unbalanced')
+    expect(icon.text()).toBe('⚠')
+    expect(icon.attributes('title')).toContain('CNY +0.01、USD -0.02')
+    expect(icon.attributes('title')).toContain('不是 bean-check')
     expect(h.identityCheck).toHaveBeenCalled()
   })
 
-  it('接口失败：不伪装成平衡，显示失败文案', async () => {
-    h.identityCheck.mockRejectedValue(new Error('offline'))
-    const wrapper = mountWith(TXNS)
-    await settle()
+  it('检查中 / 接口失败：不伪装成平衡，统一中性 tone', async () => {
+    // identityApi.check() 悬停 → 保持在「检查中」
+    h.identityCheck.mockImplementation(() => new Promise(() => undefined))
+    const checking = mountWith(TXNS)
+    expect(checking.find('[data-testid="ledger-health-icon"]').classes()).toContain(
+      'bills__health-icon--unknown',
+    )
+    expect(checking.find('[data-testid="ledger-health-icon"]').attributes('title')).toContain(
+      '正在进行分录借贷恒等式检查',
+    )
+    checking.unmount()
 
-    const bar = wrapper.find('[data-testid="ledger-health"]')
-    expect(bar.classes()).toContain('bills__health--unknown')
-    expect(bar.text()).toContain('分录借贷恒等式检查失败')
+    h.identityCheck.mockRejectedValue(new Error('offline'))
+    const failed = mountWith(TXNS)
+    await settle()
+    const icon = failed.find('[data-testid="ledger-health-icon"]')
+    expect(icon.classes()).toContain('bills__health-icon--unknown')
+    expect(icon.attributes('title')).toContain('分录借贷恒等式检查失败')
   })
 
   it('切账本后按新账本重取检查结果', async () => {

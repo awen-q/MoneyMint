@@ -5,6 +5,9 @@
  * - 结余三档唯一（LO-08）：正 / 负 / 零 各自一个 class，符号由 `MoneyText` 负责；
  * - 隐私遮挡下不出现任何真值。
  */
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
 import { createPinia } from 'pinia'
 import { mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -72,6 +75,39 @@ describe('BillMetrics：结余三档', () => {
     const value = wrapper.findAll('.metrics__value')[0]
     expect(value.classes()).toContain('metrics__value--neutral')
     expect(value.text()).toBe('¥ 0.00')
+  })
+})
+
+describe('BillMetrics：边距固定（老板要求）', () => {
+  /** Vitest 下 import.meta.url 不是 file: scheme，按 cwd（frontend 根）取路径。 */
+  function styleOf(relativePath: string): string {
+    const source = readFileSync(resolve(process.cwd(), relativePath), 'utf8')
+    const start = source.indexOf('<style scoped>')
+    const end = source.indexOf('</style>')
+    expect(start).toBeGreaterThan(-1)
+    expect(end).toBeGreaterThan(start)
+    return source.slice(start, end)
+  }
+
+  it('四卡 padding 与栅格 gap 是固定 px，媒体查询不再改它们', () => {
+    const css = styleOf('src/components/bill/BillMetrics.vue')
+    const gridRule = css.match(/\.metrics\s*\{([^}]*)\}/)?.[1] ?? ''
+    const cardRule = css.match(/\.metrics__card\s*\{([^}]*)\}/)?.[1] ?? ''
+
+    expect(gridRule).toContain('gap: 12px')
+    expect(cardRule).toContain('padding: 16px')
+    // 旧移动端覆盖（padding: 12px 14px / gap: 10px）必须彻底移除
+    expect(css).not.toContain('gap: 10px')
+    expect(css).not.toContain('padding: 12px 14px')
+    expect(css).not.toContain('padding: 14px 16px')
+    // 四卡共用同一条规则，不存在某张卡单独改边距
+    expect(css.match(/\.metrics__card[\w-]*\s*\{[^}]*padding:/g) ?? []).toHaveLength(1)
+  })
+
+  it('骨架指标带与真实指标带 gap 一致（12px），加载前后不跳动', () => {
+    const billsCss = styleOf('src/views/BillsView.vue')
+    const skelRule = billsCss.match(/\.bills__skel-metrics\s*\{([^}]*)\}/)?.[1] ?? ''
+    expect(skelRule).toContain('gap: 12px')
   })
 })
 

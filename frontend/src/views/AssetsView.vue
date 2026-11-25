@@ -171,7 +171,6 @@ const closedNote = computed(() => {
     <!-- ① hero：页名 + 一句话说明 -->
     <header class="assets__hero">
       <h1 class="assets__title">资产</h1>
-      <p class="assets__desc">存量全景：净资产 / 总资产 / 总负债 + 资产列表</p>
     </header>
 
     <!-- ② 工具行卡：标题 + 创建入口（非 viewer）+「资产统计 ›」入口（与 /assets/stats 路由同批落地，见脚本注释 5） -->
@@ -242,12 +241,6 @@ const closedNote = computed(() => {
   color: var(--fb-ink-deep);
   font-size: 21px;
   font-weight: 700;
-}
-
-.assets__desc {
-  margin: 4px 0 0;
-  color: var(--fb-sub);
-  font-size: 13px;
 }
 
 .assets__card {

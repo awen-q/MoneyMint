@@ -63,7 +63,9 @@ const balanceTone = computed<'pos' | 'neg' | 'neutral'>(() => {
 </template>
 
 <style scoped>
-/* <900 两列（含 769–899 档），≥900 四列；设计 `.metrics` gap 12 / 移动 10 */
+/* <900 两列（含 769–899 档），≥900 四列。
+   **gap 与卡片内边距是固定 px，任何断点都不改**（老板要求四卡上下左右边距固定）；
+   骨架复合 `.bills__skel-metrics` 同步 12px，加载前后不跳动。 */
 .metrics {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -74,7 +76,7 @@ const balanceTone = computed<'pos' | 'neg' | 'neutral'>(() => {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 14px 16px;
+  padding: 16px;
   border: 1px solid var(--fb-line);
   border-radius: var(--fb-radius-card);
   background: var(--fb-card);
@@ -143,14 +145,7 @@ const balanceTone = computed<'pos' | 'neg' | 'neutral'>(() => {
 }
 
 @media (max-width: 768px) {
-  .metrics {
-    gap: 10px;
-  }
-
-  .metrics__card {
-    padding: 12px 14px;
-  }
-
+  /* 只缩数字字号，不碰 gap / padding —— 边距在桌面与移动端必须一致 */
   .metrics__value,
   .metrics__value :deep(.money-text) {
     font-size: 18px;

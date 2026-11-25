@@ -38,7 +38,7 @@ const props = withDefaults(
     commodity: string
     /** 有交易的天数（卡头摘要「记账 N 天」）。 */
     activeDays: number
-    /** 被选中的日（1..31）；`null` 表示未筛选。 */
+    /** 当日 sheet 正在展示的日（1..31）；只用于高亮，`null` 表示抽屉关闭。 */
     selectedDay?: number | null
     /** 隐私遮挡。 */
     masked?: boolean
@@ -203,8 +203,8 @@ function isSelected(cell: CalendarDay): boolean {
 
     <!-- 操作说明（B-06 ④ / 设计 `.tap-hint`）：移动端第一次用不知道格子可点 -->
     <p class="bill-cal__hint">
-      点击日期：选中该日并弹出当日交易流水（再点同日取消选中）；格内金额为简写：支出（红）/
-      纯收入日（绿），同日有收入时第二行显示收入金额，右上角圆点仍作快速扫描标记
+      点击日期：底部弹出当日交易明细（下方整月列表不变，关掉抽屉即可继续看整月）；格内金额为简写：
+      支出（红）/ 纯收入日（绿），同日有收入时第二行显示收入金额，右上角圆点仍作快速扫描标记
     </p>
   </div>
 </template>

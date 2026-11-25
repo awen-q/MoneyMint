@@ -595,27 +595,54 @@ onMounted(() => {
   font-weight: 600;
 }
 
+/* 新建分类表单：移动端用两列网格（窄屏 375 下固定 flex-basis 之和 + gap
+   会超过卡片可用宽度，造成横向溢出）；≥900 恢复原来的单行 flex。
+   所有控件统一 min-width: 0，避免 input/select 的 UA 默认最小宽把网格撑破。 */
 .cats__create {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
-.cats__type {
-  flex: 0 0 110px;
-}
-
-.cats__name {
-  flex: 1;
+.cats__create .cats__type,
+.cats__create .cats__name,
+.cats__create .cats__ascii {
+  width: 100%;
   min-width: 0;
 }
 
-.cats__ascii {
-  flex: 0 0 132px;
-  min-width: 0;
+.cats__create .cats__name,
+.cats__create .cats__ascii {
+  grid-column: 1 / -1;
 }
 
 .cats__submit {
-  flex: 0 0 auto;
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+@media (min-width: 900px) {
+  .cats__create {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .cats__type {
+    flex: 0 0 110px;
+  }
+
+  .cats__create .cats__name {
+    flex: 1 1 180px;
+  }
+
+  .cats__ascii {
+    flex: 0 0 132px;
+  }
+
+  .cats__submit {
+    flex: 0 0 auto;
+  }
 }
 
 .cats__hint {

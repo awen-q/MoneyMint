@@ -3,6 +3,9 @@
  * 0.6.0 S2 / AC-2.5：分类页新建与 AccountForm 统一，同样传 parent_uuid；
  * 中文显示名生成 ASCII 合法全名；core/accounts.ts 的冒号兜底不参与主路径。
  */
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 
@@ -179,6 +182,34 @@ describe('P0 可选 ASCII 英文账号（分类页，owner 可见）', () => {
     await submitNew(wrapper, '早餐')
     expect((h.create.mock.calls[0][0] as { name: string }).name).toMatch(/^Expenses:Item\d+$/)
     wrapper.unmount()
+  })
+})
+
+describe('新建分类表单的窄屏布局（375px 不横向溢出）', () => {
+  it('移动端走两列网格且所有控件 min-width: 0；固定 flex-basis 只在桌面档生效', () => {
+    const source = readFileSync(
+      resolve(process.cwd(), 'src/views/CategoriesView.vue'),
+      'utf8',
+    )
+    const css = source.slice(source.indexOf('<style scoped>'), source.indexOf('</style>'))
+    const createRule = css.match(/\.cats__create\s*\{([^}]*)\}/)?.[1] ?? ''
+    const controlsRule =
+      css.match(/\.cats__create \.cats__type,\s*\.cats__create \.cats__name,\s*\.cats__create \.cats__ascii\s*\{([^}]*)\}/)?.[1] ?? ''
+
+    // 窄屏：两列网格，长输入的 name / ascii 各占满一行，按钮占满一行
+    expect(createRule).toContain('display: grid')
+    expect(createRule).toContain('grid-template-columns: repeat(2, minmax(0, 1fr))')
+    expect(controlsRule).toContain('min-width: 0')
+    expect(css).toContain('.cats__create .cats__name,\n.cats__create .cats__ascii {\n  grid-column: 1 / -1;')
+    expect(css).toContain('.cats__submit {\n  grid-column: 1 / -1;')
+
+    // 超宽根因：110 + 132 + 按钮 + 3×8 gap 在 375 视口的卡片内放不下。
+    // 固定 basis 只能留在 >=900 的桌面 flex 行里。
+    const desktopAt = css.indexOf('@media (min-width: 900px)')
+    expect(desktopAt).toBeGreaterThan(-1)
+    expect(css.indexOf('flex: 0 0 110px')).toBeGreaterThan(desktopAt)
+    expect(css.indexOf('flex: 0 0 132px')).toBeGreaterThan(desktopAt)
+    expect(110 + 132 + 64 + 3 * 8).toBeGreaterThan(375 - 32 - 32)
   })
 })
 

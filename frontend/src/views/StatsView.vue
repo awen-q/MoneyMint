@@ -370,7 +370,6 @@ const currencyOptions = computed(() => {
   <section class="stats">
     <header class="stats__hero">
       <h1 class="stats__title">统计账单</h1>
-      <p class="stats__desc">月度聚合分析：统计信息 / 趋势 / 分类圆环 / 分类柱状 / 每日明细 + 标签维度</p>
     </header>
 
     <!-- 工具卡（S-01 / S-05）：第一行 = 子页 chips + spacer + 月份组；
@@ -539,12 +538,6 @@ const currencyOptions = computed(() => {
   color: var(--fb-ink-deep);
   font-size: 21px;
   font-weight: 700;
-}
-
-.stats__desc {
-  margin: 4px 0 0;
-  color: var(--fb-sub);
-  font-size: 13px;
 }
 
 .stats__card {

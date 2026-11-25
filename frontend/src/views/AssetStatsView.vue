@@ -190,7 +190,6 @@ const currencyOptions = computed(() => {
   <section class="astats">
     <header class="astats__hero">
       <h1 class="astats__title">资产统计</h1>
-      <p class="astats__desc">年度资产 / 净资产 / 负债趋势 + 月度变化列表</p>
     </header>
 
     <!-- 工具卡：返回 / 年份 / 币种（都在 StateCard 之外，空态与错误态仍可操作） -->
@@ -285,12 +284,6 @@ const currencyOptions = computed(() => {
   color: var(--fb-ink-deep);
   font-size: 21px;
   font-weight: 700;
-}
-
-.astats__desc {
-  margin: 4px 0 0;
-  color: var(--fb-sub);
-  font-size: 13px;
 }
 
 .astats__card {

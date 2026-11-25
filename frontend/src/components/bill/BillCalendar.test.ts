@@ -7,8 +7,9 @@
  * - 交互：点格 emit `pick(day)`，选中态带 `cal__cell--on`；今天带 `cal__cell--today`；
  * - 卡头摘要：支出 / 收入 / 记账 N 天。
  *
- * 注：「已选 11-03 · N 笔」与「查看整月 ✕」**不在本组件里**（审计 B-17/B-18：
- * 它清的是列表的日筛选，搬到 `BillsView` 的列表卡内），所以本文件不再断言 chip。
+ * 注：老板 2026-11 决策后，「已选 11-03 · N 笔」与「查看整月 ✕」日筛选条已整体删除：
+ * 点日只 emit `pick(day)` 由父级开底部抽屉，`selectedDay` 只驱动格子的 `cal__cell--on`
+ * 高亮，绝不再过滤外部列表。本文件仍守「选中态高亮」这一层契约。
  */
 import { createPinia } from 'pinia'
 import { mount } from '@vue/test-utils'

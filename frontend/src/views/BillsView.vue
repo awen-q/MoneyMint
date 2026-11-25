@@ -4,7 +4,7 @@
  *
  * 六区块顺序严格按 v4.1 稿：hero → 工具卡 → 日历卡 → 指标带 → 折线卡 → 月列表卡。
  *
- * 三条本页级别的设计决策：
+ * 四条本页级别的设计决策：
  *
  * 1. **`hero` 与工具卡在 StateCard 之外**。
  *    四态卡承载「内容区」（日历 / 指标 / 折线 / 列表），但**不包 hero 与工具卡**：
@@ -20,6 +20,10 @@
  * 3. **状态判据用冻结的 v3.2**（`error` 只在「从未成功加载过」时整页报错）。
  *    `ledgerData` 是 stale-while-revalidate 的：刷新失败但有旧快照时仍走 `ready`，
  *    只在顶部出一条内联提示条——否则用户正在看的报表会在后台刷新失败时整页消失。
+ *
+ * 4. **日历点日只开底部 sheet，不过滤外部列表**（老板 2026-11 决策，推翻旧
+ *    「列表就地过滤」稿）：`groups` 恒定取 `monthTxns` 全月，`activeDay` 只喂
+ *    日历高亮与 `DayTransactionsSheet` 的当日明细；关掉 sheet 列表一动不动。
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -30,7 +34,6 @@ import { billCells, daySeries, monthTotals } from '@/core/bill'
 import { buildMonthGrid, type CalendarDay } from '@/core/calendar'
 import { buildLedgerHealthNotice } from '@/core/ledgerHealth'
 import type { LineSeriesInput } from '@/core/charts/option'
-import { PRIVACY_MASK } from '@/core/privacy'
 import { buildTxnRow, type TxnRowView } from '@/core/txnRow'
 import { getChartPalette, readThemeTokens, themeEpoch } from '@/styles/themeTokens'
 import { useLedgerDataStore } from '@/stores/ledgerData'
@@ -40,6 +43,7 @@ import { useSessionStore } from '@/stores/session'
 import MoneyText from '@/components/MoneyText.vue'
 import BillCalendar from '@/components/bill/BillCalendar.vue'
 import BillMetrics from '@/components/bill/BillMetrics.vue'
+import DayTransactionsSheet from '@/components/bill/DayTransactionsSheet.vue'
 import TxnRow from '@/components/TxnRow.vue'
 import TrendChart from '@/components/charts/TrendChart.vue'
 import LedgerSwitcher from '@/components/shell/LedgerSwitcher.vue'
@@ -59,8 +63,11 @@ const session = useSessionStore()
 /** 月份选择弹层 / 账本切换弹层。 */
 const monthOpen = ref(false)
 const ledgerOpen = ref(false)
-/** 被点选的日（1..31）；`null` 表示看整月。 */
-const selectedDay = ref<number | null>(null)
+/**
+ * 当日 sheet 正在展示的日（1..31）；`null` 表示 sheet 关闭。
+ * **只**驱动日历高亮和抽屉内容，绝不参与外部 `groups` 的过滤。
+ */
+const activeDay = ref<number | null>(null)
 
 const year = computed(() => period.bills.year)
 const month = computed(() => period.bills.month)
@@ -83,12 +90,12 @@ onMounted(() => {
   void loadHealth()
 })
 
-// 切账本时 `ledgerData` 的 `reset()` 会清空快照，本页要重新拉取并清掉选中的日。
+// 切账本时 `ledgerData` 的 `reset()` 会清空快照，本页要重新拉取并关掉当日 sheet。
 // 用 `watch` 而不是 `session.$subscribe`：订阅需要手动退订，watch 随组件销毁自动停。
 watch(
   () => session.ledgerId,
   () => {
-    selectedDay.value = null
+    activeDay.value = null
     // reset() 后窗口集合已清空、store 只会重拉「自然当月」窗口；
     // 用户切账本前停留的月份要由这里重新声明，否则当月永远停在聚合等待态。
     void data.setWindowMonth(monthPrefix.value)
@@ -132,11 +139,16 @@ const grid = computed<CalendarDay[]>(() => {
   return buildMonthGrid(year.value, month.value, dayTotals)
 })
 
-function toggleDay(day: number): void {
-  selectedDay.value = selectedDay.value === day ? null : day
+/** 点日历某天：打开底部 sheet；外部列表不受影响（连选中态都不参与过滤）。 */
+function openDay(day: number): void {
+  activeDay.value = day
 }
 
-/** 交易日列表：按日倒序分组；选中某日后只留该日。 */
+/**
+ * 交易日列表：**恒定整月全量**，按日倒序分组。
+ * `activeDay` 不在这里出现，是「外部列表不变」这条产品决策的结构性保证——
+ * 想给列表加日过滤，得先在本函数里重新引入被删掉的状态，code review 一眼可见。
+ */
 interface DayGroup {
   date: string
   label: string
@@ -146,11 +158,7 @@ interface DayGroup {
 }
 
 const groups = computed<DayGroup[]>(() => {
-  const filtered =
-    selectedDay.value === null
-      ? monthTxns.value
-      : monthTxns.value.filter((txn) => Number(txn.date.slice(8, 10)) === selectedDay.value)
-  const sorted = filtered.slice().sort((left, right) => {
+  const sorted = monthTxns.value.slice().sort((left, right) => {
     if (left.date !== right.date) {
       return left.date < right.date ? 1 : -1
     }
@@ -177,15 +185,16 @@ const groups = computed<DayGroup[]>(() => {
 })
 
 /**
- * 日筛选行显示的笔数（稿 app.js:634「已选 11-05 · 3 笔」）。
- * 数量取自当前已过滤的分组，不重新筛一遍原始数组。
+ * 当日 sheet 的交易：唯一一处按 `activeDay` 过滤的地方，且只喂抽屉。
+ * 与 `groups` 共用 `monthTxns` 这一个真相源，抽屉里看到的和外列表里同一天的行
+ * 来自同一批数据，不会各算各的。
  */
-const selectedCount = computed(() => {
-  let count = 0
-  for (const group of groups.value) {
-    count += group.rows.length
+const dayTxns = computed(() => {
+  const day = activeDay.value
+  if (day === null) {
+    return []
   }
-  return count
+  return monthTxns.value.filter((txn) => Number(txn.date.slice(8, 10)) === day)
 })
 
 /** 图表配色跟随主题：`themeEpoch` 让夜间主题切换后重新取色。 */
@@ -258,12 +267,28 @@ const showMonthSkeleton = computed(
 /** 有旧快照时的刷新失败：留在 ready，只出内联条。 */
 const staleError = computed(() => (data.error !== '' && data.loaded ? data.error : ''))
 
-// ---------- P1-3：首页账本健康状态条 ----------
+// ---------- P1-3：banner 上的账本健康图标 ----------
 // 数据源只有 GET /api/identity/check（按币种的分录借贷恒等式，实时计算）。
-// 不声称 bean-check 通过，也不把 balance_key 的日初校准混进来。
+// 不声称 bean-check 通过，也不把 balance_key 的日初校准混进来；口径小字搬到
+// 图标的 title / 读屏名里，详情仍跳设置的数据安全页。
 const health = ref<IdentityCheckResult | null>(null)
 const healthFailed = ref(false)
 const healthNotice = computed(() => buildLedgerHealthNotice(health.value, healthFailed.value))
+
+/** 图标本身只是语义标记，真实结论走 aria-label / title（不靠颜色单独传意）。 */
+const HEALTH_GLYPHS: Record<string, string> = {
+  ok: '✓',
+  unbalanced: '⚠',
+  unknown: '·',
+}
+
+const healthGlyph = computed(() => HEALTH_GLYPHS[healthNotice.value.tone] ?? '·')
+
+/** 悬停 / 读屏都能看到：结论 + 口径 + 「去设置看详情」。 */
+const healthHint = computed(
+  () =>
+    `分录借贷恒等式检查：${healthNotice.value.text}${healthNotice.value.detail}详情请到设置的数据安全页查看。`,
+)
 
 async function loadHealth(): Promise<void> {
   try {
@@ -306,19 +331,19 @@ function shiftMonth(delta: number): void {
     nextMonth = 1
     nextYear += 1
   }
-  selectedDay.value = null
+  activeDay.value = null
   period.setBillsMonth(nextYear, nextMonth)
 }
 
 function onMonthSelect(payload: { year: number; month: number }): void {
   monthOpen.value = false
-  selectedDay.value = null
+  activeDay.value = null
   period.setBillsMonth(payload.year, payload.month)
 }
 
 function onLedgerSelect(id: number | string): void {
   ledgerOpen.value = false
-  selectedDay.value = null
+  activeDay.value = null
   session.selectLedger(Number(id))
 }
 
@@ -388,25 +413,23 @@ function goStats(): void {
 
 <template>
   <section class="bills">
-    <!-- ① hero：页名 + 一句话说明（设计稿 `mockup:812-815` 原句）。
-         这里**不再**重复「支出 / 收入 / 结余」三个金额 —— 它们在下方的
-         `BillMetrics` 指标带里，同屏重复两遍会把首屏答案说两次（B-03）。 -->
+    <!-- ① hero：页名 + 健康图标。说明性小标题已按老板要求删掉；
+         恒等式检查结论收进标题行右侧的按钮，点/回车跳设置的数据安全页看明细。
+         这里**不**重复「支出 / 收入 / 结余」三个金额 —— 它们在下方 BillMetrics。 -->
     <header class="bills__hero">
       <h1 class="bills__title">账单</h1>
-      <p class="bills__summary">当月总览：日历 + 统计 + 收支折线 + 交易列表</p>
+      <button
+        type="button"
+        class="bills__health-icon"
+        :class="`bills__health-icon--${healthNotice.tone}`"
+        data-testid="ledger-health-icon"
+        :aria-label="healthHint"
+        :title="healthHint"
+        @click="goDataSafety"
+      >
+        <span aria-hidden="true">{{ healthGlyph }}</span>
+      </button>
     </header>
-
-    <!-- P1-3：账本健康状态条。一句人话 + 查看明细入口；不属于收支指标，故不进 BillMetrics。 -->
-    <section
-      class="bills__health"
-      :class="`bills__health--${healthNotice.tone}`"
-      role="status"
-      data-testid="ledger-health"
-    >
-      <p class="bills__health-text">{{ healthNotice.text }}</p>
-      <button type="button" class="bills__health-link" @click="goDataSafety">查看明细</button>
-      <p class="bills__health-detail">{{ healthNotice.detail }}</p>
-    </section>
 
     <!-- ② 工具卡（B-01）：一张白卡承载两行工具，与下方日历卡同为「卡」，不再夹心。
          行1 = 账本 chip + spacer + 月份组；行2 = 币种 seg + spacer + 搜索 / 统计图标。 -->
@@ -491,9 +514,9 @@ function goStats(): void {
           :totals="totals"
           :commodity="commodity"
           :active-days="activeDays"
-          :selected-day="selectedDay"
+          :selected-day="activeDay"
           :masked="privacy.enabled"
-          @pick="toggleDay"
+          @pick="openDay"
         />
       </section>
 
@@ -522,14 +545,7 @@ function goStats(): void {
           <h2 class="bills__card-title">当月明细</h2>
           <span class="bills__card-note">日期 · 类型 · 金额 · 备注</span>
         </div>
-        <!-- 日筛选行（稿 889-892）：搬到这里而不是留在日历卡里 ——
-             「查看整月 ✕」清的是**这个列表**的日筛选，放在要清的东西旁边才不会让人找。 -->
-        <div v-if="selectedDay !== null" class="bills__dayfilter">
-          <span class="bills__dayfilter-chip">
-            已选 {{ month }}-{{ twoDigits(selectedDay) }} · {{ selectedCount }} 笔
-          </span>
-          <button type="button" class="bills__dayfilter-clear" @click="selectedDay = null">查看整月 ✕</button>
-        </div>
+        <!-- 外部列表恒为整月全量；当日明细只在下面的底部 sheet 里看。 -->
         <div v-for="group in groups" :key="group.date" class="bills__group">
           <div class="bills__group-head">
             <span class="bills__group-date">{{ group.label }}</span>
@@ -563,6 +579,15 @@ function goStats(): void {
       @select="onLedgerSelect"
       @close="ledgerOpen = false"
     />
+    <DayTransactionsSheet
+      :open="activeDay !== null"
+      :month="month"
+      :day="activeDay"
+      :txns="dayTxns"
+      :accounts="data.accounts"
+      @close="activeDay = null"
+      @open-detail="openDetail"
+    />
   </section>
 </template>
 
@@ -574,8 +599,13 @@ function goStats(): void {
   padding-bottom: 8px;
 }
 
-/* ① hero（B-03）：标题 21/700 `--fb-ink-deep`，说明 13px，间距 4px */
+/* ① hero（B-03）：标题 21/700 `--fb-ink-deep`；健康图标贴标题行右侧，
+   不占独立一行，也不再渲染占位的说明性小标题。 */
 .bills__hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   padding: 4px 0 2px;
 }
 
@@ -587,73 +617,41 @@ function goStats(): void {
   letter-spacing: 0.01em;
 }
 
-.bills__summary {
-  margin: 4px 0 0;
-  color: var(--fb-sub);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-/* P1-3：健康状态条 —— 一行主文案 + 明细入口，口径说明另起小字。
-   配色只表达检查结果，不承载收支语义，故与指标带分离。 */
-.bills__health {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 10px;
-  margin: 6px 0 10px;
-  padding: 8px 12px;
-  border: 1px solid var(--fb-line);
-  border-radius: var(--fb-radius-card);
-  background: var(--fb-soft);
-}
-
-.bills__health--ok {
-  border-color: var(--fb-blue-line);
-}
-
-.bills__health--unbalanced {
-  border-color: var(--fb-danger);
-  background: var(--fb-danger-soft);
-}
-
-.bills__health-text {
-  flex: 1;
-  min-width: 0;
-  margin: 0;
-  color: var(--fb-ink);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.bills__health--unbalanced .bills__health-text {
-  color: var(--fb-danger-ink);
-}
-
-.bills__health-link {
+/* 恒等式检查图标：三种 tone 只换语义色与字形，结论本身在 title / aria-label 里。 */
+.bills__health-icon {
+  display: inline-flex;
   flex: none;
-  padding: 2px 4px;
-  border: none;
-  background: transparent;
-  color: var(--fb-blue);
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--fb-line);
+  border-radius: var(--fb-radius-pill);
+  background: var(--fb-soft);
+  color: var(--fb-sub);
   font-family: inherit;
-  font-size: 12px;
+  font-size: 18px;
   font-weight: 700;
-  text-decoration: underline;
+  line-height: 1;
   cursor: pointer;
 }
 
-.bills__health-link:focus-visible {
-  outline: 2px solid var(--fb-blue);
-  outline-offset: 2px;
+.bills__health-icon--ok {
+  border-color: var(--fb-brand-line);
+  background: var(--fb-green-soft);
+  color: var(--fb-green-ink);
 }
 
-.bills__health-detail {
-  flex: 1 0 100%;
-  margin: 0;
-  color: var(--fb-sub);
-  font-size: 10.5px;
-  line-height: 1.5;
+.bills__health-icon--unbalanced {
+  border-color: var(--fb-danger);
+  background: var(--fb-danger-soft);
+  color: var(--fb-danger-ink);
+}
+
+.bills__health-icon:focus-visible {
+  outline: 2px solid var(--fb-blue);
+  outline-offset: 2px;
 }
 
 /* ② 工具卡（B-01）：设计与下方日历卡同为 `.card`，缺了容器这四件控件会直接浮在
@@ -876,43 +874,7 @@ function goStats(): void {
   font-size: 11px;
 }
 
-/* ⑥ 列表：日筛选行（稿 889-892 的 .day-filter-row / .ts-chip / .ts-clear） */
-.bills__dayfilter {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.bills__dayfilter-chip {
-  padding: 3px 10px;
-  border-radius: var(--fb-radius-pill);
-  background: var(--fb-blue-soft);
-  color: var(--fb-blue);
-  font-size: 11px;
-  font-variant-numeric: var(--fb-font-numeric);
-}
-
-.bills__dayfilter-clear {
-  min-height: 32px;
-  padding: 4px 10px;
-  border: none;
-  border-radius: var(--fb-radius-pill);
-  background: transparent;
-  color: var(--fb-sub);
-  font-family: inherit;
-  font-size: 11px;
-  text-decoration: underline;
-  cursor: pointer;
-}
-
-.bills__dayfilter-clear:focus-visible {
-  outline: 2px solid var(--fb-blue);
-  outline-offset: 1px;
-}
-
-/* ⑥ 列表 */
+/* ⑥ 列表（整月全量；当日交易在 DayTransactionsSheet 里看，不再有日筛选行） */
 .bills__group + .bills__group {
   margin-top: 10px;
 }
@@ -960,7 +922,8 @@ function goStats(): void {
 .bills__skel-metrics {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  /* 与 BillMetrics 的固定 gap 一致：骨架 → 真实卡片不跳动 */
+  gap: 12px;
 }
 
 .bills__skel-rows {
