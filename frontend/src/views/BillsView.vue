@@ -284,10 +284,19 @@ const HEALTH_GLYPHS: Record<string, string> = {
 
 const healthGlyph = computed(() => HEALTH_GLYPHS[healthNotice.value.tone] ?? '·')
 
-/** 悬停 / 读屏都能看到：结论 + 口径 + 「去设置看详情」。 */
+/** 结论文案已有的结尾标点不重复补；省略号也算一句话的收尾。 */
+function withPeriod(text: string): string {
+  return /[。！？….!?]$/.test(text) ? text : `${text}。`
+}
+
+/**
+ * 悬停 / 读屏都能看到：结论 + 口径 + 「去设置看详情」。
+ * `healthNotice.text` 本身已含「分录借贷恒等式检查」前缀，故不再重复加；
+ * 两句话之间用句号隔开，避免「…借贷平衡本检查按币种…」黏成一串。
+ */
 const healthHint = computed(
   () =>
-    `分录借贷恒等式检查：${healthNotice.value.text}${healthNotice.value.detail}详情请到设置的数据安全页查看。`,
+    `${withPeriod(healthNotice.value.text)}${healthNotice.value.detail}详情请到设置的数据安全页查看。`,
 )
 
 async function loadHealth(): Promise<void> {

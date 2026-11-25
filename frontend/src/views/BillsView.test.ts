@@ -30,6 +30,8 @@ import { usePeriodStore } from '@/stores/period'
 import { usePrivacyStore } from '@/stores/privacy'
 import { useSessionStore } from '@/stores/session'
 
+import MonthPicker from '@/components/shell/MonthPicker.vue'
+
 import BillsView from './BillsView.vue'
 
 // 抽屉打开会锁 body 滚动；每个用例结束自动卸载，保证锁深度归零。
@@ -120,6 +122,21 @@ const TXNS: TransactionView[] = [
     ],
   },
 ]
+
+/** 十月只有一笔：用来验证切月后外部列表换成「新月份整月数据」而不是空/旧月。 */
+const OCT_TXN: TransactionView = {
+  id: 301,
+  uuid: 't-301',
+  date: '2026-10-15',
+  flag: '*',
+  description: '十月聚餐',
+  created_by_name: '林小满',
+  postings: [
+    { account_id: 2, account: 'Expenses:Food', commodity: 'CNY', amount: '66.00' },
+    { account_id: 1, account: 'Assets:Bank', commodity: 'CNY', amount: '-66.00' },
+  ],
+}
+const TWO_MONTHS = [...TXNS, OCT_TXN]
 
 let pinia: ReturnType<typeof createPinia>
 let data: ReturnType<typeof useLedgerDataStore>
@@ -372,6 +389,38 @@ describe('BillsView：日历', () => {
     expect(sheet.find('.ss-title').text()).toBe('11月5日 · 0 笔')
     expect(sheet.text()).toContain('当日无交易')
     expect(wrapper.findAll('.bills__row')).toHaveLength(3)
+  })
+
+  it('抽屉打开后点翻月箭头切月：抽屉关闭，外部列表换成新月份整月数据', async () => {
+    const wrapper = mountWith(TWO_MONTHS)
+    await wrapper.findAll('button.cal__cell')[2].trigger('click')
+    expect(wrapper.find('[data-testid="day-transactions-sheet"]').exists()).toBe(true)
+
+    await wrapper.find('button[aria-label="上个月"]').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(period.bills.month).toBe(10)
+    expect(wrapper.find('[data-testid="day-transactions-sheet"]').exists()).toBe(false)
+    expect(wrapper.findAll('.bills__row')).toHaveLength(1)
+    expect(wrapper.find('.bills__group-date').text()).toBe('10月15日')
+    expect(wrapper.text()).toContain('十月聚餐')
+    // 旧月份的 3 笔不能残留
+    expect(wrapper.text()).not.toContain('工资与午饭')
+  })
+
+  it('抽屉打开后用月份选择器切月：同样关抽屉且只留新月份数据', async () => {
+    const wrapper = mountWith(TWO_MONTHS)
+    await wrapper.findAll('button.cal__cell')[2].trigger('click')
+    expect(wrapper.find('[data-testid="day-transactions-sheet"]').exists()).toBe(true)
+
+    wrapper.findComponent(MonthPicker).vm.$emit('select', { year: 2026, month: 10 })
+    await wrapper.vm.$nextTick()
+
+    expect(period.bills.month).toBe(10)
+    expect(wrapper.find('[data-testid="day-transactions-sheet"]').exists()).toBe(false)
+    expect(wrapper.findAll('.bills__row')).toHaveLength(1)
+    expect(wrapper.text()).toContain('十月聚餐')
+    expect(wrapper.text()).not.toContain('工资与午饭')
   })
 })
 
@@ -695,6 +744,9 @@ describe('BillsView：账本健康图标', () => {
     expect(icon.attributes('aria-label')).toContain('分录借贷恒等式检查')
     const hint = icon.attributes('title') ?? ''
     expect(hint).toContain('分录借贷恒等式检查通过：3360 条分录按币种借贷平衡')
+    // 前缀只出现一次；结论与口径之间有句号，不再黏成「借贷平衡本检查按币种」
+    expect(hint.match(/分录借贷恒等式检查/g) ?? []).toHaveLength(1)
+    expect(hint).toContain('借贷平衡。本检查按币种')
     expect(hint).toContain('不是 bean-check')
     expect(hint).toContain('不是余额校准')
     expect(hint).toContain('设置的数据安全页')
@@ -721,6 +773,8 @@ describe('BillsView：账本健康图标', () => {
     expect(icon.classes()).toContain('bills__health-icon--unbalanced')
     expect(icon.text()).toBe('⚠')
     expect(icon.attributes('title')).toContain('CNY +0.01、USD -0.02')
+    expect((icon.attributes('title') ?? '').match(/分录借贷恒等式检查/g) ?? []).toHaveLength(1)
+    expect(icon.attributes('title')).toContain('USD -0.02。本检查按币种')
     expect(icon.attributes('title')).toContain('不是 bean-check')
     expect(h.identityCheck).toHaveBeenCalled()
   })
@@ -735,6 +789,10 @@ describe('BillsView：账本健康图标', () => {
     expect(checking.find('[data-testid="ledger-health-icon"]').attributes('title')).toContain(
       '正在进行分录借贷恒等式检查',
     )
+    // 省略号本身是句读，不与口径小字重复补句号
+    expect(checking.find('[data-testid="ledger-health-icon"]').attributes('title')).toContain(
+      '检查…本检查按币种',
+    )
     checking.unmount()
 
     h.identityCheck.mockRejectedValue(new Error('offline'))
@@ -743,6 +801,7 @@ describe('BillsView：账本健康图标', () => {
     const icon = failed.find('[data-testid="ledger-health-icon"]')
     expect(icon.classes()).toContain('bills__health-icon--unknown')
     expect(icon.attributes('title')).toContain('分录借贷恒等式检查失败')
+    expect(icon.attributes('title')).toContain('查看明细。本检查按币种')
   })
 
   it('切账本后按新账本重取检查结果', async () => {
