@@ -11,6 +11,8 @@
  */
 import { computed, ref, watch } from 'vue'
 
+import { t } from '@/i18n'
+
 import SelectSheet from './SelectSheet.vue'
 
 /** 每页年份数（3 列 × 4 行）。 */
@@ -130,8 +132,8 @@ function onClose(): void {
 <template>
   <SelectSheet
     :open="open"
-    title="选择年份"
-    dialog-label="选择账期年份"
+    :title="t('shell.selectYearTitle')"
+    :dialog-label="t('shell.selectYearDialog')"
     @close="onClose"
   >
     <div class="yp-year">
@@ -139,7 +141,7 @@ function onClose(): void {
         type="button"
         class="yp-arrow"
         :disabled="!canPrev"
-        aria-label="上一页年份"
+        :aria-label="t('shell.prevYearPage')"
         @click="shiftPage(-1)"
       >
         <span aria-hidden="true">‹</span>
@@ -149,14 +151,14 @@ function onClose(): void {
         type="button"
         class="yp-arrow"
         :disabled="!canNext"
-        aria-label="下一页年份"
+        :aria-label="t('shell.nextYearPage')"
         @click="shiftPage(1)"
       >
         <span aria-hidden="true">›</span>
       </button>
     </div>
 
-    <div class="yp-grid" role="group" aria-label="年份">
+    <div class="yp-grid" role="group" :aria-label="t('shell.yearGrid')">
       <button
         v-for="year in visibleYears"
         :key="year"
@@ -164,7 +166,7 @@ function onClose(): void {
         class="yp-cell"
         :class="{ 'yp-cell--on': isSelected(year) }"
         :aria-pressed="isSelected(year)"
-        :aria-label="`${year} 年`"
+        :aria-label="t('shell.yearCellLabel', { year: String(year) })"
         @click="pick(year)"
       >
         <span class="yp-cell__text">{{ year }}</span>

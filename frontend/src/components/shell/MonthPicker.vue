@@ -11,6 +11,8 @@
  */
 import { computed, ref, watch } from 'vue'
 
+import { t } from '@/i18n'
+
 import SelectSheet from './SelectSheet.vue'
 
 const props = withDefaults(
@@ -90,8 +92,8 @@ function isSelected(month: number): boolean {
 
 /** 读屏文案带上「有数据」，让打点这个纯视觉信息也有文字等价物。 */
 function cellLabel(month: number): string {
-  const base = `${viewYear.value} 年 ${month} 月`
-  return hasData(month) ? `${base}，有数据` : base
+  const base = t('shell.monthCellLabel', { year: String(viewYear.value), month: String(month) })
+  return hasData(month) ? base + t('shell.hasData') : base
 }
 
 function shiftYear(delta: number): void {
@@ -115,8 +117,8 @@ function onClose(): void {
 <template>
   <SelectSheet
     :open="open"
-    title="选择月份"
-    dialog-label="选择账期月份"
+    :title="t('shell.selectMonthTitle')"
+    :dialog-label="t('shell.selectMonthDialog')"
     @close="onClose"
   >
     <div class="mp-year">
@@ -124,24 +126,24 @@ function onClose(): void {
         type="button"
         class="mp-arrow"
         :disabled="!canPrev"
-        aria-label="上一年"
+        :aria-label="t('shell.prevYear')"
         @click="shiftYear(-1)"
       >
         <span aria-hidden="true">‹</span>
       </button>
-      <strong class="mp-year__label">{{ viewYear }} 年</strong>
+      <strong class="mp-year__label">{{ t('shell.yearLabel', { year: String(viewYear) }) }}</strong>
       <button
         type="button"
         class="mp-arrow"
         :disabled="!canNext"
-        aria-label="下一年"
+        :aria-label="t('shell.nextYear')"
         @click="shiftYear(1)"
       >
         <span aria-hidden="true">›</span>
       </button>
     </div>
 
-    <div class="mp-grid" role="group" :aria-label="`${viewYear} 年月份`">
+    <div class="mp-grid" role="group" :aria-label="t('shell.monthGridLabel', { year: String(viewYear) })">
       <button
         v-for="month in MONTHS"
         :key="month"
@@ -152,7 +154,7 @@ function onClose(): void {
         :aria-label="cellLabel(month)"
         @click="pick(month)"
       >
-        <span class="mp-cell__text">{{ month }}月</span>
+        <span class="mp-cell__text">{{ t('shell.monthShort', { month: String(month) }) }}</span>
         <i v-if="hasData(month)" class="mp-cell__dot" aria-hidden="true" />
       </button>
     </div>

@@ -12,14 +12,9 @@
  */
 import { computed } from 'vue'
 
-import SelectSheet from './SelectSheet.vue'
+import { t } from '@/i18n'
 
-/** 角色 → 中文徽标文案；未登记的角色不显示徽标。 */
-const ROLE_LABELS: Record<string, string> = {
-  owner: '所有者',
-  editor: '可编辑',
-  viewer: '只读',
-}
+import SelectSheet from './SelectSheet.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -49,12 +44,21 @@ function isCurrent(id: number | string): boolean {
   return String(props.currentId) === String(id)
 }
 
+/**
+ * 角色 → 徽标文案（调用时求值 t()，随 locale 响应；未登记角色不显示徽标，也不猜权限）。
+ * 不能改成模块级常量映射：那会在模块求值时装订中文快照，切语言不跟随。
+ */
 function roleLabel(role?: string): string {
-  if (role === undefined || role === '') {
-    return ''
+  if (role === 'owner') {
+    return t('shell.roleOwner')
   }
-  const label = ROLE_LABELS[role]
-  return label === undefined ? '' : label
+  if (role === 'editor') {
+    return t('shell.roleEditor')
+  }
+  if (role === 'viewer') {
+    return t('shell.roleViewer')
+  }
+  return ''
 }
 
 function pick(id: number | string): void {
@@ -74,11 +78,11 @@ function onClose(): void {
 <template>
   <SelectSheet
     :open="open"
-    title="切换账本"
-    dialog-label="切换账本"
+    :title="t('shell.switchLedger')"
+    :dialog-label="t('shell.switchLedger')"
     @close="onClose"
   >
-    <p v-if="!hasLedgers" class="ls-empty">暂无账本</p>
+    <p v-if="!hasLedgers" class="ls-empty">{{ t('shell.noLedgers') }}</p>
 
     <ul v-else class="ls-list">
       <li v-for="ledger in ledgers" :key="ledger.id" class="ls-item">

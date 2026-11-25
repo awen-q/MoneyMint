@@ -14,6 +14,7 @@
  */
 import { computed } from 'vue'
 
+import { t } from '@/i18n'
 import { usePrivacyStore } from '@/stores/privacy'
 import { useSessionStore } from '@/stores/session'
 import SyncBadge from '@/components/SyncBadge.vue'
@@ -28,16 +29,19 @@ const privacy = usePrivacyStore()
 
 /** 账本行：账本名 +（有则）当前用户名，与现网顶栏信息量一致。 */
 const ledgerLine = computed(() => {
-  const name = session.ledgerName
+  // 账本名在 store 类型上允许 undefined（未选账本 / 加载中），插值前归一为空串。
+  const name = session.ledgerName ?? ''
   const user = session.user
   if (user === null) {
-    return `当前账本：${name}`
+    return t('shell.currentLedger', { name })
   }
-  const who = user.display_name !== '' ? user.display_name : user.username
-  return who === '' ? `当前账本：${name}` : `当前账本：${name} · ${who}`
+  // display_name 在类型上可选（服务端字段可缺省），归一为空串后再回退到 username。
+  const displayName = user.display_name ?? ''
+  const who = displayName !== '' ? displayName : user.username
+  return who === '' ? t('shell.currentLedger', { name }) : t('shell.currentLedgerWithUser', { name, user: who })
 })
 
-const privacyLabel = computed(() => (privacy.enabled ? '显示金额' : '隐藏金额'))
+const privacyLabel = computed(() => (privacy.enabled ? t('shell.showAmount') : t('shell.hideAmount')))
 
 function togglePrivacy(): void {
   privacy.toggle()
@@ -59,7 +63,7 @@ function togglePrivacy(): void {
         >
           <span class="hd__icon-box" aria-hidden="true">{{ privacy.enabled ? '🙈' : '👁' }}</span>
         </button>
-        <button type="button" class="hd__icon" aria-label="更多操作" @click="emit('more')">
+        <button type="button" class="hd__icon" :aria-label="t('shell.moreActions')" @click="emit('more')">
           <span class="hd__icon-box" aria-hidden="true">⋯</span>
         </button>
       </span>

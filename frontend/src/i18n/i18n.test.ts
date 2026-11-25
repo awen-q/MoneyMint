@@ -16,6 +16,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import StateCard from '@/components/shell/StateCard.vue'
+import { codeMessage } from '@/api/errors'
 // 静态 import navItems：复刻生产 import 链——navItems 的模块求值早于 initLocale()。
 // label 是 getter（访问时求值），故模块求值顺序无关紧要，访问时机才决定输出。
 import { MOBILE_TABS, NAV_MAIN, NAV_MANAGE } from '@/components/shell/navItems'
@@ -264,5 +265,31 @@ describe('试点文件语言切换响应', () => {
     expect(wrapper.find('.auth__submit').text()).toBe('Sign in')
     expect(wrapper.find('.auth__switch').text()).toBe('No account? Sign up')
     wrapper.unmount()
+  })
+})
+
+describe('API 错误码文案（阶段 1：errors.ts 稳定码迁入字典）', () => {
+  it('命中已知码返回 zh-CN 原文（逐字节，不返回 key 本身）', () => {
+    expect(codeMessage('account_not_found')).toBe('账户不存在')
+    expect(codeMessage('csrf_required')).toBe('缺少 CSRF 头，请刷新页面后重试')
+  })
+
+  it('未知码返回空串，调用方回退 ApiError.message', () => {
+    expect(codeMessage('no_such_code_stage1')).toBe('')
+    expect(codeMessage('')).toBe('')
+  })
+
+  it('setLocale(en) 后返回英文，切回 zh-CN 恢复中文', () => {
+    setLocale('en')
+    expect(codeMessage('account_not_found')).toBe(en['apiErrors.account_not_found'])
+    expect(codeMessage('account_not_found')).not.toBe('账户不存在')
+    setLocale('zh-CN')
+    expect(codeMessage('account_not_found')).toBe('账户不存在')
+  })
+
+  it('客户端本地网络错误提示随语言切换', () => {
+    expect(codeMessage('network_error')).toBe('网络连接失败，请检查网络后重试')
+    setLocale('en')
+    expect(codeMessage('network_error')).toBe(en['apiErrors.network_error'])
   })
 })

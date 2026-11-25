@@ -23,6 +23,7 @@
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import { t } from '@/i18n'
 import { registerServiceWorker } from '@/core/pwa'
 import { useSessionStore } from '@/stores/session'
 import { useSyncStore } from '@/stores/sync'
@@ -65,7 +66,7 @@ function applyUpdate(): void {
 /** 导航入口点击：未上线的入口只提示，不跳转（永不死链）。 */
 function onSelect(item: NavItem): void {
   if (item.to === undefined || !item.ready) {
-    notice.value = `${item.label}将在后续批次开放`
+    notice.value = t('shell.navPending', { label: item.label })
     return
   }
   notice.value = ''
@@ -88,11 +89,11 @@ function closeMore(): void {
 
 function openRecord(): void {
   if (session.isViewer) {
-    notice.value = '只读成员不能记账'
+    notice.value = t('shell.viewerCannotRecord')
     return
   }
   if (session.needsInvite) {
-    notice.value = '请先等待 owner 邀请加入账本'
+    notice.value = t('shell.needsInvite')
     return
   }
   notice.value = ''
@@ -119,8 +120,8 @@ function goChangePassword(): void {
     <!-- 主区 -->
     <div class="layout__main">
       <div v-if="updateReady" class="layout__update" role="status">
-        <span>有新版本可用</span>
-        <button class="fb-btn-primary layout__update-btn" type="button" @click="applyUpdate">立即更新</button>
+        <span>{{ t('shell.updateAvailable') }}</span>
+        <button class="fb-btn-primary layout__update-btn" type="button" @click="applyUpdate">{{ t('shell.updateNow') }}</button>
       </div>
 
       <!-- 顶栏：品牌 + 账本行 + 待同步 / 隐私 / 更多（页名不放这里，见 LO-16） -->

@@ -12,7 +12,9 @@ import { useRouter } from 'vue-router'
 
 import { accountApi, settingsApi } from '@/api/client'
 import AppVersionCard from '@/components/AppVersionCard.vue'
+import SelectSheet from '@/components/shell/SelectSheet.vue'
 import { setThemePreference, theme, themePreference, type ThemePreference } from '@/composables/useTheme'
+import { LOCALES, locale, setLocale, t, type Locale } from '@/i18n'
 import { ApiError } from '@/api/errors'
 import type { AccountView } from '@/api/types'
 import { roleLabel } from '@/core/batch3'
@@ -68,6 +70,28 @@ const appearanceHint = computed<string>(() => {
 
 function pickAppearance(value: ThemePreference): void {
   setThemePreference(value)
+}
+
+/** 语言切换弹层是否打开（阶段 1 唯一迁移项；本页其余文案阶段 2 迁移）。 */
+const languageOpen = ref(false)
+
+/** 当前语言代码（显式 computed，模板里比较 highlight 时不依赖 ref 自动解包细节）。 */
+const currentLocaleCode = computed<Locale>(() => locale.value)
+
+/** 当前语言的自称（简体中文 / English），直接取自 LOCALES，不翻译语言名本身。 */
+const currentLocaleLabel = computed<string>(() => {
+  for (const option of LOCALES) {
+    if (option.code === locale.value) {
+      return option.label
+    }
+  }
+  return locale.value
+})
+
+/** 选中语言：全站立即生效并关闭弹层。 */
+function pickLanguage(next: Locale): void {
+  setLocale(next)
+  languageOpen.value = false
 }
 
 interface LinkItem {
@@ -249,6 +273,36 @@ onMounted(() => {
       </div>
     </div>
 
+    <!-- 语言 / Language：阶段 1 的设置项，选中即全站生效（本页其余文案阶段 2 迁移） -->
+    <div class="fb-card set__card set__links">
+      <button type="button" class="set__link" @click="languageOpen = true">
+        <span>{{ t('settings.language') }}</span>
+        <span class="fb-muted">{{ currentLocaleLabel }} ›</span>
+      </button>
+    </div>
+
+    <SelectSheet
+      :open="languageOpen"
+      :title="t('settings.languageDialog')"
+      :dialog-label="t('settings.languageDialog')"
+      @close="languageOpen = false"
+    >
+      <ul class="set__lang-list">
+        <li v-for="option in LOCALES" :key="option.code">
+          <button
+            type="button"
+            class="set__lang-row"
+            :class="{ 'set__lang-row--on': currentLocaleCode === option.code }"
+            :aria-current="currentLocaleCode === option.code ? 'true' : undefined"
+            @click="pickLanguage(option.code)"
+          >
+            <span class="set__lang-name">{{ option.label }}</span>
+            <span v-if="currentLocaleCode === option.code" class="set__lang-check" aria-hidden="true">✓</span>
+          </button>
+        </li>
+      </ul>
+    </SelectSheet>
+
     <div class="fb-card set__card set__links">
       <button
         v-for="item in links"
@@ -341,4 +395,11 @@ onMounted(() => {
 .set__switch i::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--fb-white); }
 .set__switch i.on { background: var(--fb-blue); }
 .set__switch i.on::after { left: 16px; }
+/* 语言选项列表：与 LedgerSwitcher 行风格一致（整行可点，选中态描边高亮） */
+.set__lang-list { margin: 0; padding: 0; list-style: none; }
+.set__lang-list li + li { margin-top: var(--fb-space-2); }
+.set__lang-row { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 48px; padding: 10px 14px; border: 1px solid var(--fb-line); border-radius: var(--fb-radius-input); background: var(--fb-card); color: var(--fb-ink); font-family: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.set__lang-row--on { border-color: var(--fb-blue); background: var(--fb-blue-soft); }
+.set__lang-row:focus-visible { outline: 2px solid var(--fb-blue); outline-offset: 2px; }
+.set__lang-check { flex: none; color: var(--fb-blue); font-size: 14px; font-weight: 700; }
 </style>

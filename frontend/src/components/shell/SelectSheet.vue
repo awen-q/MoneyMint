@@ -29,6 +29,8 @@ let scrollLockY = 0
  */
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
+import { t } from '@/i18n'
+
 /** 可聚焦元素选择器：排除 disabled 与 tabindex="-1"（面板自身）。 */
 const FOCUSABLE_SELECTOR = [
   'a[href]',
@@ -248,7 +250,7 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="ss-close"
-          :aria-label="`关闭${title}`"
+          :aria-label="t('shell.closeDialog', { title })"
           @click="requestClose"
         >
           <span class="ss-close__icon" aria-hidden="true">✕</span>

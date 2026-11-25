@@ -14,6 +14,8 @@
  * **不放「记一笔」**：D-4 已定 FAB 是唯一记账入口，弹层里再来一个会让
  * 「是不是有两个记账入口」变成长期疑问。
  */
+import { t } from '@/i18n'
+
 import SelectSheet from './SelectSheet.vue'
 import { NAV_MANAGE, type NavItem } from './navItems'
 
@@ -37,11 +39,11 @@ const emit = defineEmits<{
 <template>
   <SelectSheet
     :open="open"
-    title="更多"
-    dialog-label="更多"
+    :title="t('shell.nav.more')"
+    :dialog-label="t('shell.nav.more')"
     @close="emit('close')"
   >
-    <section class="ms__group" aria-label="管理与工具">
+    <section class="ms__group" :aria-label="t('shell.manageAndTools')">
       <button
         v-for="item in NAV_MANAGE"
         :key="item.key"
@@ -54,17 +56,17 @@ const emit = defineEmits<{
       </button>
     </section>
 
-    <section class="ms__group" aria-label="账号">
+    <section class="ms__group" :aria-label="t('shell.accountSection')">
       <button type="button" class="ms__row" @click="emit('changePassword')">
         <span class="ms__ico" aria-hidden="true">🔑</span>
-        <span class="ms__label">修改密码</span>
+        <span class="ms__label">{{ t('shell.changePassword') }}</span>
       </button>
     </section>
 
-    <section class="ms__group" aria-label="会话">
+    <section class="ms__group" :aria-label="t('shell.sessionSection')">
       <button type="button" class="ms__row ms__row--danger" @click="emit('logout')">
         <span class="ms__ico" aria-hidden="true">⏻</span>
-        <span class="ms__label">退出登录</span>
+        <span class="ms__label">{{ t('shell.logout') }}</span>
       </button>
     </section>
   </SelectSheet>

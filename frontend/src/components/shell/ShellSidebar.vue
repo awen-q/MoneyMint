@@ -11,6 +11,7 @@
  * 3. **组件不自己跳转**：只 `emit('select', item)`，由 `AppLayout` 统一判
  *    `ready`（不可点就出提示）再 `router.push`。这样「哪里判定入口可用」只有一处。
  */
+import { t } from '@/i18n'
 import { APP_VERSION, isPrerelease, shortVersion } from '@/core/appVersion'
 import { NAV_MAIN, NAV_MANAGE, isItemActive, type NavItem } from './navItems'
 
@@ -18,12 +19,15 @@ withDefaults(
   defineProps<{
     /** 当前路由路径，用于高亮。由 AppLayout 传 `route.path`，组件内不读 router。 */
     activePath?: string
-    /** 品牌副标题。 */
+    /**
+     * 品牌副标题覆盖项（空串 = 用 i18n 默认文案 `shell.brandSub`）。
+     * 不能给中文默认值：默认值在 props 解析时求值，切语言不会跟随。
+     */
     brandSub?: string
   }>(),
   {
     activePath: '/',
-    brandSub: '家庭共享账本',
+    brandSub: '',
   },
 )
 
@@ -39,10 +43,10 @@ const emit = defineEmits<{
   <aside class="sb">
     <div class="sb__brand">
       FamBean
-      <span class="sb__brand-sub">{{ brandSub }}</span>
+      <span class="sb__brand-sub">{{ brandSub !== '' ? brandSub : t('shell.brandSub') }}</span>
     </div>
 
-    <nav class="sb__nav" aria-label="主导航">
+    <nav class="sb__nav" :aria-label="t('shell.mainNav')">
       <button
         v-for="item in NAV_MAIN"
         :key="item.key"
@@ -59,7 +63,7 @@ const emit = defineEmits<{
       <details class="sb__group">
         <summary class="sb__item sb__summary">
           <span class="sb__ico" aria-hidden="true">☰</span>
-          <span class="sb__label">管理 · {{ NAV_MANAGE.length }}</span>
+          <span class="sb__label">{{ t('shell.manageGroup', { count: String(NAV_MANAGE.length) }) }}</span>
         </summary>
         <button
           v-for="item in NAV_MANAGE"
@@ -76,12 +80,12 @@ const emit = defineEmits<{
       </details>
     </nav>
 
-    <button type="button" class="sb__cta" @click="emit('record')">＋ 记一笔</button>
+    <button type="button" class="sb__cta" @click="emit('record')">＋ {{ t('shell.record') }}</button>
 
     <!-- 版本弱常驻：家人报 bug 截图自带版本；仅版本号，完整信息在设置页「关于」卡片 -->
     <div class="sb__foot">
       <span class="sb__version">{{ shortVersion(APP_VERSION) }}</span>
-      <em v-if="isPrerelease(APP_VERSION.version)" class="sb__preview">预览版</em>
+      <em v-if="isPrerelease(APP_VERSION.version)" class="sb__preview">{{ t('shell.prerelease') }}</em>
     </div>
   </aside>
 </template>

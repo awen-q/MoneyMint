@@ -9,6 +9,8 @@
  * 「更多」不是路由：点它 `emit('more')` 开弹层，**不切视图**。
  * 组件内不做 `router.push`，可用性判定统一由 AppLayout 负责（见 navItems.ts）。
  */
+import { t } from '@/i18n'
+
 import { MOBILE_TABS, isItemActive, type NavItem } from './navItems'
 
 withDefaults(
@@ -44,7 +46,7 @@ function onTabClick(item: NavItem): void {
 </script>
 
 <template>
-  <nav class="tb" aria-label="底部导航">
+  <nav class="tb" :aria-label="t('shell.bottomNav')">
     <button
       v-for="item in leadingTabs"
       :key="item.key"
@@ -58,7 +60,7 @@ function onTabClick(item: NavItem): void {
       <span class="tb__label">{{ item.label }}</span>
     </button>
 
-    <button type="button" class="tb__fab" aria-label="记一笔" @click="emit('record')">＋</button>
+    <button type="button" class="tb__fab" :aria-label="t('shell.record')" @click="emit('record')">＋</button>
 
     <button
       v-for="item in trailingTabs"

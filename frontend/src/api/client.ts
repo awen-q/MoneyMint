@@ -13,6 +13,7 @@
  */
 import { parseIdentityHeader, type DiffItem } from '@/core/batch3'
 import { clearLegacyToken } from '@/core/storage'
+import { t } from '@/i18n'
 import { ApiError } from './errors'
 import { API_ROUTES, isNoLedgerPath } from './routes'
 import type {
@@ -401,7 +402,7 @@ export async function requestWithMeta<T>(
   try {
     res = await fetchImpl(buildUrl(path, options.query), init)
   } catch (cause) {
-    throw new ApiError(0, '网络连接失败，请检查网络后重试', {
+    throw new ApiError(0, t('apiErrors.network_error'), {
       code: 'network_error',
       details: { cause: String(cause) },
     })
