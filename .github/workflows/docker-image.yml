@@ -3,7 +3,8 @@ name: build-and-push
 # 触发策略：
 #   - push main：只跑校验（go vet + test + bean-check + 版本一致），不产镜像
 #     → 相当于免费的 CI 守护，每次提交就知道有没有破坏账芯
-#   - push tag v*：校验通过后构建 amd64+arm64 并推送 Docker Hub
+#   - push tag v*：校验通过后构建 amd64+arm64 并推送 Docker Hub，
+#     随后自动创建 GitHub Release（notes 取 CHANGELOG.md 对应版本段落）
 #   - workflow_dispatch：手动触发；默认只校验，勾选 push_image 才真正推镜像
 on:
   push:
@@ -203,4 +204,63 @@ jobs:
             echo "- 版本：\`${{ needs.verify.outputs.version }}\`"
             echo "- 架构：linux/amd64, linux/arm64"
             echo "- 标签：\`${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:${{ needs.verify.outputs.version }}\`、\`:latest\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------- 发布收尾：tag 构建成功后自动创建 GitHub Release ----------
+  # 只在 push tag v* 时执行（与 build 同条件但依赖它，镜像失败则不出 Release）。
+  # release notes 直接取 CHANGELOG.md 中 "## [x.y.z]" 到下一个 "## [" 之间的正文，
+  # 保证「变更记录」只有一个事实源，不在 Release 里另写一份。
+  # 幂等：同一 tag 重跑 workflow 时已存在则跳过，不会报错。
+  # 注意：若仓库 Actions 默认 token 只读，需在 Settings → Actions → General
+  # 把 Workflow permissions 设为 Read and write；本 job 已声明 contents: write。
+  release:
+    # verify 必须与 build 并列写进 needs，才能引用 needs.verify.outputs.version
+    # （GitHub 的 needs 上下文只含本 job 直接依赖的作业，不含传递依赖）
+    needs: [verify, build]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        run: |
+          VERSION="${{ needs.verify.outputs.version }}"
+          # 用 index() 精确匹配标题行前缀，避开版本号里 "." 被当正则通配的问题
+          awk -v ver="$VERSION" '
+            index($0, "## [" ver "]") == 1 { capture = 1; next }
+            capture && index($0, "## [") == 1 { exit }
+            capture { print }
+          ' CHANGELOG.md > notes-body.md
+          if [ ! -s notes-body.md ]; then
+            echo "::warning::CHANGELOG.md 中未找到 $VERSION 段落，回退为简短说明"
+            echo "版本 $VERSION，变更详见仓库 CHANGELOG.md。" > notes-body.md
+          fi
+          echo "---- release notes ----"
+          cat notes-body.md
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "Release $TAG 已存在，跳过创建"
+          else
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes-file notes-body.md \
+              --verify-tag
+          fi
+
+      - name: Release summary
+        run: |
+          {
+            echo "### GitHub Release"
+            echo ""
+            echo "- Tag：\`${GITHUB_REF_NAME}\`（notes 取 CHANGELOG.md 对应段落）"
           } >> "$GITHUB_STEP_SUMMARY"
