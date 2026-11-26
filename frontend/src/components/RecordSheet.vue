@@ -366,22 +366,67 @@ function bySortOrder(left: AccountView, right: AccountView): number {
 }
 
 /**
- * 一级分类：accountApi.list() 中 type ∈ {Expenses, Income} 且 parent_uuid 为空的账户。
+ * 父级解析索引：按 uuid / name 各建一份，避免每个账户都 O(n) 全表扫。
+ * 两者都基于**未被 tab 过滤**的 `accounts`，与 buildAccountTree 的输入一致
+ * —— 否则 Assets 父级在支出 tab 下查不到，层级会被误判。
+ */
+const accountByUuid = computed(() => {
+  const map = new Map<string, AccountView>()
+  for (const account of accounts.value) {
+    if (account.uuid !== undefined && account.uuid !== '') {
+      map.set(account.uuid, account)
+    }
+  }
+  return map
+})
+const accountByName = computed(() => {
+  const map = new Map<string, AccountView>()
+  for (const account of accounts.value) {
+    map.set(account.name, account)
+  }
+  return map
+})
+
+/**
+ * 父账户解析：`parent_uuid` 优先，缺失时按 name 冒号层级兜底。
+ *
+ * ⚠️ 规则必须与 `core/accounts.ts` 的 `buildAccountTree` 逐字一致，勿另立一套：
+ * 背景是批量导入的账户 `parent_uuid` 为 NULL、层级只体现在 name 的冒号上
+ * （账本 `一家三口` 的 12 个三级账户即如此）。违反此约束会让分类管理页
+ * 能看到父子折叠、而记账弹窗把它们全摊平成一级 —— 两处规则不一致。
+ *
+ * 找不到父 / 自引用 → 视为根（孤儿作根），与 buildAccountTree 同。
+ */
+function parentOf(account: AccountView): AccountView | null {
+  if (account.parent_uuid !== undefined && account.parent_uuid !== '') {
+    const parent = accountByUuid.value.get(account.parent_uuid)
+    return parent !== undefined && parent.id !== account.id ? parent : null
+  }
+  const lastColon = account.name.lastIndexOf(':')
+  if (lastColon <= 0) {
+    return null
+  }
+  const parent = accountByName.value.get(account.name.slice(0, lastColon))
+  return parent !== undefined && parent.id !== account.id ? parent : null
+}
+
+/**
+ * 一级分类：`categoryOptions` 中**解析不出父级**的账户（根，含孤儿根）。
  * 数量由账本数据决定，不写死 18 / 9（规格 §4）。
  */
 const rootCategories = computed<AccountView[]>(() =>
   categoryOptions.value
-    .filter((account) => account.parent_uuid === undefined || account.parent_uuid === '')
+    .filter((account) => parentOf(account) === null)
     .slice()
     .sort(bySortOrder),
 )
 
-/** 当前一级：已选 leaf 反查 parent；无记忆则默认高亮第一项但不自动提交。 */
+/** 当前一级：已选 leaf 反查父；无记忆则默认高亮第一项但不自动提交。 */
 const activeRootId = computed<number | null>(() => {
   const selected = accounts.value.find((account) => account.id === form.categoryAccountId)
-  if (selected !== undefined && selected.parent_uuid !== undefined && selected.parent_uuid !== '') {
-    const parent = accounts.value.find((account) => account.uuid === selected.parent_uuid)
-    if (parent !== undefined && rootCategories.value.some((root) => root.id === parent.id)) {
+  if (selected !== undefined) {
+    const parent = parentOf(selected)
+    if (parent !== null && rootCategories.value.some((root) => root.id === parent.id)) {
       return parent.id
     }
   }
@@ -394,11 +439,11 @@ const activeRootId = computed<number | null>(() => {
 /** 二级 chips：当前一级的直接子账户；无子分类时调用方整行隐藏。 */
 const subCategories = computed<AccountView[]>(() => {
   const root = rootCategories.value.find((account) => account.id === activeRootId.value)
-  if (root === undefined || root.uuid === '') {
+  if (root === undefined) {
     return []
   }
   return categoryOptions.value
-    .filter((account) => account.parent_uuid === root.uuid)
+    .filter((account) => parentOf(account)?.id === root.id)
     .slice()
     .sort(bySortOrder)
 })
@@ -424,9 +469,8 @@ const categoryGroups = computed<CategoryGroup[]>(() => {
   const groups: CategoryGroup[] = []
   const indexByKey: { [key: string]: number } = {}
   for (const account of matched) {
-    const parent = account.parent_uuid === undefined || account.parent_uuid === ''
-      ? undefined
-      : accounts.value.find((item) => item.uuid === account.parent_uuid)
+    // 与一级/二级同一套父级解析（含 name 冒号兜底），保证浮层分组与 grid 一致。
+    const parent = parentOf(account) ?? undefined
     const key = parent === undefined ? `root-${account.id}` : `parent-${parent.uuid}`
     let index = indexByKey[key]
     if (index === undefined) {
@@ -1347,6 +1391,13 @@ function balanceText(account: AccountView): string {
   return formatMoney(value === undefined ? '0.00' : value, session.defaultCommodity)
 }
 
+/**
+ * @deprecated 全仓无调用点（死代码），本次未改。
+ * 语义已过时：判据是"name 含冒号 && parent_uuid 非空"，但批量导入的账户
+ * parent_uuid 为 NULL、层级只在 name 冒号上（见 `parentOf` 的说明），
+ * 这类真实三级账户会被判成 false。
+ * 若将来要启用，请改用 `parentOf(account) !== null`，与一级/二级派生同规则。
+ */
 function isThirdLevel(account: AccountView): boolean {
   return account.name.indexOf(':') >= 0 && (account.parent_uuid !== undefined && account.parent_uuid !== '')
 }
@@ -3063,7 +3114,10 @@ watch(
   justify-content: center;
   min-height: 72px;
   padding: 10px 2px 8px;
-  border: 1.5px solid transparent;
+  /* 亮色 transparent（与原先等价、零视觉变化），夜纸引用 --fb-line：
+     与 .grp / .rs-subcat / .rs-key 同源，保持整族边框强度一致。
+     1.5px 线宽未变 → 零布局位移；`.rs-cat.on` 的 border-color 特异性更高，照常胜出。 */
+  border: 1.5px solid var(--fb-tile-edge);
   border-radius: 12px;
   background: var(--fb-soft);
   font-family: inherit;
@@ -3154,7 +3208,9 @@ watch(
 .rs-subcat {
   flex: 0 0 auto;
   min-height: 34px;
-  padding: 4px 10px;
+  /* 左侧 16px 给选中态竖条留位（普通态为空位）：
+     留白放在基类而非 .on 上，保证点选/取消时 chip 宽度与文字位置零位移。 */
+  padding: 4px 10px 4px 16px;
   border: 1px solid var(--fb-line);
   border-radius: var(--fb-radius-pill);
   background: var(--fb-card);
@@ -3164,19 +3220,41 @@ watch(
   cursor: pointer;
 }
 
+/* 选中态：形状标记（左侧竖条）而非填色高亮。
+   原实现与「全部分类」同底同色（--fb-brand-soft + --fb-brand），填充 ΔL 0.0000，
+   一行里出现两个"看起来被选中"的胶囊。改后 brand 色独占选中语义，
+   「全部分类」退为中性款，两者靠 填充/文字色相/边框 三重区分。
+   竖条离左边 6px：贴边会被 1px 描边吃掉（产品初稿踩过）。
+   背景不声明：继承基类 `--fb-card`，即"选中态不填色"（原 --fb-brand-soft 已废弃）。
+   留白由基类统一给（padding-left 16px），此处不再覆写 → 选中/取消零位移。 */
 .rs-subcat.on {
   border-color: var(--fb-brand);
-  background: var(--fb-brand-soft);
   color: var(--fb-brand);
   font-weight: 800;
+  position: relative;
 }
 
+.rs-subcat.on::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--fb-brand);
+}
+
+/* 「全部分类」退为中性款：虚线 + 次要文字色，不再抢 brand 色。
+   本元素没有竖条，故把基类的 16px 左留白盖回 10px，避免文字显得偏右。
+   背景同样继承基类 --fb-card（中性、不填色）。 */
 .rs-subcat--all {
   border-style: dashed;
-  border-color: var(--fb-brand-line);
-  background: var(--fb-brand-soft);
-  color: var(--fb-brand);
-  font-weight: 700;
+  border-color: var(--fb-line-strong);
+  color: var(--fb-sub);
+  font-weight: 600;
+  padding-left: 10px;
 }
 
 .rs-muted {

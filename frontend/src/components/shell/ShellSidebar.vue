@@ -103,7 +103,7 @@ const emit = defineEmits<{
 
 .sb__brand {
   padding: 20px;
-  color: var(--fb-white);
+  color: var(--fb-side-fg-strong);
   font-size: 17px;
   font-weight: 700;
   letter-spacing: 0.02em;
@@ -142,15 +142,19 @@ const emit = defineEmits<{
   cursor: pointer;
 }
 
-/* 高亮用半透明白色的 pill：侧栏底色与 --fb-blue 都是深绿，实色底部对比不足 */
+/* 高亮用半透明白色的 pill：侧栏底色与 --fb-blue 都是深绿，实色底部对比不足。
+   文字用 --fb-side-fg-strong 而非 --fb-white：后者随主题翻转（夜纸下变成卡面深色），
+   压在深色 pill 上仅 1.28:1；且它比正文色 --fb-side-fg 更亮，
+   保留"选中比未选中更亮"的强调线索（1.46:1）。 */
 .sb__item--on {
   background: var(--fb-on-hero-pill);
-  color: var(--fb-white);
+  color: var(--fb-side-fg-strong);
   font-weight: 700;
 }
 
+/* 焦点环同理：夜纸下 --fb-white 是深色，环落在侧栏底上约 1.17:1，键盘用户看不见焦点。 */
 .sb__item:focus-visible {
-  outline: 2px solid var(--fb-white);
+  outline: 2px solid var(--fb-side-fg-strong);
   outline-offset: 2px;
 }
 
@@ -206,8 +210,11 @@ const emit = defineEmits<{
   cursor: pointer;
 }
 
+/* 焦点环画在按钮外侧（outline-offset: 2px），落点是侧栏底而非按钮自身填充，
+   故同样不能用会翻转的 --fb-white。注意 `.sb__cta` 的 `color` 保持 --fb-white——
+   它压的是品牌填充 --fb-blue（夜纸浅绿），深字正常，语义正确。 */
 .sb__cta:focus-visible {
-  outline: 2px solid var(--fb-white);
+  outline: 2px solid var(--fb-side-fg-strong);
   outline-offset: 2px;
 }
 

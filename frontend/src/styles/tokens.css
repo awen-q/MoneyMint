@@ -45,10 +45,20 @@
   --fb-green-ink: #366b4d;
   --fb-danger-ink: #a33c33;
 
-  /* PC 侧栏 */
+  /* PC 侧栏：固定深底 chrome（两套主题都深），前景三档均不随主题翻转。
+     弱化 --fb-side-head / 正文 --fb-side-fg / 强调 --fb-side-fg-strong。
+     三者在 rootGolden + nightGolden 双锁同值，即"不许翻转"的机器可检表达。 */
   --fb-sidebar: #20352c;
   --fb-side-fg: #d8d2c3;
   --fb-side-head: #9a9c8c;
+  /* 强调档：品牌字 / 当前选中导航项 / 键盘焦点环。
+     注意：本值与亮色 --fb-card 同色，但语义是"侧栏前景"而非"卡片表面"，禁止合并。 */
+  --fb-side-fg-strong: #fdfbf4;
+
+  /* 控件描边：亮色无边框，等价于原先的 border: 1.5px solid transparent。
+     夜间（见 night 块）引用基准边框 --fb-line，与 .grp / .rs-subcat / .rs-key 同源。 */
+  --fb-tile-edge: transparent;
+
   /* 侧栏宽度：ShellSidebar 与 RecordSheet PC 居中基准共用，消除两处 232px 硬编码漂移 */
   --fb-sidebar-w: 232px;
 
@@ -285,10 +295,17 @@ body {
   --fb-brand-soft: #26382e;
   --fb-brand-line: #4a6a57;
 
-  /* PC 侧栏 */
+  /* PC 侧栏：底仍深，前景三档同值再声明 —— 显式表达"本族不随主题翻转"。
+     若有人为"补齐格式"在此填深色值，两把 golden 锁会立即变红。 */
   --fb-sidebar: #121512;
   --fb-side-fg: #d8d2c3;
   --fb-side-head: #9a9c8c;
+  --fb-side-fg-strong: #fdfbf4;
+
+  /* 控件描边：夜间引用基准边框（不硬编码色值）。
+     锁的是"必须引用 --fb-line"这个约束，而非某个 hex —— 系统性调整 --fb-line 时
+     分类格自动跟随；若被改成别的色值，golden 会红。 */
+  --fb-tile-edge: var(--fb-line);
 
   /* 首页 hero：深墨绿渐变；on-hero 文字取浅米色 */
   --fb-hero-gradient: linear-gradient(150deg, #121512, #26382e, #3a5a48);
@@ -350,7 +367,6 @@ body {
  * PC（≥900）不受影响 —— 那段已把 `.hd` 改成 `--fb-card` 底 + `--fb-ink` 字。
  */
 [data-theme='night'] .fb-hero,
-[data-theme='night'] .layout__brand,
 [data-theme='night'] .layout__notice,
 [data-theme='night'] .asset-hero,
 [data-theme='night'] .hd,
@@ -362,6 +378,22 @@ body {
 /* 夜纸开关：关态轨道提亮，深色滑块才看得见（颜色仍只走 token）。 */
 [data-theme='night'] .set__switch i:not(.on) {
   background: var(--fb-sub);
+}
+
+/*
+ * 记账页纸面：`.rs-stage` / `.rs-dock` / `.foot-note` / PostingPreview `.bean`
+ * 都以 `--fb-paper` 作面板内背景，而 `.rs-mask, .slip` 作用域把它钉在浅纸
+ * #fdfbf4（为保住成功小票是浅纸）。夜纸下若不换底，浅纸底 + 已翻浅的墨 = 浅底浅字
+ * ——金额文字实算仅 1.14:1（亮色 12.93:1）。此处只换 `.rs-mask` 子树的"纸面"，
+ * 小票 `.slip` 自带 paper 五兄弟声明，直接声明胜过继承，票面零变化。
+ *
+ * ⚠️ 必须是独立顶层规则，不能嵌进上方 `[data-theme='night']` 根块
+ * —— tokens.contrast.test.ts 断言"paper 五兄弟不在 night 根块覆盖"。
+ * ⚠️ 刻意不动 `--fb-paper-edge`：它不在 `.rs-mask/.slip` 作用域内，`.slip`
+ * 是继承的，一改会把小票票面纸纹弄没。代价是记账页面板在夜纸下无纸纹（纯装饰）。
+ */
+[data-theme='night'] .rs-mask {
+  --fb-paper: #2a2924;
 }
 
 /*

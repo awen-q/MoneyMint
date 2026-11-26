@@ -30,6 +30,8 @@
     "--fb-sidebar": "#121512",
     "--fb-side-fg": "#d8d2c3",
     "--fb-side-head": "#9a9c8c",
+    "--fb-side-fg-strong": "#fdfbf4",
+    "--fb-tile-edge": "var(--fb-line)",
     "--fb-hero-gradient": "linear-gradient(150deg, #121512, #26382e, #3a5a48)",
     "--fb-on-hero-muted": "rgba(232, 226, 210, 0.86)",
     "--fb-on-hero-pill": "rgba(232, 226, 210, 0.16)",
