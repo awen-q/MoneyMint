@@ -6,24 +6,43 @@
 > 版本号单一事实源：git tag（`vX.Y.Z`）。发布前 `scripts/verify-version.sh` 会校验
 > tag / 本文件顶部版本 / `frontend/package.json` 三处一致，不一致则构建失败。
 
-## [0.6.2-pre] - 2026-11-21
+## [0.6.2] - 2026-11-26
 
-预发布版（版本号待老板确认后转正式 0.6.2）。分类/账户配置与使用专项，账芯（复式平衡 / append-only / `bean-check`）、离线同步协议不变；迁移仍 017。
+「使用体验与可访问性」专项：首屏性能、账户外观、外观主题、多语言（中/英），外加记账交互改版与一批真机问题修复。账芯（复式平衡 / append-only / `bean-check`）与离线同步协议不变；迁移仍 **017**；端点表 **44 条路径不变**，因新增 `PATCH /api/accounts/{uuid}` 方法，`path×method` 55→**56**。
 
 ### Added
 
-- **分类排序真正落库 + 跨端同步**：新增 `PATCH /api/accounts/sort-order`（按 type 整组提交 uuid + 0-based sort_order，单事务全成全败、写 sync_log OpUpdate，协议零改动）；拖拽顺序落库、全家设备同步，记账九宫格按 sort_order 置顶。前端 `dragOrders` 由 number[] 改 uuid[] 并降级清理旧数据。端点表 43→44 路径 / 54→55 path×method。
-- **可选 ASCII 英文账号（owner）**：新建账户/分类可填英文账号（如 `Food`）拼进 name，留空仍自动生成 ItemN；合法性仍由服务端 `ValidateAccountName` 守门（400 account_name_invalid）；name 创建时一次定死、不提供 rename。`session.isOwner` 按账本 role 派生。
+- **账户展示字段编辑（`PATCH /api/accounts/{uuid}`）**：body 白名单 `{display_name?, icon?, color?}`，指针语义区分「键缺失=不改」与「显式空串=清除」；icon 按 rune ≤8、color 须 `^#[0-9A-Fa-f]{6}$`（违反 `400 account_visual_invalid`）；单事务 UPDATE + `sync_log op=update`，`RowsAffected==0` 回滚并 `404 account_not_found`；已关户可改，viewer 由 middleware 403。前端新增 `IconPicker`（20 预设 emoji + 自由输入）与 `AccountEditSheet`（账户详情页 / 分类页双入口，离线置灰「修改需联网」），分类页行首 / 资产页分组行 / 账户详情页头三处展示图标；三字段**不进 `.beancount` 导出**。同步协议零变更（pull 载荷本就含三字段，前端展开合并自动生效）。
+- **外观三态**：跟随系统 / 亮色 / 暗色。新增持久化键 `fambean.theme.mode`，旧键 `fambean.theme` 一次性迁移（night→dark、paper→light、无键→system）；`system` 偏好监听 `prefers-color-scheme` 变化（`addEventListener` → `addListener` → 静默 三级降级，系统切换不写 localStorage）；设置页「外观」改三段选择。`index.html` 内联 ES5 脚本在 bundle 前预设 `data-theme` 与 `meta theme-color`，**消除暗色用户冷启动白屏闪烁**。
+- **加载骨架屏**：`SkeletonBlock`（line/card/calendar/chart 四档 + shimmer 动画，`prefers-reduced-motion` 停动效）用于账单页当月聚合、统计页全量聚合；`StateCard` 新增 `loadingSkeleton` 可选档（默认关，向后兼容）。色值全部走主题 token，夜纸自动适配。
+- **多语言（简体中文 / English）**：自研 i18n 框架——模块单例 `locale` ref + `t(key, params)`（`{name}` 插值，无正则 lookbehind 以兼容 Safari 16.4 以下）+ 缺 key 回退中文源语言 + `MessageKey` 由 zh-CN 字典派生（en 缺/多 key 直接 typecheck 红）。全站文案字典化（**1285 key / 语言**，含错误码 `apiErrors.*`、图表标签、aria-label）；设置页「语言 / Language」切换；图表切语言 `notMerge` 重绘。新增 `frontend/src/i18n/GLOSSARY.md` 术语表（账务术语、Commodity/Currency 边界、角色、页面名、禁译清单）。**数据不随语言漂移**：交易默认描述、`<待选账户>` 占位、`PURGE_CONFIRM_WORD`（后端契约「删除」）、CSV 表头、Beancount 语法 token 一律不 i18n。
+- **记账页改版**：键盘常驻、分类级联、高级态行内输入、PC 锚定浮层；默认资金账户记忆（失效回退首个可用）；快捷日期条（今天/昨天/前天）。
+- **小票导出分享图**（默认最小披露）。
+- **可选 ASCII 英文账号（owner）**：新建账户/分类可填英文账号（如 `Food`）拼进 name，留空仍自动生成 ItemN；合法性仍由服务端 `ValidateAccountName` 守门（`400 account_name_invalid`）；name 创建时一次定死、不提供 rename。
+- **分类排序真正落库 + 跨端同步**：`PATCH /api/accounts/sort-order`（按 type 整组提交 uuid + 0-based sort_order，单事务全成全败、写 `sync_log op=update`，协议零改动）；记账九宫格按 sort_order 置顶。
+- **交易详情增强**：小票下方「原生语法片段」折叠区，复用 `buildBeanSnippet()` 与导出逐字对齐（标签是 `tags: "..."` 元数据行，不是 `#tag`）；冲正交易记录发起人，详情页标注修改记录。
+- **资产页创建账户**；父账户下拉可辨识（显示名（全名）+ 全角缩进 + 「无」选项动态明示）。
+- **账单页**：账本健康状态条（点击进数据安全页）、当日交易抽屉、去掉纯说明副标题。
+- 声明 **GPL-3.0** 并在页面展示版本号。
 
 ### Changed
 
-- **记账页默认资金账户记忆**：记住上次使用的资金账户（fund 记忆位），失效回退首个可用并提示；不按分类绑定、不拆收支两套；编辑态不被记忆覆盖。
-- **快捷日期条**：日期输入旁加「今天/昨天/前天」chip，写 form.date 并校验收期（前端唯一防线，后端不校验）；保留原生 input，不引日期库。
+- **账单页首屏两段加载**：先拉「当月交易窗口」立即渲染（日历 + 四指标 + 逐日折线 + 列表），首屏可见后再在后台 idle/setTimeout 静默补全量；`fullReady` 标志让统计页 / 搜索筛选项在补齐前显示聚合骨架。切月时已缓存月份**零请求**；补齐失败静默降级，下一次置脏自愈。**契约冻结不动**：`limit` 缺省=全量、`transactionApi.list()` 零参签名、keyset 分页语义全部保持。
+- 交易列表响应透出 `tags`（前端原生片段与搜索标签下钻依赖）。
+- Beancount 导入：按名字层级建立 `parent_uuid`；复用账户支持「只补空」自愈。
+- CI：升级 GitHub Actions 至 Node 24 兼容版本（checkout / setup-* / docker 系列）。
+
+### Fixed
+
+- 高级双录三组真实 Bug：借贷方向、金额落值、成功态残留。
+- 安卓 `vvh` 缝隙漏出页面内容；安卓真机记账弹窗漏出底部 TabBar。
+- 币种管理余额表超宽；交易详情删除按钮不等宽。
+- 记账页暗色可辨识度；二级分类层级兜底。
+- 镜像构建号显示 `unknown`；账户/分类视图列表默认样式与边距。
 
 ### 版本号治理
 
-- `verify-version.sh` 与 CI Resolve version 的正则扩展为支持 SemVer 预发布号（如 `0.6.2-pre`），以兼容本预发布版；tag `v0.6.2-pre` 为正式发布前的临时锚点，确认后转 `v0.6.2`。
-- **正式发版收尾步骤（确认前 tag 不动、不 push）**：① 删旧 tag —— 本地 `git tag -d v0.6.2-pre`、远程 `git push --delete origin v0.6.2-pre`；② 三处版本号去掉 `-pre` 转正式 `0.6.2` —— 本文件顶部标题、`frontend/package.json` 的 `version`（git tag 在 ④ 重建）；③ 提交改动；④ 打 `git tag v0.6.2`；⑤ `git push` 提交与 tag，触发 CI 构建并推镜像。
+- `verify-version.sh` 与 CI Resolve version 的正则支持 SemVer 预发布号；本版由 `0.6.2-pre` 转正式 **0.6.2**（本文件顶部、`frontend/package.json`、git tag 三处一致）。旧 tag `v0.6.2-pre` 由发布者删除（本地 `git tag -d`、远程 `git push --delete`）。
 
 ## [0.6.1] - 2026-11-19
 
