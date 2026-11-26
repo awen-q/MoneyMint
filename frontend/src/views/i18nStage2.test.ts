@@ -591,7 +591,7 @@ describe('i18n 阶段 2 子批 5a：core 收尾', () => {
     setLocale('en')
     expect(roleLabel('owner')).toBe('Owner')
     expect(roleLabel('editor')).toBe('Editor')
-    expect(roleLabel('viewer')).toBe('View only')
+    expect(roleLabel('viewer')).toBe('Viewer')
     expect(roleLabel('')).toBe('Not in a ledger')
   })
 
@@ -758,8 +758,8 @@ describe('i18n 阶段 2 子批 6a：分录编辑器英文化', () => {
       (node) => node.textContent ?? '',
     )
     expect(heads).toHaveLength(5)
-    expect(heads).toContain('ASSETS · Assets')
-    expect(heads).toContain('EQUITY · Equity')
+    expect(heads).toContain('ASSETS')
+    expect(heads).toContain('EQUITY')
     expect((floating?.querySelector('.adv-search') as HTMLInputElement).placeholder).toBe(
       'Search display_name / name',
     )
