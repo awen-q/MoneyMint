@@ -183,9 +183,57 @@ func (s *Store) importIntoLedgerOn(
 	}
 
 	// 1) 账户：建立 name -> id 映射，按目标账本复用或新建。
+	//
+	// 处理顺序必须「父先于子」：否则 `Expenses:Food:Dining` 可能先于
+	// `Expenses:Food` 建出来，解析父 uuid 时还查不到 → 父子关系丢失（落库为 NULL）。
+	// 依据：p.Accounts 由 beancount 解析器按 open 指令出现顺序 append
+	// （beancount.go:187），不保证任何层级顺序，故此处必须显式排。
+	// 同层级用 SliceStable 保持文件声明顺序，让同一份文件多次导入结果可复现。
+	accountsOrdered := make([]beancount.Account, len(p.Accounts))
+	copy(accountsOrdered, p.Accounts)
+	sort.SliceStable(accountsOrdered, func(i, j int) bool {
+		return strings.Count(accountsOrdered[i].Name, ":") < strings.Count(accountsOrdered[j].Name, ":")
+	})
+
 	acctID := make(map[string]int64, len(p.Accounts))
+	// name -> uuid：新建的与复用的**都要登记**。复用账户若不登记，它的子级
+	// （本批新建）会查不到父 uuid，父子关系照样丢——这是本条修复的关键一半。
+	acctUUID := make(map[string]string, len(p.Accounts))
+	// 再预载本账本**已有**账户：父可能早已存在、而本批 beancount 并没有 open 它
+	// （例如用户先建好「饮食」，再导入只含 `Expenses:Food:Dining` 的流水）。
+	// 只靠遍历 p.Accounts 登记会漏掉这种情况，子级仍会挂空。
+	// 已软删（deleted_at 非空）的账户不作为父候选。
+	existingRows, qerr := tx.Query(
+		`SELECT name, uuid FROM accounts WHERE ledger_id=? AND deleted_at IS NULL`, ledgerID,
+	)
+	if qerr != nil {
+		return nil, fmt.Errorf("预载账户映射: %w", qerr)
+	}
+	for existingRows.Next() {
+		var nm, uu string
+		if serr := existingRows.Scan(&nm, &uu); serr != nil {
+			_ = existingRows.Close()
+			return nil, fmt.Errorf("读取既有账户: %w", serr)
+		}
+		acctUUID[nm] = uu
+	}
+	if cerr := existingRows.Err(); cerr != nil {
+		_ = existingRows.Close()
+		return nil, fmt.Errorf("遍历既有账户: %w", cerr)
+	}
+	_ = existingRows.Close()
+
 	newAccounts, reuseAccounts := 0, 0
-	for _, a := range p.Accounts {
+	for _, a := range accountsOrdered {
+		// 父 uuid：取 name 最后一个冒号之前的前缀，查 acctUUID（已预载本账本既有账户
+		// + 本批已处理账户）。查不到 → 留空，落库为 NULL 即「孤儿作根」，与前端
+		// core/accounts.ts 的 buildAccountTree 口径一致（找不到父视为根，不自造父账户）。
+		// 解析放在复用/新建分支之前：复用分支的自愈回填也要用它。
+		parentUUID := ""
+		if idx := strings.LastIndex(a.Name, ":"); idx > 0 {
+			parentUUID = acctUUID[a.Name[:idx]]
+		}
+
 		existingID, existingUUID, found, closed, aType, restr, err := accountByNameTx(tx, ledgerID, a.Name)
 		if err != nil {
 			return nil, err
@@ -198,23 +246,52 @@ func (s *Store) importIntoLedgerOn(
 					"同名账户 %s 已关闭，不能复用", a.Name)
 			}
 			acctID[a.Name] = existingID
+			acctUUID[a.Name] = existingUUID
+			// 自愈：已有账户 parent_uuid 为空、而本次能解析出父 → 补上。
+			// 「只补空」是硬约束：绝不覆盖用户已设置的关系；parentUUID == "" 时不动。
+			// 场景：先有三级、后建二级、再导一次 —— 否则子级的 NULL 永远补不上。
+			if parentUUID != "" {
+				updRes, uerr := tx.Exec(
+					`UPDATE accounts SET parent_uuid=?, updated_at=datetime('now')
+					 WHERE ledger_id=? AND uuid=? AND deleted_at IS NULL
+					   AND (parent_uuid IS NULL OR parent_uuid='')`,
+					parentUUID, ledgerID, existingUUID,
+				)
+				if uerr != nil {
+					return nil, fmt.Errorf("回填父账户 %s: %w", a.Name, uerr)
+				}
+				n, aerr := updRes.RowsAffected()
+				if aerr != nil {
+					return nil, aerr
+				}
+				if n > 0 {
+					// 与其他账户更新一致：同事务写 sync_log，否则其他端 pull 不到。
+					// ⚠️ 但**刻意不**调用 appendBatchEntityTx —— 撤销导入是按批次回滚本次
+					// **创建**的实体；被复用的账户不是本次创建的，不该在撤销时被删除或回滚。
+					// 自愈后的 parent_uuid 留着是良性的：撤销后账户层级依然正确，
+					// 不会产生错账。这不是漏写，是取舍。
+					if _, serr := appendSyncLogOn(tx, ledgerID, domain.EntityAccount, existingUUID, domain.OpUpdate); serr != nil {
+						return nil, serr
+					}
+				}
+			}
 			reuseAccounts++
-			_ = existingUUID
 			_ = aType
 			_ = restr
 			continue
 		}
 		auuid := uuid.NewString()
 		res, err := tx.Exec(
-			`INSERT INTO accounts(ledger_id, uuid, name, type, open_date, close_date, commodity_restriction)
-			 VALUES(?, ?, ?, ?, ?, NULLIF(?,'') , NULLIF(?,'') )`,
-			ledgerID, auuid, a.Name, accountType(a.Name), a.OpenDate, a.CloseDate, a.Commodity,
+			`INSERT INTO accounts(ledger_id, uuid, name, type, open_date, close_date, commodity_restriction, parent_uuid)
+			 VALUES(?, ?, ?, ?, ?, NULLIF(?,'') , NULLIF(?,'') , NULLIF(?,'') )`,
+			ledgerID, auuid, a.Name, accountType(a.Name), a.OpenDate, a.CloseDate, a.Commodity, parentUUID,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("建账户 %s: %w", a.Name, err)
 		}
 		id, _ := res.LastInsertId()
 		acctID[a.Name] = id
+		acctUUID[a.Name] = auuid
 		if _, err := appendSyncLogOn(tx, ledgerID, domain.EntityAccount, auuid, domain.OpCreate); err != nil {
 			return nil, err
 		}
