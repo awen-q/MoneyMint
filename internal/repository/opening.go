@@ -467,6 +467,13 @@ type txnInsert struct {
 	OpeningKey         string
 	BalanceDate        string
 	BalanceKey         string
+	// CreatedBy 是发起人（0 = 无发起人 → 落 NULL）。
+	// 只有「由用户操作直接触发」的系统交易才传：修改交易产生的冲正、
+	// 余额校准产生的冲正；期初设置/重建不传（service 层根本没有 user 参数，
+	// 见 RebuildAllOpenings / OpeningInput），保持 NULL 才是事实。
+	// ⚠️ 千万不要在 insertTxnTx 内部默认取「当前登录用户」——系统自动交易
+	// 会被错记到恰好点了按钮的人头上，比留空更糟。
+	CreatedBy int64
 }
 
 // insertTxnTx 插入一条期初/冲正/校准交易（不含分录）。
@@ -480,12 +487,12 @@ func insertTxnTx(tx execer, ledgerID int64, t txnInsert) (int64, error) {
 		`INSERT INTO transactions
 		 (ledger_id, uuid, date, flag, description, tags,
 		  opening_account_uuid, opening_version, opening_key, reversal_of,
-		  balance_date, balance_key)
+		  balance_date, balance_key, created_by)
 		 VALUES (?, ?, ?, '*', ?, ?, NULLIF(?,''), ?, NULLIF(?,''), NULLIF(?,''),
-		         NULLIF(?,''), NULLIF(?,''))`,
+		         NULLIF(?,''), NULLIF(?,''), NULLIF(?,0))`,
 		ledgerID, t.UUID, t.Date, t.Description, marshalTags(t.Tags),
 		t.OpeningAccountUUID, t.OpeningVersion, t.OpeningKey, t.ReversalOf,
-		t.BalanceDate, t.BalanceKey,
+		t.BalanceDate, t.BalanceKey, t.CreatedBy,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("写入期初交易: %w", err)

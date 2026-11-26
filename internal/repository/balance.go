@@ -514,6 +514,9 @@ func (s *Store) ApplyBalanceCalibration(ledgerID int64, in BalanceCalibrationInp
 			Description:          "冲正: " + in.Description,
 			Precision:            maxPrecision,
 			PrecisionByCommodity: precisionByCommodity,
+			// 同一次校准里，新交易写 in.UserID（见下方 AC-3.6 的 UPDATE）；
+			// 它产生的冲正也必须是同一个人，否则一次操作一半有操作人、一半没有。
+			CreatedBy: in.UserID,
 		}
 		revUUID, _, err := insertReversalTxnTx(tx, ledgerID, src)
 		if err != nil {

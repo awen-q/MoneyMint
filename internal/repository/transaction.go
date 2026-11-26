@@ -71,7 +71,7 @@ func scanTransactionRow(rows *sql.Rows) (domain.Transaction, error) {
 		&t.ID, &t.UUID, &t.Date, &t.Flag, &t.Description, &tags,
 		&t.CreatedBy, &t.CreatedByName, &deletedAt,
 		&t.ReversalOf, &t.OpeningAccountUUID, &t.OpeningVersion, &t.OpeningKey,
-		&t.ReversedBy,
+		&t.ReversedBy, &t.CreatedAt,
 	); err != nil {
 		return domain.Transaction{}, err
 	}
@@ -235,6 +235,9 @@ func (s *Store) UpdateTransaction(in TransactionUpdateInput) (*TransactionUpdate
 		Postings:             posts,
 		Description:          "冲正: " + origDesc,
 		PrecisionByCommodity: precMap,
+		// 冲正是本次「修改交易」操作的一部分，发起人 = 当前操作人，
+		// 与新交易的 CreatedBy 同源（下方 newTxn.CreatedBy 用的就是它）。
+		CreatedBy: in.CreatedBy,
 	})
 	if err != nil {
 		return nil, err

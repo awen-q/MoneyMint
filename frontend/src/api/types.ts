@@ -477,6 +477,14 @@ export interface TransactionView {
   flag: TxnFlag
   description: string
   created_by_name: string
+  /**
+   * 记录写入时间（`YYYY-MM-DD HH:MM:SS`，本地时区）。
+   *
+   * 可选：详情页的「修改记录」行需要它（显示冲正是哪天发生的）。
+   * 后端 `service.TransactionView` 目前**未输出**该字段，取不到时详情页
+   * 退化为只显示人名（不会出现半截日期）。后端补输出后本字段自动生效。
+   */
+  created_at?: string
   /** 标签（迁移 005 持久化；列表响应已透出，无标签交易按 omitempty 缺省；报表 #tag 下钻与详情原生片段依赖）。 */
   tags?: string[]
   postings: PostingView[]

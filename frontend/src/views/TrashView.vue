@@ -22,6 +22,7 @@ import { PURGE_CONFIRM_WORD, transactionApi } from '@/api/client'
 import { ApiError } from '@/api/errors'
 import type { PurgeLogEntry, PurgeSummary, TrashItemView } from '@/api/types'
 import SelectSheet from '@/components/shell/SelectSheet.vue'
+import { formatSessionTime } from '@/core/batch3'
 import { formatMoney } from '@/core/Money'
 import { t } from '@/i18n'
 import { markDirty } from '@/stores/dataFreshness'
@@ -312,7 +313,8 @@ onMounted(() => {
         <li v-for="item in sorted" :key="item.uuid" class="trash__row">
           <span class="trash__info">
             <span class="trash__desc">{{ item.description }}</span>
-            <span class="trash__meta">{{ t('trash.rowMeta', { date: item.date, deletedAt: item.deleted_at, member: item.created_by_name }) }}</span>
+            <!-- 删除时间是服务端 UTC 串：必须经 formatSessionTime 转本地，否则凌晨删除会显示成前一天。 -->
+            <span class="trash__meta">{{ t('trash.rowMeta', { date: item.date, deletedAt: formatSessionTime(item.deleted_at ?? ''), member: item.created_by_name }) }}</span>
             <span class="trash__meta trash__postings">{{ sumPostings(item) }}</span>
             <!-- 系统交易没有永久删除入口，但必须说明「为什么没有」。 -->
             <span v-if="item.is_system === true" class="trash__sys">{{ t('trash.systemKeptRow') }}</span>
@@ -359,7 +361,7 @@ onMounted(() => {
           <li v-for="row in auditLog" :key="`${row.purged_at}-${row.uuid}`" class="trash__audit-row">
             <span class="trash__audit-desc">{{ row.description }}</span>
             <span class="trash__meta">
-              {{ t('trash.auditMeta', { time: row.purged_at, actor: row.actor_name || t('trash.unknownActor'), amount: row.amount_note }) }}
+              {{ t('trash.auditMeta', { time: formatSessionTime(row.purged_at), actor: row.actor_name || t('trash.unknownActor'), amount: row.amount_note }) }}
             </span>
           </li>
         </ul>

@@ -196,6 +196,15 @@ func TestAccountTransactionBalanceExport(t *testing.T) {
 	if len(txns) != 1 || len(txns[0].Postings) != 2 {
 		t.Fatalf("交易列表应为 1 笔 2 分录，实际 %+v", txns)
 	}
+	// created_at 必须透出：详情页「修改记录」行靠它显示冲正是哪天发生的。
+	// 格式为 SQLite datetime('now') 的 UTC 串 `YYYY-MM-DD HH:MM:SS`，
+	// 时区转换交给前端（core/batch3.ts），后端只透原文。
+	if txns[0].CreatedAt == "" {
+		t.Fatal("列表视图应透出 created_at（详情页修改记录依赖该字段）")
+	}
+	if _, perr := time.Parse("2006-01-02 15:04:05", txns[0].CreatedAt); perr != nil {
+		t.Fatalf("created_at 格式应为 YYYY-MM-DD HH:MM:SS（UTC），实际 %q：%v", txns[0].CreatedAt, perr)
+	}
 
 	// 导出
 	text, err := svc.ExportLedger(lid)

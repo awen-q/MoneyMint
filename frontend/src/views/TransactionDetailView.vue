@@ -17,6 +17,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { accountApi, transactionApi } from '@/api/client'
 import { ApiError } from '@/api/errors'
 import type { AccountView, TransactionView } from '@/api/types'
+import { formatSessionTime } from '@/core/batch3'
 import { buildBeanSnippet } from '@/core/bean'
 import { t } from '@/i18n'
 import {
@@ -66,6 +67,24 @@ const txn = computed<TransactionView | null>(() => {
     }
   }
   return null
+})
+
+/**
+ * 冲正了当前这笔「原交易」的那条记录，用于详情页的「修改记录」行。
+ *
+ * 数据来源：本页 `load()` 已经拉过全量列表（`transactionApi.list()`），而后端
+ * `ListTransactions` 只过滤 `deleted_at IS NULL`、**不排除冲正交易**，所以冲正
+ * 记录通常就在 `transactions` 里，不必再发一次请求。
+ *
+ * 找不到（例如冲正记录被清进了回收站）→ 返回 null；调用方据此**不加行、不报错**。
+ * 当前交易本身没有被冲正（`reversed_by` 为空）→ 同样返回 null。
+ */
+const reversalTxn = computed<TransactionView | null>(() => {
+  const item = txn.value
+  if (item === null || (item.reversed_by ?? '') === '') {
+    return null
+  }
+  return transactions.value.find((t) => t.uuid === item.reversed_by) ?? null
 })
 
 const kind = computed(() =>
@@ -125,7 +144,34 @@ const rows = computed<Array<{ label: string; value?: string; tags?: string[] }>>
     list.push({ label: t('txnDetail.rowTransfer'), value: transferRoute(item.postings, accounts.value) })
   }
   if ((item.created_by_name ?? '') !== '') {
-    list.push({ label: t('txnDetail.rowMember'), value: item.created_by_name })
+    // 冲正交易本身不是「谁记的这笔账」，而是「谁发起的这次修改」：
+    // 沿用「记账人」会让用户以为某成员真的记了一笔叫「冲正:面包烘焙」的支出。
+    const isReversal = (item.reversal_of ?? '') !== ''
+    list.push({
+      label: isReversal ? t('txnDetail.rowInitiator') : t('txnDetail.rowMember'),
+      value: item.created_by_name,
+    })
+  }
+  // 「修改记录」：当前交易被冲正时，指出是谁在什么时候改的。
+  // 冲正记录不在列表里（被清进回收站等）→ 整行不加。
+  if (reversalTxn.value !== null) {
+    const who = (reversalTxn.value.created_by_name ?? '') !== ''
+      ? reversalTxn.value.created_by_name
+      : t('txnDetail.modifiedByUnknown')
+    // created_at 是服务端 UTC 串（`YYYY-MM-DD HH:MM:SS`，无时区后缀）。
+    // **不能**直接 slice(0,10)：UTC 与本地（东八区）差 8 小时，
+    // 北京时间 00:00–07:59 记的账对应 UTC 前一天 16:00–23:59，
+    // 直接取 UTC 日期会显示成前一天。白天记的账不受影响。
+    // 复用 core/batch3.ts 那套 parseServerTime/formatSessionTime 转本地时区再取日期，
+    // 与 SessionsView / DataSafetyView 一致；解析失败时该函数返回占位符，
+    // 正则不匹配 → 退化为只显示人名。
+    const raw = (reversalTxn.value.created_at ?? '').trim()
+    const local = formatSessionTime(raw)
+    const when = /^\d{4}-\d{2}-\d{2}/.test(local) ? local.slice(0, 10) : ''
+    list.push({
+      label: t('txnDetail.rowModifiedBy'),
+      value: when !== '' ? `${who} · ${when}` : who,
+    })
   }
   return list
 })

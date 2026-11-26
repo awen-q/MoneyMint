@@ -40,6 +40,10 @@ type TransactionView struct {
 	Description   string        `json:"description"`
 	Tags          []string      `json:"tags,omitempty"`
 	CreatedByName string        `json:"created_by_name"` // 记账人显示名；无创建者时为空串
+	// CreatedAt 是记录写入时间（UTC，`YYYY-MM-DD HH:MM:SS`），详情页「修改记录」
+	// 行用它显示冲正是哪天发生的。前端负责转本地时区（core/batch3.ts）。
+	// omitempty：老调用方（不含该列的自定义查询）不会凭空多一个空串字段。
+	CreatedAt     string        `json:"created_at,omitempty"`
 	Postings      []PostingView `json:"postings"`
 	ReversedBy    string        `json:"reversed_by,omitempty"` // 非空 = 已被冲正（失效原交易）
 	ReversalOf    string        `json:"reversal_of,omitempty"` // 非空 = 本身是冲正交易
@@ -90,6 +94,7 @@ func txnListView(t domain.Transaction, role string, userID int64) TransactionVie
 		Description:   t.Description,
 		Tags:          t.Tags,
 		CreatedByName: t.CreatedByName,
+		CreatedAt:     t.CreatedAt,
 		Postings:      make([]PostingView, 0, len(t.Postings)),
 		ReversedBy:    t.ReversedBy,
 		ReversalOf:    t.ReversalOf,

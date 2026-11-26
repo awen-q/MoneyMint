@@ -25,6 +25,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 
 import { ApiError } from '@/api/errors'
 import type { PurgeLogEntry, PurgeSummary, TrashItemView } from '@/api/types'
+import { formatSessionTime } from '@/core/batch3'
 import { zhCN } from '@/i18n/zh-CN'
 import TrashView from '@/views/TrashView.vue'
 
@@ -495,5 +496,31 @@ describe('B7-H：DataSafety 的「备份会让删除复活」提示两处逐字�
     // 字典值即用户看到的字：与定稿原句逐字节相等（含「永久删除只作用于当前库」这句）。
     expect(zhCN['dataSafety.revivalNote']).toBe(SENTENCE)
     expect(SENTENCE).toContain('永久删除只作用于当前库')
+  })
+})
+
+/**
+ * 时间显示：服务端下发的是 UTC 串（`deleted_at` / `purged_at`），必须经
+ * `formatSessionTime` 转本地时区。判据用「不出现带秒的原始值」——`formatSessionTime`
+ * 只输出到分钟，所以 `HH:mm:00` 这种形状在任何时区下都不该出现，不依赖运行机器的 TZ。
+ */
+describe('时间显示：UTC 串转本地（与账户详情 / 会话列表同口径）', () => {
+  it('回收站行的删除时间与审计日志的永久删除时间都本地化，不残留原始 ISO 串', async () => {
+    h.trash.mockResolvedValue(
+      trashResponse(
+        [itemFixture({ deleted_at: '2026-11-26T16:30:00Z' })],
+        {},
+        [logFixture({ purged_at: '2026-11-27T01:15:00Z' })],
+      ),
+    )
+    const wrapper = await mountTrash()
+    const text = wrapper.text()
+
+    // 期望值现算：写死日期会让用例在非东八区机器上失败（UTC 16:30 在 UTC 仍是 26 日）。
+    expect(text).toContain(formatSessionTime('2026-11-26T16:30:00Z'))
+    expect(text).toContain(formatSessionTime('2026-11-27T01:15:00Z'))
+    // 原始串带秒，格式化后只到分钟 → 出现 `:00` 秒尾巴即说明没走工具。
+    expect(text).not.toContain('16:30:00')
+    expect(text).not.toContain('01:15:00')
   })
 })

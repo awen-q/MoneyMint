@@ -42,6 +42,11 @@ type ReversalSource struct {
 	// 不传（nil）时全部按 Precision 统一格式化，与 T08 原行为逐字一致；
 	// 传入时按分录 commodity 取对应精度，保证多币种冲正不丢精度（AC-3.3）。
 	PrecisionByCommodity map[string]int
+
+	// CreatedBy 是冲正交易的发起人（0 = 落 NULL）。
+	// 由「用户操作直接触发」的冲正传真实操作人（修改交易 / 余额校准）；
+	// 期初冲正不传——service 层无 user 参数，留 NULL 才是事实。
+	CreatedBy int64
 }
 
 // negateReversalPostings 把分录金额逐条取负并按给定精度格式化（纯函数）。
@@ -97,6 +102,7 @@ func insertReversalTxnTx(tx execer, ledgerID int64, src ReversalSource) (string,
 		ReversalOf:         src.UUID,
 		OpeningAccountUUID: src.OpeningAccountUUID,
 		OpeningVersion:     src.OpeningVersion,
+		CreatedBy:          src.CreatedBy,
 	})
 	if err != nil {
 		return "", 0, err

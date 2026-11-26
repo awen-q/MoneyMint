@@ -21,6 +21,7 @@ import { ApiError, codeMessage } from '@/api/errors'
 import type { AccountView, BalancePreview, BalanceResult, TransactionView } from '@/api/types'
 import { affectedTransactionCount, balanceOf, catIcon, isClosed } from '@/core/accounts'
 import { balanceDiff, hasTransactionsAfter, isPlainDecimal, previewText } from '@/core/balance'
+import { formatSessionTime } from '@/core/batch3'
 import { Money } from '@/core/Money'
 import {
   accountLabel,
@@ -525,7 +526,7 @@ onMounted(() => {
               <span class="acctd__row-info">
                 <span class="acctd__row-desc">{{ item.version }} · {{ item.reversed ? t('accountDetail.reversed') : t('accountDetail.active') }}</span>
                 <span class="acctd__row-meta">
-                  {{ item.created_at }} · {{ item.created_by_name || '—' }}
+                  {{ formatSessionTime(item.created_at ?? '') }} · {{ item.created_by_name || '—' }}
                   <template v-if="item.entries && item.entries.length > 0">
                     · {{ t('accountDetail.diffLabel') }} <template v-for="entry in item.entries" :key="entry.commodity">{{ entry.commodity }} {{ entry.amount }} </template>
                   </template>

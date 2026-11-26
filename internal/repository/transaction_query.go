@@ -102,7 +102,7 @@ const txnListColumns = `t.id, t.uuid, t.date, t.flag, t.description, t.tags,
 		COALESCE(t.created_by, 0), COALESCE(u.display_name, '') AS created_by_name, t.deleted_at,
 		COALESCE(t.reversal_of, ''), COALESCE(t.opening_account_uuid, ''),
 		COALESCE(t.opening_version, 0), COALESCE(t.opening_key, ''),
-		COALESCE(t.reversed_by, '')`
+		COALESCE(t.reversed_by, ''), COALESCE(t.created_at, '')`
 
 // ListTransactionsFiltered 列出满足筛选条件的未删除交易（含分录）。
 //

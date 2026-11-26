@@ -96,6 +96,9 @@ type Transaction struct {
 	Description string
 	CreatedBy   int64      // 创建者用户 id；0 表示无（同步 push 的离线交易无创建者）
 	CreatedByName string  // 创建者显示名；由 repository JOIN users 取得，created_by=0 时为空串
+	// CreatedAt 是记录写入时间（SQLite datetime('now')，UTC，形如 2026-11-26 05:22:44）。
+	// 对外用于详情页「修改记录」行；前端负责转本地时区展示（core/batch3.ts）。
+	CreatedAt string
 	Tags        []string   // 标签（展示/检索/导出 #tag 用）
 	Postings    []Posting
 	DeletedAt   string // 软删时间（回收站用）；空串表示未删除

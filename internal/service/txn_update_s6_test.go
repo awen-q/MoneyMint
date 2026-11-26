@@ -356,6 +356,14 @@ func TestS6_UpdateTransactionGuards(t *testing.T) {
 	if deleted || createdBy != e.owner || ledID != e.lid {
 		t.Fatalf("改后交易元数据错误: deleted=%v created_by=%d ledger=%d", deleted, createdBy, ledID)
 	}
+	// 冲正交易同样必须带操作人（AC-5.6 的同一诉求）。
+	// 此前 txnInsert 没有 created_by 列，冲正一律落 NULL：普通交易有值、
+	// 冲正没有，同一次操作一半有操作人一半没有。这条断言锁住该缺口。
+	if revDeleted, revCreatedBy, revLedID := e.txnIntegrity(res2.ReversalUUID); revDeleted ||
+		revCreatedBy != e.owner || revLedID != e.lid {
+		t.Fatalf("冲正交易元数据错误: deleted=%v created_by=%d ledger=%d",
+			revDeleted, revCreatedBy, revLedID)
+	}
 }
 
 // TestS6_UpdateTransactionPermissionMatrix AC-5.3 / AC-5.8：权限矩阵四类
@@ -378,6 +386,11 @@ func TestS6_UpdateTransactionPermissionMatrix(t *testing.T) {
 	}
 	if _, createdBy, _ := e.txnIntegrity(res.NewUUID); createdBy != e.editor {
 		t.Fatalf("改后交易 created_by 应为操作人 editor，实际 %d", createdBy)
+	}
+	// 冲正交易同理应为 editor —— 与上面新交易同源。
+	// 若冲正从「当前会话」取值而非 in.CreatedBy，这里会暴露错记。
+	if _, revCreatedBy, _ := e.txnIntegrity(res.ReversalUUID); revCreatedBy != e.editor {
+		t.Fatalf("冲正交易 created_by 应为操作人 editor，实际 %d", revCreatedBy)
 	}
 
 	// editor 改 owner 记的账 → 403 txn_edit_forbidden。
