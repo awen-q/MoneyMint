@@ -1,6 +1,6 @@
 {
   "name": "fambean-web",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "private": true,
   "type": "module",
   "description": "FamBean 家庭记账前端（Vue 3 + Vite 纯 SPA）",

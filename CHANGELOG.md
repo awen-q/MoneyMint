@@ -6,6 +6,34 @@
 > 版本号单一事实源：git tag（`vX.Y.Z`）。发布前 `scripts/verify-version.sh` 会校验
 > tag / 本文件顶部版本 / `frontend/package.json` 三处一致，不一致则构建失败。
 
+## [0.6.3] - 2026-11-27
+
+「标签编辑」专项：标签从「冲正 + 新建」改为**原地更新窄通道**（P0），并补齐**离线标签编辑**（P1，并集 + 墓碑合并）。经济事实（date/flag/description/postings）的冲正机制**原样保留**；迁移 **017→018**；端点表 **44→46 条路径**、`path×method` **56→58**（新增 `PUT /api/transactions/{uuid}/tags`、`GET /api/transactions/{uuid}/tag-edits`）。导出仍为 `tags: "..."` 元数据行，`bean-check` 校验通过。
+
+### Added
+
+- **标签原地更新（`PUT /api/transactions/{uuid}/tags`）**：只改 `transactions.tags` 一列，uuid 不变、不冲正、不新建——主流水「一笔消费 = 一行」。Body `{tags, base_tags, device_id?, client_op_id?}`，`base_tags` 必填（指针语义区分缺失与显式 `[]`）作 CAS；`409 txn_tags_conflict` 带 `current_tags`/`current_tags_updated_at` 供一键以最新值重试；结果幂等（重放同请求审计只 1 条）。规范化三处一致（trim→丢空→精确去重→排序；≤32 个/≤64 字符/无控制字符/opening 黑名单），服务端权威。前端 `TagInlineEditor` 就地编辑器（详情页 + 列表 chip 双入口，列表无上下文时现拉详情取完整 tags 防伪 409），不经过整包 RecordSheet。
+- **二级「编辑记录」面板（`GET /api/transactions/{uuid}/tag-edits`）**：审计 `tag_edit_log`（迁移 018，只写不删、不进同步协议、不进主流水），`id DESC` 限 50 条，viewer 可读；写入与 `sync_log op=update` **同一事务**。详情页折叠面板展示「谁在何时把标签改成了什么」。
+- **离线标签编辑（P1）**：IndexedDB 新增 `tag_events` 独立 store（DB 1→2，纯加法升级），与经济事实同步队列 `pending` 物理隔离——离线 chip 增删产生 `add`/`remove` 墓碑事件（带单调 ts + device_id），重连后自动收敛提交：不同标签并集合并、同标签按「ts 大者为准（平局 device_id 字典序）」确定性收敛、**仍走 PUT 端点由服务端裁决**（409 重试最多 3 次、复用同一 `client_op_id` 幂等去重）；pull 覆盖后重放本地事件，离线草稿不被冲掉。墓碑保留 100 条/交易或 30 天。
+- **`client_op_id` 幂等去重全链路**：`device_id:本地批次号`，批次创建时固定、跨重试/刷新不变；部分唯一索引 `uniq_tag_edit_op(ledger_id, client_op_id)`；service 层去重短路（权限三关之后、载荷校验/快速 CAS 之前）+ repo 层事务内兜底去重（前移到 CAS 之前）——「首次提交成功但响应丢失」的重放直接返回既有结果，409 只代表真实并发冲突；GET 审计回显 `client_op_id`（additive，旧端按可选字段忽略）。
+- 冲突提示与非阻断 UX：编辑记录面板内浅色合并提示行 + 一次性 toast（`role=status`/`aria-live=polite`，4s 自动消失），与错误提示（`role=alert`）明确区分，不弹模态、不打断记账。
+- 方案 C 退路开关：`TAG_MERGE_STRATEGY: 'client' | 'server'`（本期恒 `'client'`；服务端事件流端点契约备查未实现）。
+
+### Changed
+
+- **append-only 第二个显式例外（继 B7 回收站后）**：交易注解字段 `tags` 可原地更新（可写字段严格 = `{tags, tags_updated_at}`，入口严格 = PUT 标签端点一处）；经济事实四字段仍严格冲正；离线端 `sync/push` 夹带 tags 仍被 `applyUpdateEntity` 拒绝——「离线端只能提交注解意图，最终落库由服务端裁决」。详见 AGENTS.md §9.3。
+- `loadEntity` 交易实体 additive 下发 `tags_updated_at`（旧端忽略）；`?tag=` 筛选基于当前 tags，删标签后交易立即从筛选消失。
+- 旧数据里已生成的「冲正: XXX」行不回溯、不重写，只面向未来停止为改标签生成冲正。
+
+### Fixed
+
+- 去重分支原排在 CAS 之后：响应丢失的重放永远先撞 409、走不到去重——已前移（repo）并补 service 层短路，权限判定保持在去重之前。
+- 服务端 tags 折叠为「基线 add 事件」参与 LWW：修复伪代码缺陷「陈旧本地 remove 会静默压过服务端较新的 add」。
+
+### Security
+
+- 无安全相关变更；`client_op_id` 去重不绕过权限（viewer 带他人 op id 仍 403，有用例锁定）。
+
 ## [0.6.2] - 2026-11-26
 
 「使用体验与可访问性」专项：首屏性能、账户外观、外观主题、多语言（中/英），外加记账交互改版与一批真机问题修复。账芯（复式平衡 / append-only / `bean-check`）与离线同步协议不变；迁移仍 **017**；端点表 **44 条路径不变**，因新增 `PATCH /api/accounts/{uuid}` 方法，`path×method` 55→**56**。
