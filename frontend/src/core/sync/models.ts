@@ -55,6 +55,36 @@ export interface LocalTxn {
 }
 
 /**
+ * 单条离线标签意图（P1）：删除写 remove 墓碑，不从数组抹掉。
+ *
+ * 与 `PendingChange` **物理隔离**：本类型只服务 IndexedDB `tag_events` store
+ * 与 PUT /tags 窄通道，永不进入 pending / sync/push（经济事实同步）。
+ */
+export interface TagEvent {
+  tag: string
+  op: 'add' | 'remove'
+  /** ISO 8601 UTC 毫秒串，与后端 tags_updated_at 同格式，可直接字典序比较。 */
+  ts: string
+  device_id: string
+}
+
+/**
+ * 每笔交易一个标签事件批次（key = `${ledgerId}:${uuid}`）。
+ *
+ * `baseTags` 是最近一次 pull / commit 的服务端标签（PUT 的 CAS 基线）；
+ * `clientOpId` 在批次首次创建时固定，跨 409 重试与页面刷新不变；
+ * `committed` 标记本批已成功提交、events 仅存保留的 remove 墓碑（不重放）。
+ */
+export interface TagEventBatch {
+  uuid: string
+  baseTags: string[]
+  events: TagEvent[]
+  clientOpId: string
+  conflictMerged?: boolean
+  committed?: boolean
+}
+
+/**
  * 待推送变更。op 省略 = create（旧版口径）。
  * state：pending（待推 / 退避中）| dead（永久失败，同步页可见可丢弃）。
  */

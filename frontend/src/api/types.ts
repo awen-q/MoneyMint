@@ -605,6 +605,11 @@ export interface UpdateTagsRequest {
   tags: string[]
   base_tags: string[]
   device_id?: string
+  /**
+   * P1 离线批次幂等键 `${device_id}:${本地批次号}`，批次创建时固定，
+   * 跨 409 重试 / 页面刷新不变；后端按 (ledger_id, client_op_id) 去重。
+   */
+  client_op_id?: string
 }
 
 /** PUT /api/transactions/{uuid}/tags 响应体（`tags` 为服务端规范化后的最终值）。 */
@@ -627,6 +632,8 @@ export interface TagEditItem {
   actor_id: number
   actor_name: string
   device_id: string
+  /** P1 additive 回显：离线批次合并带上来的 client_op_id；旧记录缺省。 */
+  client_op_id?: string
   ts: ISODateTime
 }
 

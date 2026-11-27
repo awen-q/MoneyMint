@@ -405,3 +405,148 @@ func TestSyncPull_TagsUpdatedAtAdditive(t *testing.T) {
 		t.Fatal("pull 应含 transaction/op=update 出站事件")
 	}
 }
+
+// TestListTagEdits_ClientOpIdEcho 编辑记录回显 client_op_id（方案 §4.3）：
+// 带 op id 的离线批次写入后，GET 审计项必须带回该字段；同 op id 重放不新增
+// 审计且回显不变；P0 在线调用（空 op id）回显空串，旧端按可选字段忽略。
+func TestListTagEdits_ClientOpIdEcho(t *testing.T) {
+	f := newTagEditFixture(t, "餐饮")
+	const opID = "dev-echo:batch-7"
+
+	res, err := f.svc.UpdateTransactionTags(lid, f.user, f.uuid, TagsUpdateInput{
+		Tags: []string{"甲"}, BaseTags: []string{"餐饮"},
+		DeviceID: "dev-echo", ClientOpID: opID,
+	})
+	if err != nil {
+		t.Fatalf("带 op id 写入: %v", err)
+	}
+
+	edits, err := f.svc.ListTagEdits(lid, f.uuid, 50)
+	if err != nil || len(edits) != 1 {
+		t.Fatalf("审计应 1 条，实际 %d err=%v", len(edits), err)
+	}
+	if edits[0].ClientOpID != opID {
+		t.Fatalf("审计应回显 client_op_id=%q，实际 %q", opID, edits[0].ClientOpID)
+	}
+	if edits[0].DeviceID != "dev-echo" || edits[0].ID != res.EditID {
+		t.Fatalf("回显 device_id/edit_id 不符: %+v（期望 edit_id=%d）", edits[0], res.EditID)
+	}
+
+	// 同 op id 重放：用当前 tags 作 base 让 service 快速 CAS 通过，
+	// 落到 repo 去重分支命中；审计不新增、op id 回显不变。
+	if _, err := f.svc.UpdateTransactionTags(lid, f.user, f.uuid, TagsUpdateInput{
+		Tags: []string{"甲"}, BaseTags: []string{"甲"},
+		DeviceID: "dev-echo", ClientOpID: opID,
+	}); err != nil {
+		t.Fatalf("同 op id 重放: %v", err)
+	}
+	edits, err = f.svc.ListTagEdits(lid, f.uuid, 50)
+	if err != nil || len(edits) != 1 {
+		t.Fatalf("重放后审计仍应 1 条，实际 %d err=%v", len(edits), err)
+	}
+	if edits[0].ClientOpID != opID {
+		t.Fatalf("重放后 op id 回显应不变，实际 %q", edits[0].ClientOpID)
+	}
+
+	// P0 在线调用（无 op id）：审计照常写，client_op_id 回显空串，向后兼容。
+	if _, err := f.svc.UpdateTransactionTags(lid, f.user, f.uuid, TagsUpdateInput{
+		Tags: []string{"乙"}, BaseTags: []string{"甲"},
+	}); err != nil {
+		t.Fatalf("在线写入: %v", err)
+	}
+	edits, err = f.svc.ListTagEdits(lid, f.uuid, 50)
+	if err != nil || len(edits) != 2 {
+		t.Fatalf("应 2 条审计，实际 %d err=%v", len(edits), err)
+	}
+	if edits[0].ClientOpID != "" {
+		t.Fatalf("无 op id 应回显空串，实际 %q", edits[0].ClientOpID)
+	}
+	if edits[1].ClientOpID != opID {
+		t.Fatalf("旧审计的 op id 回显不应被覆盖，实际 %q", edits[1].ClientOpID)
+	}
+}
+
+// TestUpdateTransactionTags_DedupReplayAtService 锁定 HTTP 层去重短路：
+// 同 op id + 旧 base_tags 重放必须在 service 层直接成功（不撞 409），
+// 回显首次提交的 new_tags / edit_id，不写第二条审计 / sync_log。
+// 同时验证权限判定仍在去重之前、真实并发冲突仍 409。
+func TestUpdateTransactionTags_DedupReplayAtService(t *testing.T) {
+	f := newTagEditFixture(t, "餐饮")
+	const opID = "dev-svc-replay:batch-1"
+
+	// ① 首次提交：tags 餐饮 → 甲，审计 + sync_log 各 1 条。
+	first, err := f.svc.UpdateTransactionTags(lid, f.user, f.uuid, TagsUpdateInput{
+		Tags: []string{"甲"}, BaseTags: []string{"餐饮"},
+		DeviceID: "dev-svc", ClientOpID: opID,
+	})
+	if err != nil {
+		t.Fatalf("首次提交: %v", err)
+	}
+	if first.EditID <= 0 {
+		t.Fatalf("首次提交应返回有效 edit_id，实际 %d", first.EditID)
+	}
+
+	// ② 响应丢失重放：同 op id + 旧 base_tags（这次 even 换了 target=乙）。
+	// 未补短路时 service 快速 CAS 会先返回 409；补后必须直接 200。
+	replay, err := f.svc.UpdateTransactionTags(lid, f.user, f.uuid, TagsUpdateInput{
+		Tags: []string{"乙"}, BaseTags: []string{"餐饮"},
+		DeviceID: "dev-svc", ClientOpID: opID,
+	})
+	if err != nil {
+		var ce *domain.CodedError
+		if errors.As(err, &ce) && ce.Code == domain.CodeTxnTagsConflict {
+			t.Fatal("同 op id 重放不应先撞 409 txn_tags_conflict")
+		}
+		t.Fatalf("同 op id 重放应直接成功: %v", err)
+	}
+	if replay.UUID != f.uuid || replay.EditID != first.EditID {
+		t.Fatalf("重放应回显首次 uuid/edit_id=%d，实际 %+v", first.EditID, replay)
+	}
+	if len(replay.Tags) != 1 || replay.Tags[0] != "甲" {
+		t.Fatalf("重放应回显首次 new_tags=[\"甲\"]（非本次 target 乙），实际 %+v", replay.Tags)
+	}
+	if replay.TagsUpdatedAt == "" {
+		t.Fatal("重放应回显首次审计 ts 作为 tags_updated_at")
+	}
+
+	// ③ 审计 / sync_log 各只 1 条；落库 tags 未被重放改写。
+	if n := f.count(t, `SELECT count(*) FROM tag_edit_log WHERE entity_uuid=?`, f.uuid); n != 1 {
+		t.Fatalf("重放不应写第二条审计，实际 %d", n)
+	}
+	if n := f.count(t,
+		`SELECT count(*) FROM sync_log WHERE entity_type=? AND entity_uuid=? AND op=?`,
+		domain.EntityTransaction, f.uuid, domain.OpUpdate,
+	); n != 1 {
+		t.Fatalf("重放不应写第二条 sync_log，实际 %d", n)
+	}
+	var tagsRaw string
+	if err := f.svc.repo.DB().QueryRow(`SELECT COALESCE(tags,'') FROM transactions WHERE uuid=?`, f.uuid).Scan(&tagsRaw); err != nil {
+		t.Fatalf("回读交易: %v", err)
+	}
+	if tagsRaw != `["甲"]` {
+		t.Fatalf("重放不得改动当前 tags，实际 %s", tagsRaw)
+	}
+
+	// ④ 权限判定必须在去重之前：viewer 带同一 op id 仍被 403，读不到别人的审计。
+	viewer, err := f.svc.Register("svc-replay-viewer", "secret123", "只读")
+	if err != nil {
+		t.Fatalf("注册 viewer: %v", err)
+	}
+	if _, _, err := f.svc.AddMember(lid, f.user, "svc-replay-viewer", domain.RoleViewer); err != nil {
+		t.Fatalf("加入 viewer: %v", err)
+	}
+	_, err = f.svc.UpdateTransactionTags(lid, viewer.User.ID, f.uuid, TagsUpdateInput{
+		Tags: []string{"乙"}, BaseTags: []string{"餐饮"}, ClientOpID: opID,
+	})
+	if code := codedCode(t, err); code != domain.CodeTxnEditForbidden {
+		t.Fatalf("viewer 带既有 op id 仍应 txn_edit_forbidden，实际 %s", code)
+	}
+
+	// ⑤ 真实并发冲突：换 op id + 旧 base → 仍 409，去重没有吞掉冲突。
+	_, err = f.svc.UpdateTransactionTags(lid, f.user, f.uuid, TagsUpdateInput{
+		Tags: []string{"丙"}, BaseTags: []string{"餐饮"}, ClientOpID: "dev-svc-replay:batch-2",
+	})
+	if code := codedCode(t, err); code != domain.CodeTxnTagsConflict {
+		t.Fatalf("新 op id + 旧 base 应仍 409 txn_tags_conflict，实际 %s", code)
+	}
+}

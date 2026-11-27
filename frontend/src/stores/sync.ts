@@ -14,6 +14,7 @@ import { subscribeDataChange as subscribeCrossTabChange } from '@/core/sync/data
 import { MemorySyncStore, type SyncStore } from '@/core/sync/localStore'
 import { IdbSyncStore } from '@/core/sync/idbStore'
 import type { LocalTxn, PendingChange, PendingEntry } from '@/core/sync/models'
+import { configureTagMergeStore, tagMergeCoordinator } from '@/core/tagEvents/reconciler'
 import { markDirty } from '@/stores/dataFreshness'
 
 let engineInstance: SyncEngine | null = null
@@ -41,13 +42,34 @@ async function ensureStore(): Promise<SyncStore> {
   if (typeof indexedDB !== 'undefined') {
     try {
       storeInstance = await IdbSyncStore.open()
+      bindTagMergeStore(storeInstance)
       return storeInstance
     } catch {
       // 打开失败（隐私模式 / 配额）：降级内存，不阻塞记账。
     }
   }
   storeInstance = new MemorySyncStore()
+  bindTagMergeStore(storeInstance)
   return storeInstance
+}
+
+/** 把 reconciler 与 SyncEngine 绑定到同一存储实例（tag_events 与 pending 仍物理隔离）。 */
+function bindTagMergeStore(store: SyncStore): void {
+  configureTagMergeStore(store)
+}
+
+/**
+ * 同步成功后提交离线标签批次（P1）。
+ *
+ * 只调 reconciler 的 PUT /tags 窄通道，绝不走 engine.push / api.push；
+ * 引擎的 pull/push 主循环保持原样。
+ */
+async function flushTagBatches(): Promise<void> {
+  const ledgerId = getLedgerId()
+  if (ledgerId === null) {
+    return
+  }
+  await tagMergeCoordinator.flush(ledgerId).catch(() => undefined)
 }
 
 export const useSyncStore = defineStore('sync', () => {
@@ -69,6 +91,10 @@ export const useSyncStore = defineStore('sync', () => {
       lastSyncAt.value = state.lastSyncAt
       pendingCount.value = state.pendingCount
       deadCount.value = state.deadCount
+      // P1：online / 定时 / 可见性触发的 sync 成功后统一 flush 标签批次。
+      if (state.status === 'ok') {
+        void flushTagBatches()
+      }
     })
     // pull 到真实变更 → 转调全局脏标记；只读观察，不改变同步库状态。
     engine.subscribeDataChange((event) => {
@@ -88,13 +114,18 @@ export const useSyncStore = defineStore('sync', () => {
     initialized.value = true
     const engine = await ensureEngine()
     stopAutoSync = engine.startAutoSync()
-    void engine.sync().catch(() => undefined)
+    void engine.sync().then((outcome) => {
+      if (outcome === 'ok') void flushTagBatches()
+    }).catch(() => undefined)
   }
 
   /** 手动触发同步（同步页按钮）。 */
   async function syncNow(): Promise<'ok' | 'offline' | 'error' | 'skipped'> {
     const engine = await ensureEngine()
     const outcome = await engine.sync()
+    if (outcome === 'ok') {
+      await flushTagBatches()
+    }
     await loadQueues()
     return outcome
   }
@@ -129,7 +160,9 @@ export const useSyncStore = defineStore('sync', () => {
     if (ledgerId === null) return
     await storeInstance.reviveDead(ledgerId, ids)
     await loadQueues()
-    void (await ensureEngine()).sync().catch(() => undefined)
+    void (await ensureEngine()).sync().then((outcome) => {
+      if (outcome === 'ok') void flushTagBatches()
+    }).catch(() => undefined)
   }
 
   /** 死信：丢弃（用户在同步页明确确认后）。 */

@@ -1573,4 +1573,10 @@ export const en: Record<MessageKey, string> = {
   'tagEdit.historyUnknownActor': 'Unknown member',
   'tagEdit.historyNoDevice': 'Not recorded',
   'tagEdit.historyLoadFailed': 'Could not load edit history; please retry',
+  'tagEdit.offlineSaved': "Tags saved offline; they'll merge when you're back online",
+  'tagEdit.mergeToastTitle': 'Tags merged',
+  'tagEdit.mergeToastBody': 'Offline tag changes merged with the cloud; no reversal was created',
+  'tagEdit.mergeNoticeLine': 'Recent merge: {n} conflicts resolved by most recent edit (non-blocking)',
+  'tagEdit.mergeRetryLater': "Tag merge pending; it'll retry on next sync",
+  'tagEdit.mergeDropped': 'This entry is no longer editable; offline tag changes were not applied',
 }

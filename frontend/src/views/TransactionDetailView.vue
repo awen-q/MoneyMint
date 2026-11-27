@@ -19,6 +19,7 @@ import { ApiError, codeMessage } from '@/api/errors'
 import type { AccountView, TagEditItem, TagEditResponse, TransactionView } from '@/api/types'
 import { formatSessionTime } from '@/core/batch3'
 import { buildBeanSnippet } from '@/core/bean'
+import { subscribeMergeNotice } from '@/core/tagEvents/notice'
 import { t } from '@/i18n'
 import {
   displayEntryOf,
@@ -412,7 +413,8 @@ const tagEditorOpen = ref(false)
 /**
  * 标签编辑入口状态：权限直接复用服务端 `can_edit`。
  * 已冲正 / 期初 / 校准 / 非本人 → can_edit=false → forbidden；
- * P0 离线 → offline **禁用 + 专属文案**，与经济事实的「修改需联网」刻意区分。
+ * P1 离线 → **仍可编辑**（事件落 tag_events，联网后 reconciler 合并），
+ * 与经济事实的「修改需联网」刻意区分。
  * navigator.onLine 只用于提示，服务端 CAS + 权限才是安全边界。
  */
 const tagEditState = computed<'ready' | 'offline' | 'forbidden'>(() => {
@@ -426,12 +428,13 @@ const tagEditState = computed<'ready' | 'offline' | 'forbidden'>(() => {
   return 'ready'
 })
 
-const tagEditDisabled = computed(() => tagEditState.value !== 'ready')
+/** P1：离线不再禁用入口，只有权限（forbidden）才是安全边界。 */
+const tagEditDisabled = computed(() => tagEditState.value === 'forbidden')
 
 const tagEditHint = computed<string>(() => {
   switch (tagEditState.value) {
     case 'offline':
-      return t('tagEdit.offlineDisabled')
+      return t('tagEdit.offlineSaved')
     case 'forbidden':
       return t('tagEdit.forbidden')
     default:
@@ -468,7 +471,8 @@ function onTagSaved(response: TagEditResponse): void {
   }
   // 审计面板下次展开时重新拉取，避免显示刚改动前的旧记录。
   tagEditsLoaded.value = false
-  notice.value = t('tagEdit.noticeSaved')
+  notice.value =
+    response.edit_id === 0 ? t('tagEdit.offlineSaved') : t('tagEdit.noticeSaved')
 }
 
 // ---------- 二级「编辑记录」面板（默认收起，与原生语法片段同款交互） ----------
@@ -478,6 +482,9 @@ const tagEdits = ref<TagEditItem[]>([])
 const tagEditsLoaded = ref(false)
 const tagEditsLoading = ref(false)
 const tagEditsError = ref('')
+/** 编辑记录面板浅色提示行：仅展示已收敛的合并结果，非阻断、无 role=alert。 */
+const mergeNoticeLine = ref('')
+let stopMergeNotice: (() => void) | null = null
 
 function toggleTagEdits(): void {
   tagEditsOpen.value = !tagEditsOpen.value
@@ -520,12 +527,21 @@ onMounted(() => {
   syncOnline()
   window.addEventListener('online', syncOnline)
   window.addEventListener('offline', syncOnline)
+  stopMergeNotice = subscribeMergeNotice((notice) => {
+    if (notice.noticeLine !== '') {
+      mergeNoticeLine.value = notice.noticeLine
+    }
+  })
   void load()
 })
 
 onUnmounted(() => {
   window.removeEventListener('online', syncOnline)
   window.removeEventListener('offline', syncOnline)
+  if (stopMergeNotice !== null) {
+    stopMergeNotice()
+    stopMergeNotice = null
+  }
 })
 
 watch(
@@ -611,6 +627,7 @@ watch(
         v-if="tagEditorOpen"
         :uuid="txn.uuid"
         :tags="txn.tags ?? []"
+        :tags-updated-at="txn.tags_updated_at ?? ''"
         :can-edit="txn.can_edit === true"
         @saved="onTagSaved"
         @close="tagEditorOpen = false"
@@ -641,6 +658,13 @@ watch(
         只读审计（viewer 可读），绝不进主流水 / 搜索筛选 / .beancount 导出。
       -->
       <section class="detail__history" data-testid="tag-edit-history">
+        <!-- P1：合并结果浅色提示行，常驻可见、role=status，不弹模态、不打断记账。 -->
+        <p
+          v-if="mergeNoticeLine !== ''"
+          class="detail__history-merge-notice"
+          role="status"
+          data-testid="tag-merge-notice-line"
+        >{{ mergeNoticeLine }}</p>
         <button
           type="button"
           class="detail__bean-toggle detail__history-toggle"
@@ -890,6 +914,18 @@ watch(
   width: 100%;
   max-width: 340px;
   margin: 12px auto 0;
+}
+
+/* P1 合并提示：浅色、非阻断，与 history-error 的 role=alert 明确区分。 */
+.detail__history-merge-notice {
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--fb-blue-line);
+  border-radius: var(--fb-radius-input);
+  background: var(--fb-blue-soft);
+  color: var(--fb-blue);
+  font-size: 11px;
+  line-height: 1.6;
 }
 
 .detail__history-toggle {

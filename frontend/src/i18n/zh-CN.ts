@@ -1464,6 +1464,12 @@ export const zhCN = {
   'tagEdit.historyUnknownActor': '未知成员',
   'tagEdit.historyNoDevice': '未记录',
   'tagEdit.historyLoadFailed': '编辑记录加载失败，请重试',
+  'tagEdit.offlineSaved': '标签已离线保存，联网后将自动合并',
+  'tagEdit.mergeToastTitle': '标签已合并',
+  'tagEdit.mergeToastBody': '离线改动已与云端合并，交易未新增冲正',
+  'tagEdit.mergeNoticeLine': '最近合并：{n} 处冲突按最新修改收敛（非阻断）',
+  'tagEdit.mergeRetryLater': '标签合并暂未成功，将在下次同步自动重试',
+  'tagEdit.mergeDropped': '该交易已不可编辑，离线标签改动未应用',
 }
 
 /** 消息键类型：由源语言字典推导；en.ts 必须逐键给出英文（缺失即 typecheck 红）。 */

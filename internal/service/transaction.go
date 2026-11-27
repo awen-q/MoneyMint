@@ -965,15 +965,17 @@ type TagEditResult struct {
 }
 
 // TagEditItem 是二级「编辑记录」面板中的一条审计。
+// ClientOpID 为 P1 离线批次去重键回显（additive）：P0 在线审计为空串，旧端按可选字段忽略。
 type TagEditItem struct {
-	ID        int64    `json:"id"`
-	Action    string   `json:"action"`
-	OldTags   []string `json:"old_tags"`
-	NewTags   []string `json:"new_tags"`
-	ActorID   int64    `json:"actor_id"`
-	ActorName string   `json:"actor_name"`
-	DeviceID  string   `json:"device_id"`
-	Ts        string   `json:"ts"`
+	ID         int64    `json:"id"`
+	Action     string   `json:"action"`
+	OldTags    []string `json:"old_tags"`
+	NewTags    []string `json:"new_tags"`
+	ActorID    int64    `json:"actor_id"`
+	ActorName  string   `json:"actor_name"`
+	DeviceID   string   `json:"device_id"`
+	ClientOpID string   `json:"client_op_id"`
+	Ts         string   `json:"ts"`
 }
 
 // tagsConflictError 构造 409 txn_tags_conflict，并把服务端当前值回给客户端，
@@ -1036,6 +1038,26 @@ func (s *Service) UpdateTransactionTags(
 			"只能修改自己记的账，或由账本 owner 修改")
 	}
 
+	// 3.5) P1 去重短路（方案 §4.2 的 HTTP 层补强）：同一 op id 的重放直接返回
+	// 首次提交的结果，不进载荷校验 / 快速 CAS / repo 事务，因此旧 base_tags
+	// 不会再先撞 409。权限判定（已冲正 / 系统交易 / 角色）已在上完成，
+	// 不能让一条 op id 绕过鉴权读到别人的审计。
+	if in.ClientOpID != "" {
+		prev, err := s.repo.TagEditByClientOpID(ledgerID, in.ClientOpID)
+		if err != nil {
+			return TagEditResult{}, err
+		}
+		if prev != nil {
+			// 回显首次审计的 new_tags（本次 op 的目标），而非当前落库 tags：
+			// 幂等重放应答的是「本 op 当时做了什么」；后续他人的真实改动属于
+			// 另一 op，不应改写本 op 的应答。
+			return TagEditResult{
+				UUID: txnUUID, Tags: prev.NewTags,
+				TagsUpdatedAt: prev.Ts, EditID: prev.ID,
+			}, nil
+		}
+	}
+
 	// 4) 载荷校验（服务端权威规范化；无效标签 → 400）。
 	tags, err := normalizeTags(in.Tags)
 	if err != nil {
@@ -1096,7 +1118,7 @@ func (s *Service) ListTagEdits(ledgerID int64, uuid string, limit int) ([]TagEdi
 			ID: l.ID, Action: l.Action,
 			OldTags: oldTags, NewTags: newTags,
 			ActorID: l.ActorID, ActorName: l.ActorName,
-			DeviceID: l.DeviceID, Ts: l.Ts,
+			DeviceID: l.DeviceID, ClientOpID: l.ClientOpID, Ts: l.Ts,
 		})
 	}
 	return out, nil

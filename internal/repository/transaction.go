@@ -814,9 +814,10 @@ type TagsConflict struct {
 // Error 实现 error 接口。
 func (e *TagsConflict) Error() string { return "标签已被他人更新" }
 
-// UpdateTagsTx 在单一事务内完成「CAS 终审 → 原地 UPDATE → 审计 → sync_log」。
+// UpdateTagsTx 在单一事务内完成「P1 去重 → CAS 终审 → 原地 UPDATE → 审计 → sync_log」。
 //
 // 判定顺序与 UpdateTransaction 逐字同序：已冲正 → 系统交易 → CAS → 落库；
+// P1 去重插在「系统交易」与「CAS」之间（op id 为空时无副作用，P0 行为不变）。
 // 权限与载荷校验在 service 层完成，这里只做并发终审（不重复判定角色）。
 // 任一步失败整体回滚，绝不会产生「标签改了但没审计 / 没同步」的半成品。
 func (s *Store) UpdateTagsTx(in TagsUpdateInput) (*TagsUpdateResult, error) {
@@ -853,17 +854,14 @@ func (s *Store) UpdateTagsTx(in TagsUpdateInput) (*TagsUpdateResult, error) {
 			"期初 / 冲正 / 校准交易不能修改")
 	}
 
-	// 2) CAS 终审：两侧都用与 service 相同的规范化规则，避免调用方
-	// 传来的快照带空白/乱序/重复时造成伪冲突（service 通常已规范化，这里
-	// 再归一化一次是防御性冗余，不是安全边界的替代）。
+	// curTags 是当前落库标签的规范化视图：去重命中回显与 CAS 终审共用同一份。
 	curTags := normalizeTagsForCAS(parseTags(tagsRaw))
-	baseTags := normalizeTagsForCAS(in.BaseTags)
-	if !slices.Equal(curTags, baseTags) {
-		return nil, &TagsConflict{CurrentTags: curTags, CurrentTagsUpdatedAt: tagsUpdatedAt}
-	}
 
-	// 2.1) P1 去重预留：client_op_id 命中则不重复写审计 / sync_log。
+	// 2) P1 去重：client_op_id 命中则不重复写审计 / sync_log。
 	// P0 在线调用恒传空串，走不到这里。
+	// 前移到 CAS 之前（方案 §4.2）：首次 PUT 已落库但响应丢失时，客户端用同一
+	// op id + 旧 base_tags 重试必须先命中这里返回既有 edit_id，而不是先撞
+	// CAS 409 —— 让 409 只代表真实并发冲突。
 	if in.ClientOpID != "" {
 		var existingID int64
 		err := tx.QueryRow(
@@ -884,7 +882,15 @@ func (s *Store) UpdateTagsTx(in TagsUpdateInput) (*TagsUpdateResult, error) {
 		}
 	}
 
-	// 3) 原地 UPDATE：SET 列表只有 tags + tags_updated_at（代码审查红线）。
+	// 3) CAS 终审：两侧都用与 service 相同的规范化规则，避免调用方
+	// 传来的快照带空白/乱序/重复时造成伪冲突（service 通常已规范化，这里
+	// 再归一化一次是防御性冗余，不是安全边界的替代）。
+	baseTags := normalizeTagsForCAS(in.BaseTags)
+	if !slices.Equal(curTags, baseTags) {
+		return nil, &TagsConflict{CurrentTags: curTags, CurrentTagsUpdatedAt: tagsUpdatedAt}
+	}
+
+	// 4) 原地 UPDATE：SET 列表只有 tags + tags_updated_at（代码审查红线）。
 	target := append([]string(nil), in.Tags...)
 	res, err := tx.Exec(
 		`UPDATE transactions SET tags=?, tags_updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
@@ -907,7 +913,7 @@ func (s *Store) UpdateTagsTx(in TagsUpdateInput) (*TagsUpdateResult, error) {
 		return nil, err
 	}
 
-	// 4) 审计（old→new，服务端归因 actor_id）。空数组落库为 '[]' 而非 NULL，
+	// 5) 审计（old→new，服务端归因 actor_id）。空数组落库为 '[]' 而非 NULL，
 	// 保证 tag_edit_log 的 NOT NULL DEFAULT '[]' 契约、响应始终是 []。
 	editRes, err := tx.Exec(
 		`INSERT INTO tag_edit_log
@@ -924,7 +930,7 @@ func (s *Store) UpdateTagsTx(in TagsUpdateInput) (*TagsUpdateResult, error) {
 		return nil, err
 	}
 
-	// 5) 出站同步意图：op=update 指向原 uuid；payload 在 pull 时由 loadEntity 现取现组装。
+	// 6) 出站同步意图：op=update 指向原 uuid；payload 在 pull 时由 loadEntity 现取现组装。
 	if _, err := appendSyncLogOn(tx, in.LedgerID, domain.EntityTransaction, in.EntityUUID, domain.OpUpdate); err != nil {
 		return nil, err
 	}
@@ -1007,4 +1013,32 @@ func (s *Store) TagEditsByUUID(ledgerID int64, uuid string, limit int) ([]domain
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// TagEditByClientOpID 按 P1 离线批次幂等键取首次提交的审计行。
+// 未命中返回 (nil, nil)，供 service.UpdateTransactionTags 做去重短路：同 op id
+// + 旧 base_tags 的重放直接回显首次结果，不必先撞快速 CAS 409。
+// 纯读操作；权限判定由调用方在调用本方法之前完成，绝不因 op id 绕过鉴权。
+func (s *Store) TagEditByClientOpID(ledgerID int64, clientOpID string) (*domain.TagEditLog, error) {
+	if clientOpID == "" {
+		return nil, nil
+	}
+	var e domain.TagEditLog
+	var newRaw sql.NullString
+	err := s.db.QueryRow(
+		`SELECT id, entity_uuid, new_tags, ts
+		 FROM tag_edit_log WHERE ledger_id=? AND client_op_id=?`,
+		ledgerID, clientOpID,
+	).Scan(&e.ID, &e.EntityUUID, &newRaw, &e.Ts)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	e.NewTags = parseTags(newRaw)
+	if e.NewTags == nil {
+		e.NewTags = []string{}
+	}
+	return &e, nil
 }

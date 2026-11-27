@@ -30,7 +30,7 @@
 
 **核心不变约束**：导出的 `.beancount` 必须能被 `bean-check` 直接校验通过（退出码 0、无报错）。
 
-**当前阶段**：M7 六批 + 0.6.0（S0~S6）+ **报表重设计 v4.1（B1~B6 六批）** + **B7 回收站永久删除（2026-11-19）** + **0.6.1 四页视觉对齐设计稿（2026-11-19，纯前端样式）全部交付**，仓库只剩一套前端（Vue 3 SPA）；版本号**以 tag / CHANGELOG / `frontend/package.json` 三处一致为准**（发布与校验走 `scripts/verify-version.sh`）；迁移至 **017**（下一个 018）；§7 端点表 **44 条路径 / 56 个 `path×method`**（表 49 行；`routes.ts` 44 常量，与 44 条路径一一对应）已与 `internal/server/router.go` 逐条核对一致（T62 审计：零孤儿、零缺失）。**测试数与下限以 CI 实测为准**（见 `.github/workflows/docker-image.yml`，勿硬编码）。剩余边界见 §9。
+**当前阶段**：M7 六批 + 0.6.0（S0~S6）+ **报表重设计 v4.1（B1~B6 六批）** + **B7 回收站永久删除（2026-11-19）** + **0.6.1 四页视觉对齐设计稿（2026-11-19，纯前端样式）全部交付**，仓库只剩一套前端（Vue 3 SPA）；版本号**以 tag / CHANGELOG / `frontend/package.json` 三处一致为准**（发布与校验走 `scripts/verify-version.sh`）；迁移至 **018**（下一个 019）；§7 端点表 **46 条路径 / 58 个 `path×method`**（表 51 行；`routes.ts` 46 常量，与 46 条路径一一对应）已与 `internal/server/router.go` 逐条核对一致（T62 审计：零孤儿、零缺失；0.6.3 新增 `/api/transactions/{uuid}/tags`、`/api/transactions/{uuid}/tag-edits` 两条路径各 1 method）。**测试数与下限以 CI 实测为准**（见 `.github/workflows/docker-image.yml`，勿硬编码）。剩余边界见 §9。
 
 **报表重设计 v4.1 已交付**（2026-11-19，前端大改 + 后端只增读路径）：
 - **五视图**：账单 `/`（`BillsView`，日历 + 四指标 + 逐日折线 + 按日分组列表；点日弹 `DayTransactionsSheet` 当日交易抽屉、外部列表不过滤；标题栏健康图标跳数据安全页）、搜索 `/search`（`SearchView`，七维筛选 + 分币种汇总 + CSV + 加载更多）、统计 `/stats`（`StatsView`，统计/标签双子页、五指标、双环 + 排行、柱状点柱下钻、每日明细含日均）、资产 `/assets`（`AssetsView`）、资产统计 `/assets/stats`（`AssetStatsView`，三线 + 月度变化）。
@@ -181,7 +181,7 @@ python -m pip install beancount    # 激活 .venv 后执行
 
 ## 7. API 端点清单
 
-> **口径（T62 三处一致性审计后校准，B7 补齐，批 II 追加 PATCH 方法）**：`internal/server/router.go` 实际注册 **44 条 `/api/` 路径 / 56 个 `path×method`**；下表按「方法组」展开共 **49 行** = 44 条路径 + 5 条多方法路径各多拆 1 行（`/api/accounts/{uuid}/balance`、`/api/commodities`、`/api/transactions/{uuid}`、`/api/ledgers/{id}`、`/api/accounts/{uuid}`），其余多方法路径（如 `/api/accounts` 的 GET+POST）在 1 行内并列；表末另有 1 行静态兜底 `/*`，**不计入 49**。前端 `frontend/src/api/routes.ts` 现有 **44 个常量**（与 44 条路径一一对应，B6 的 `assetsSeries`、B7 的两条 purge、P0 的 `accountSortOrder` 均已补齐）。**三个数字不可互推**：校验路径一致性请数「路径数」，校验 `routes.ts` 请数常量数，校验本表请数行数。新增端点须三处同步（按 Q-10：既有行不重排，新增端点文末顺延编号）。
+> **口径（T62 三处一致性审计后校准，B7 补齐，批 II 追加 PATCH 方法，0.6.3 追加标签 2 条）**：`internal/server/router.go` 实际注册 **46 条 `/api/` 路径 / 58 个 `path×method`**；下表按「方法组」展开共 **51 行** = 46 条路径 + 5 条多方法路径各多拆 1 行（`/api/accounts/{uuid}/balance`、`/api/commodities`、`/api/transactions/{uuid}`、`/api/ledgers/{id}`、`/api/accounts/{uuid}`），其余多方法路径（如 `/api/accounts` 的 GET+POST）在 1 行内并列；表末另有 1 行静态兜底 `/*`，**不计入 51**。前端 `frontend/src/api/routes.ts` 现有 **46 个常量**（与 46 条路径一一对应，B6 的 `assetsSeries`、B7 的两条 purge、0.6.2 的 `accountSortOrder`、0.6.3 的 `transactionTags`/`transactionTagEdits` 均已补齐）。**三个数字不可互推**：校验路径一致性请数「路径数」，校验 `routes.ts` 请数常量数，校验本表请数行数。新增端点须三处同步（按 Q-10：既有行不重排，新增端点文末顺延编号）。
 
 | 端点 | 方法 | 鉴权 | 说明 |
 |---|---|---|---|

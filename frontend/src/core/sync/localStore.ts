@@ -15,8 +15,16 @@
  * 双实现：IndexedDB（生产，`typeof indexedDB !== 'undefined'`）与内存
  * （jsdom 单测 / 无 IndexedDB 环境降级）。两者行为由同一组测试约束。
  */
-import type { LocalAccount, LocalTxn, PendingChange, PendingEntry } from './models'
+import type {
+  LocalAccount,
+  LocalTxn,
+  PendingChange,
+  PendingEntry,
+  TagEventBatch,
+} from './models'
 import type { SyncChange } from '@/api/types'
+import { replayTagEvents } from '@/core/tagEvents/merge'
+import { notifyMergeSuccess } from '@/core/tagEvents/notice'
 
 export const PENDING_BACKOFF_BASE_MS = 30_000
 export const PENDING_BACKOFF_MAX_MS = 60 * 60_000
@@ -81,6 +89,17 @@ export interface SyncStore {
    */
   quarantineAndReset(ledgerId: number, newInstanceId: string): Promise<void>
 
+  /**
+   * 标签离线事件（P1）：独立 store，与 `pending` 物理隔离。
+   * 任何代码路径都不得把 TagEvent 塞进 PendingChange / sync/push。
+   */
+  getTagBatch(ledgerId: number, uuid: string): Promise<TagEventBatch | null>
+  putTagBatch(ledgerId: number, batch: TagEventBatch): Promise<void>
+  allTagBatchUuids(ledgerId: number): Promise<string[]>
+  deleteTagBatch(ledgerId: number, uuid: string): Promise<void>
+  /** meta `tagOpSeq.<ledger>` 原子 +1，生成固定 client_op_id 的本地批次号。 */
+  nextTagOpSeq(ledgerId: number): Promise<number>
+
   /** uuid_map 回放：返回待重映射表（§6.6.1 #3，push 前与启动时调用）。 */
   getUuidMap(ledgerId: number): Promise<Record<string, string>>
 
@@ -101,6 +120,8 @@ export class MemorySyncStore implements SyncStore {
   private accounts = new Map<string, LocalAccount>()
   private txns = new Map<string, LocalTxn>()
   private pendings = new Map<number, PendingEntry>()
+  /** P1：标签意图独立命名空间，绝不进 pendings。 */
+  private tagBatches = new Map<string, TagEventBatch>()
   private meta = new Map<string, unknown>()
   private uuidMaps = new Map<string, Record<string, string>>()
   private nextId = 1
@@ -230,11 +251,19 @@ export class MemorySyncStore implements SyncStore {
             ...(c.entity as unknown as LocalAccount),
           })
         } else if (c.entity_type === 'transaction') {
-          // P0：transaction 的 op=update 仍整条覆盖（loadEntity 给全量实体，
-          // 含当前 tags 与可选 tags_updated_at），交易始终 1 行。
-          // P1 接口位：覆盖后若该 uuid 有本地 pending 标签事件，在此重放并按
-          // §5.5「并集 + 墓碑 / ts + device_id LWW」收敛；P0 不启用。
-          this.txns.set(this.k(ledgerId, uuid), c.entity as unknown as LocalTxn)
+          // P1：先整条覆盖（loadEntity 给全量实体，交易始终 1 行），
+          // 再在同一 Map 操作序列里重放该 uuid 的本地标签事件，避免新 tags
+          // 静默冲掉离线草稿；冲突只发一次性 role=status 提示。
+          const server = c.entity as unknown as LocalTxn
+          const batch = await this.getTagBatch(ledgerId, uuid)
+          const replay = replayTagEvents(server, batch)
+          this.txns.set(this.k(ledgerId, uuid), replay.entity)
+          if (replay.batch !== null) {
+            this.tagBatches.set(this.k(ledgerId, uuid), replay.batch)
+            if (replay.conflictCount > 0) {
+              notifyMergeSuccess(`${ledgerId}:${uuid}:${replay.batch.clientOpId}`, replay.conflictCount)
+            }
+          }
         }
       } else if (op === 'close') {
         const prev = this.accounts.get(this.k(ledgerId, uuid))
@@ -346,6 +375,40 @@ export class MemorySyncStore implements SyncStore {
     }
     this.meta.set(`seq.${ledgerId}`, 0)
     this.meta.set(`instance.${ledgerId}`, newInstanceId)
+    // D5：库世代重置后离线标签意图挂到被还原的库上无意义，直接清空
+    // （与 pending 转 dead 的口径区分：事件是轻量意图，选择清而非隔离）。
+    for (const key of [...this.tagBatches.keys()]) {
+      if (key.startsWith(prefix)) this.tagBatches.delete(key)
+    }
+    this.meta.delete(`tagOpSeq.${ledgerId}`)
+  }
+
+  async getTagBatch(ledgerId: number, uuid: string): Promise<TagEventBatch | null> {
+    return this.tagBatches.get(this.k(ledgerId, uuid)) ?? null
+  }
+
+  async putTagBatch(ledgerId: number, batch: TagEventBatch): Promise<void> {
+    this.tagBatches.set(this.k(ledgerId, batch.uuid), batch)
+  }
+
+  async allTagBatchUuids(ledgerId: number): Promise<string[]> {
+    const prefix = `${ledgerId}:`
+    const out: string[] = []
+    for (const [key, batch] of this.tagBatches) {
+      if (key.startsWith(prefix)) out.push(batch.uuid)
+    }
+    return out.sort()
+  }
+
+  async deleteTagBatch(ledgerId: number, uuid: string): Promise<void> {
+    this.tagBatches.delete(this.k(ledgerId, uuid))
+  }
+
+  async nextTagOpSeq(ledgerId: number): Promise<number> {
+    const current = this.meta.get(`tagOpSeq.${ledgerId}`)
+    const next = (typeof current === 'number' ? current : 0) + 1
+    this.meta.set(`tagOpSeq.${ledgerId}`, next)
+    return next
   }
 
   async getUuidMap(ledgerId: number): Promise<Record<string, string>> {

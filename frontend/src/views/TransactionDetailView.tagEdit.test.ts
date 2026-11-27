@@ -15,6 +15,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 
 import { ApiError } from '@/api/errors'
+import { MemorySyncStore } from '@/core/sync/localStore'
+import { notifyMergeSuccess, resetMergeNotices } from '@/core/tagEvents/notice'
+import { resetTagMergeCoordinator } from '@/core/tagEvents/reconciler'
 import { buildTxnRow } from '@/core/txnRow'
 import TxnRow from '@/components/TxnRow.vue'
 import TransactionDetailView from '@/views/TransactionDetailView.vue'
@@ -120,6 +123,8 @@ async function openEditor(wrapper: ReturnType<typeof mount>): Promise<void> {
 beforeEach(() => {
   setOnline(true)
   localStorage.clear()
+  resetTagMergeCoordinator(new MemorySyncStore())
+  resetMergeNotices()
   h.listAccounts.mockReset().mockResolvedValue(ACCOUNTS)
   h.listTxns.mockReset().mockResolvedValue(txnFixture())
   h.updateTags.mockReset().mockResolvedValue({
@@ -291,18 +296,70 @@ describe('US2：删标签（tags: []）', () => {
 })
 
 describe('横切：离线 / 权限 / 冲突', () => {
-  it('P0 离线：入口禁用 + 专属文案，与经济事实「修改需联网」明确区分', async () => {
+  it('P1 离线：标签入口可用（非阻断文案），经济事实按钮仍禁用「修改需联网」', async () => {
     setOnline(false)
     const wrapper = await mountDetail()
     const entry = wrapper.find('[data-testid="tag-edit-open"]')
-    expect(entry.attributes('disabled')).toBeDefined()
+    expect(entry.attributes('disabled')).toBeUndefined()
     const hint = wrapper.find('[data-testid="tag-edit-hint"]').text()
-    expect(hint).toBe('标签编辑暂需联网，离线编辑将在后续版本支持')
-    expect(hint).not.toBe('修改需联网')
+    expect(hint).toBe('标签已离线保存，联网后将自动合并')
+    expect(hint).not.toBe('标签编辑暂需联网，离线编辑将在后续版本支持')
     // 经济事实按钮保留且仍用原文案。
     expect(wrapper.text()).toContain('修改需联网')
     await entry.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="tag-inline-editor"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="tag-offline-hint"]').attributes('role')).toBe('status')
+  })
+
+  it('P1 离线加标签：chip 可编辑、只落事件不 PUT，预测值即回显（edit_id=0）', async () => {
+    setOnline(false)
+    const wrapper = await mountDetail()
+    await openEditor(wrapper)
+    const input = wrapper.find('#tag-inline-input-t-11')
+    await input.setValue('周末')
+    await wrapper.findAll('button').find((b) => b.text() === '添加')!.trigger('click')
+    await wrapper.find('[data-testid="tag-save"]').trigger('click')
+    await flushPromises()
+
+    // 离线不发任何网络请求。
+    expect(h.updateTags).not.toHaveBeenCalled()
+    expect(h.update).not.toHaveBeenCalled()
     expect(wrapper.find('[data-testid="tag-inline-editor"]').exists()).toBe(false)
+    const entry = wrapper.find('[data-testid="tag-edit-entry"]')
+    expect(entry.text()).toContain('周末')
+    expect(entry.text()).toContain('餐饮')
+    expect(wrapper.text()).toContain('标签已离线保存')
+    // 非阻断提示：无 role=alert / dialog。
+    expect(wrapper.find('[role="alert"][data-testid="tag-merge-notice-line"]').exists()).toBe(false)
+    expect(wrapper.find('dialog').exists()).toBe(false)
+  })
+
+  it('P1 离线删标签：remove 墓碑收敛后 chip 立即消失', async () => {
+    setOnline(false)
+    const wrapper = await mountDetail()
+    await openEditor(wrapper)
+    const remove = wrapper.find('.tag-inline__chip-remove')
+    expect(remove.attributes('disabled')).toBeUndefined()
+    await remove.trigger('click')
+    await wrapper.find('[data-testid="tag-save"]').trigger('click')
+    await flushPromises()
+
+    expect(h.updateTags).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="tag-edit-entry"]').text()).not.toContain('餐饮')
+  })
+
+  it('P1 合并提示行：role=status 浅色行，与 role=alert 错误明确分离', async () => {
+    const wrapper = await mountDetail()
+    notifyMergeSuccess('web-A:1', 2)
+    await flushPromises()
+    const line = wrapper.find('[data-testid="tag-merge-notice-line"]')
+    expect(line.exists()).toBe(true)
+    expect(line.attributes('role')).toBe('status')
+    expect(line.text()).toContain('2 处冲突')
+    expect(line.text()).toContain('非阻断')
+    expect(wrapper.find('dialog').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="tag-inline-editor"] [role="alert"]').exists()).toBe(false)
   })
 
   it('can_edit=false（viewer / 已冲正）：入口禁用并复用服务端判定', async () => {

@@ -8,8 +8,16 @@
  * Safari 14.1 兼容：只用最基础的 IDB API（open / transaction / objectStore /
  * get / put / delete / getAll + IDBKeyRange），不用 cursor 高级特性。
  */
-import type { LocalAccount, LocalTxn, PendingChange, PendingEntry } from './models'
+import type {
+  LocalAccount,
+  LocalTxn,
+  PendingChange,
+  PendingEntry,
+  TagEventBatch,
+} from './models'
 import type { SyncChange } from '@/api/types'
+import { replayTagEvents } from '@/core/tagEvents/merge'
+import { notifyMergeSuccess } from '@/core/tagEvents/notice'
 import {
   backoffMs,
   type ApplyPushResultsInput,
@@ -19,14 +27,16 @@ import {
 } from './localStore'
 
 const DB_NAME = 'fambean-sync'
-const DB_VERSION = 1
+/** P1：1→2 纯加法升级，只新增 tag_events；既有 5 个 store 不删不重建。 */
+const DB_VERSION = 2
 const S_ACCOUNTS = 'accounts'
 const S_TXNS = 'txns'
 const S_PENDING = 'pending'
 const S_META = 'meta'
 const S_UUID_MAP = 'uuid_map'
+const S_TAG_EVENTS = 'tag_events'
 
-const ALL_STORES = [S_ACCOUNTS, S_TXNS, S_PENDING, S_META, S_UUID_MAP]
+const ALL_STORES = [S_ACCOUNTS, S_TXNS, S_PENDING, S_META, S_UUID_MAP, S_TAG_EVENTS]
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -40,6 +50,7 @@ function openDB(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(S_META)) db.createObjectStore(S_META)
       if (!db.objectStoreNames.contains(S_UUID_MAP)) db.createObjectStore(S_UUID_MAP)
+      if (!db.objectStoreNames.contains(S_TAG_EVENTS)) db.createObjectStore(S_TAG_EVENTS)
     }
     req.onsuccess = () => resolve(req.result)
     req.onerror = () => reject(req.error ?? new Error('IndexedDB open failed'))
@@ -254,9 +265,11 @@ export class IdbSyncStore implements SyncStore {
   }
 
   async applyPullChanges(ledgerId: number, changes: SyncChange[], checkpoint: number): Promise<void> {
-    await this.tx([S_ACCOUNTS, S_TXNS, S_META], async (t) => {
+    // tag_events 加入同一 readwrite 事务：读事件 → 收敛 → 写 txns / 批次原子完成。
+    await this.tx([S_ACCOUNTS, S_TXNS, S_META, S_TAG_EVENTS], async (t) => {
       const accStore = t.objectStore(S_ACCOUNTS)
       const txnStore = t.objectStore(S_TXNS)
+      const tagStore = t.objectStore(S_TAG_EVENTS)
       for (const c of changes) {
         const uuid = c.entity['uuid']
         if (typeof uuid !== 'string' || uuid === '') continue
@@ -272,7 +285,19 @@ export class IdbSyncStore implements SyncStore {
               key,
             )
           } else if (c.entity_type === 'transaction') {
-            txnStore.put({ k: key, v: c.entity as unknown as LocalTxn }, key)
+            // P1：整条覆盖后重放本地事件，交易仍 1 行；写回新 CAS 基线。
+            const server = c.entity as unknown as LocalTxn
+            const row = await reqAs(
+              tagStore.get(key) as IDBRequest<{ k: string; v: TagEventBatch } | undefined>,
+            )
+            const replay = replayTagEvents(server, row === undefined ? null : row.v)
+            txnStore.put({ k: key, v: replay.entity }, key)
+            if (replay.batch !== null) {
+              tagStore.put({ k: key, v: replay.batch }, key)
+              if (replay.conflictCount > 0) {
+                notifyMergeSuccess(`${ledgerId}:${uuid}:${replay.batch.clientOpId}`, replay.conflictCount)
+              }
+            }
           }
         } else if (op === 'close') {
           const prev =
@@ -435,7 +460,67 @@ export class IdbSyncStore implements SyncStore {
       metaStore.put({ v: newInstanceId }, this.metaKey(`instance.${ledgerId}`))
       // uuid_map 是「本地→服务端」映射，库被替换后全部失效。
       t.objectStore(S_UUID_MAP).delete(String(ledgerId))
+      // D5：库世代重置清空离线标签意图（轻量意图，不隔离）。
+      const tagRows =
+        (await reqAs(
+          t.objectStore(S_TAG_EVENTS).getAll() as IDBRequest<Array<{ k: string }>>,
+        )) ?? []
+      for (const row of tagRows) {
+        if (row.k.startsWith(prefix)) t.objectStore(S_TAG_EVENTS).delete(row.k)
+      }
+      metaStore.delete(this.metaKey(`tagOpSeq.${ledgerId}`))
       await Promise.resolve()
+    })
+  }
+
+  async getTagBatch(ledgerId: number, uuid: string): Promise<TagEventBatch | null> {
+    const key = this.entityKey(ledgerId, uuid)
+    const tx = this.db.transaction(S_TAG_EVENTS, 'readonly')
+    const row = await reqAs(
+      tx.objectStore(S_TAG_EVENTS).get(key) as IDBRequest<{ k: string; v: TagEventBatch } | undefined>,
+    )
+    return row === undefined ? null : row.v
+  }
+
+  async putTagBatch(ledgerId: number, batch: TagEventBatch): Promise<void> {
+    const key = this.entityKey(ledgerId, batch.uuid)
+    await this.tx([S_TAG_EVENTS], async (t) => {
+      t.objectStore(S_TAG_EVENTS).put({ k: key, v: batch }, key)
+      await Promise.resolve()
+    })
+  }
+
+  async allTagBatchUuids(ledgerId: number): Promise<string[]> {
+    const tx = this.db.transaction(S_TAG_EVENTS, 'readonly')
+    const rows =
+      (await reqAs(
+        tx.objectStore(S_TAG_EVENTS).getAll() as IDBRequest<
+          Array<{ k: string; v: TagEventBatch }>
+        >,
+      )) ?? []
+    const prefix = `${ledgerId}:`
+    return rows
+      .filter((row) => row.k.startsWith(prefix))
+      .map((row) => row.v.uuid)
+      .sort()
+  }
+
+  async deleteTagBatch(ledgerId: number, uuid: string): Promise<void> {
+    const key = this.entityKey(ledgerId, uuid)
+    await this.tx([S_TAG_EVENTS], async (t) => {
+      t.objectStore(S_TAG_EVENTS).delete(key)
+      await Promise.resolve()
+    })
+  }
+
+  async nextTagOpSeq(ledgerId: number): Promise<number> {
+    return this.tx([S_META], async (t) => {
+      const store = t.objectStore(S_META)
+      const key = this.metaKey(`tagOpSeq.${ledgerId}`)
+      const row = (await reqAs(store.get(key) as IDBRequest<{ v: number } | undefined>)) ?? undefined
+      const next = (row === undefined ? 0 : row.v) + 1
+      store.put({ v: next }, key)
+      return next
     })
   }
 

@@ -127,6 +127,44 @@ describe('transactionApi.updateTags：PUT /api/transactions/{uuid}/tags', () => 
     expect(JSON.stringify(calls[0].body)).not.toContain('device_id')
   })
 
+  it('P1 client_op_id 原样进入请求体（后端按 ledger+op_id 去重）', async () => {
+    payload = EDIT_RESPONSE
+    const result = await transactionApi.updateTags(UUID, {
+      tags: ['餐饮', '周末'],
+      base_tags: ['餐饮'],
+      device_id: 'web-A',
+      client_op_id: 'web-A:1',
+    })
+
+    expect(result.edit_id).toBe(42)
+    expect(calls[0].body).toEqual({
+      tags: ['餐饮', '周末'],
+      base_tags: ['餐饮'],
+      device_id: 'web-A',
+      client_op_id: 'web-A:1',
+    })
+  })
+
+  it('P1 GET 回显 client_op_id：additive 可选字段向后兼容', async () => {
+    payload = {
+      edits: [
+        {
+          id: 43,
+          action: 'replace',
+          old_tags: ['餐饮'],
+          new_tags: ['餐饮', '周末'],
+          actor_id: 7,
+          actor_name: '张伟',
+          device_id: 'web-A',
+          client_op_id: 'web-A:1',
+          ts: '2026-11-27T09:31:12.345Z',
+        },
+      ],
+    }
+    const result = await transactionApi.listTagEdits(UUID)
+    expect(result.edits[0].client_op_id).toBe('web-A:1')
+  })
+
   it('409 txn_tags_conflict：code 与 current_tags / current_tags_updated_at 落到 details', async () => {
     status = 409
     payload = {

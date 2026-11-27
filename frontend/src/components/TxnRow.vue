@@ -46,7 +46,7 @@ const props = withDefaults(
      * `TxnRow` 消费方（账单 / 搜索 / 当日抽屉）无需改动即可获得 P0 入口；
      * 现拉同时保证 base_tags 不是 bill 档截断后的 1 个 tag（否则伪 409）。
      */
-    tagEdit?: { uuid: string; tags: string[]; canEdit?: boolean }
+    tagEdit?: { uuid: string; tags: string[]; canEdit?: boolean; tagsUpdatedAt?: string }
   }>(),
   {
     // undefined 表示「按 variant 自动」，故此处不设默认值。
@@ -99,7 +99,12 @@ function onClick(): void {
 
 const tagEditorOpen = ref(false)
 /** 未显式传 tagEdit 时，点击 chip 后由服务端现取的上下文。 */
-const resolvedTagEdit = ref<{ uuid: string; tags: string[]; canEdit: boolean } | null>(null)
+const resolvedTagEdit = ref<{
+  uuid: string
+  tags: string[]
+  canEdit: boolean
+  tagsUpdatedAt: string
+} | null>(null)
 /** 模板统一消费：显式 prop 优先，否则用现取结果。 */
 const activeTagEdit = computed(() => props.tagEdit ?? resolvedTagEdit.value)
 const online = ref(true)
@@ -118,13 +123,9 @@ onUnmounted(() => {
   window.removeEventListener('offline', syncOnline)
 })
 
-/** P0 离线禁用入口，文案与经济事实的「修改需联网」区分；服务端仍以 CAS / 权限为准。 */
-const tagEditDisabled = computed(() =>
-  !online.value || (props.tagEdit !== undefined && props.tagEdit.canEdit === false),
-)
-const tagEditTitle = computed(() =>
-  !online.value ? t('tagEdit.offlineDisabled') : t('tagEdit.editButton'),
-)
+/** P1：离线仍可编辑（事件落 tag_events），只有服务端 can_edit=false 禁用。 */
+const tagEditDisabled = computed(() => props.tagEdit !== undefined && props.tagEdit.canEdit === false)
+const tagEditTitle = computed(() => t('tagEdit.editButton'))
 
 /**
  * 点击 chip：先拿到权威的 uuid / 完整 tags / can_edit，再打开编辑器。
@@ -147,6 +148,8 @@ async function openTagEditor(): Promise<void> {
         uuid: found.uuid,
         tags: Array.isArray(found.tags) ? found.tags.slice() : [],
         canEdit: true,
+        // 带服务端基线 ts：收敛时用 tags_updated_at 作为 add 事件时间。
+        tagsUpdatedAt: found.tags_updated_at ?? '',
       }
     } catch {
       // 拉取失败不打开半成品编辑器；不改变整行的 open 行为。
@@ -245,6 +248,7 @@ function onTagSaved(response: TagEditResponse): void {
       <TagInlineEditor
         :uuid="activeTagEdit.uuid"
         :tags="activeTagEdit.tags"
+        :tags-updated-at="activeTagEdit.tagsUpdatedAt ?? ''"
         :can-edit="activeTagEdit.canEdit !== false"
         @saved="onTagSaved"
         @close="closeTagEditor"

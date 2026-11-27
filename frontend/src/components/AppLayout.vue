@@ -29,6 +29,7 @@ import { useSessionStore } from '@/stores/session'
 import { useSyncStore } from '@/stores/sync'
 import { useRecordSheetStore } from '@/stores/recordSheet'
 import RecordSheet from './RecordSheet.vue'
+import TagMergeToast from './TagMergeToast.vue'
 import MoreSheet from './shell/MoreSheet.vue'
 import ShellHead from './shell/ShellHead.vue'
 import ShellSidebar from './shell/ShellSidebar.vue'
@@ -132,6 +133,8 @@ function goChangePassword(): void {
       </main>
 
       <p v-if="notice" class="layout__notice" role="status">{{ notice }}</p>
+      <!-- P1 标签合并提示：role=status，4s 自动消失，不弹模态、不打断记账。 -->
+      <TagMergeToast />
     </div>
 
     <!-- 移动底栏（<900）：4 Tab + 中央 FAB。

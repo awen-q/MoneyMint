@@ -14,14 +14,22 @@
  * 409 txn_tags_conflict 时展示服务端 `current_tags` 并以其为新 base 重试。
  * 若 409 的 current_tags 已等于目标 tags，按 §3.3「结果幂等」视为成功。
  *
+ * P1：离线时不再禁用。chip 增删当下写 TagEvent 到独立 tag_events store，
+ * 保存统一走 reconciler（在线 PUT / 离线仅预测），规范化唯一口径在
+ * `core/tagEvents/merge.ts`，本组件不再自持任何 normalizeTags 副本。
+ *
  * 兼容基线（iOS 14.8 / Safari 14.1.2）：原生 <input> + 简单数组操作，
  * 不用 structuredClone / crypto.randomUUID / .at() / Object.hasOwn 等禁用 API。
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 
-import { transactionApi } from '@/api/client'
-import { ApiError, codeMessage } from '@/api/errors'
+import { codeMessage } from '@/api/errors'
 import type { TagEditResponse } from '@/api/types'
+import { stableDeviceId } from '@/core/tagEvents/device'
+import { normalizeTags } from '@/core/tagEvents/merge'
+import { notifyOfflineSaved } from '@/core/tagEvents/notice'
+import { tagMergeCoordinator } from '@/core/tagEvents/reconciler'
+import type { CommitOutcome } from '@/core/tagEvents/types'
 import { t } from '@/i18n'
 import { markDirty } from '@/stores/dataFreshness'
 
@@ -35,11 +43,14 @@ const props = withDefaults(
     deviceId?: string
     /** 服务端 can_edit；false 时入口在父级已被禁用，这里再做一次防御。 */
     canEdit?: boolean
+    /** 服务端 tags_updated_at，作为离线事件收敛的基线时间。 */
+    tagsUpdatedAt?: string
   }>(),
   {
     tags: () => [],
     deviceId: '',
     canEdit: true,
+    tagsUpdatedAt: '',
   },
 )
 
@@ -50,104 +61,6 @@ const emit = defineEmits<{
   close: []
 }>()
 
-/**
- * 与服务端同口径的标签规范化。
- *
- * 大小写敏感（中文标签无大小写语义，Beancount tag 本身区分大小写）；
- * 默认 `Array.prototype.sort()` 即 Unicode 码点序，与 Go `sort.Strings`
- * 对常见中英文标签一致。
- */
-function normalizeTags(input: string[]): string[] {
-  const out: string[] = []
-  if (!Array.isArray(input)) {
-    return out
-  }
-  for (const raw of input) {
-    if (typeof raw !== 'string') {
-      continue
-    }
-    const value = raw.trim()
-    if (value === '') {
-      continue
-    }
-    let duplicated = false
-    for (const existing of out) {
-      if (existing === value) {
-        duplicated = true
-        break
-      }
-    }
-    if (!duplicated) {
-      out.push(value)
-    }
-  }
-  out.sort()
-  return out
-}
-
-/** 宽松读取服务端平铺在错误体里的字符串数组（格式异常时按空数组处理）。 */
-function readStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return []
-  }
-  const out: string[] = []
-  for (const item of value) {
-    if (typeof item === 'string') {
-      out.push(item)
-    }
-  }
-  return out
-}
-
-/** 两个已规范化数组是否逐项相等（用于 409 的结果幂等判定）。 */
-function sameTags(a: string[], b: string[]): boolean {
-  if (a.length !== b.length) {
-    return false
-  }
-  for (let i = 0; i < a.length; i += 1) {
-    if (a[i] !== b[i]) {
-      return false
-    }
-  }
-  return true
-}
-
-/** 本机稳定 device id（localStorage 缓存；隐私模式 / 无 localStorage 时降级）。 */
-function stableDeviceId(): string {
-  const key = 'fambean.tagEditDeviceId'
-  try {
-    if (typeof localStorage !== 'undefined') {
-      const cached = localStorage.getItem(key)
-      if (cached !== null && cached !== '') {
-        return cached
-      }
-    }
-  } catch {
-    // 隐私模式禁用存储：本次会话内用内存值即可，不阻断审计。
-  }
-  const bytes = new Uint8Array(8)
-  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
-    crypto.getRandomValues(bytes)
-  } else {
-    for (let i = 0; i < bytes.length; i += 1) {
-      bytes[i] = Math.floor(Math.random() * 256)
-    }
-  }
-  let hex = ''
-  for (let i = 0; i < bytes.length; i += 1) {
-    hex += (bytes[i] + 0x100).toString(16).slice(1)
-  }
-  const id = `web-${hex}`
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(key, id)
-    }
-  } catch {
-    // 写失败不影响本次请求。
-  }
-  return id
-}
-
 /** 用户可编辑的目标标签（进入时即规范化，后续每次增删也规范化）。 */
 const draft = ref<string[]>(normalizeTags(props.tags))
 /** CAS 快照：进入时看到的值；冲突后替换为服务端 current_tags。 */
@@ -157,7 +70,7 @@ const saving = ref(false)
 const error = ref('')
 const conflict = ref<{ current: string[]; updatedAt: string } | null>(null)
 
-/** navigator.onLine 仅作提示与安全边界提示，服务端 CAS + 权限才是权威。 */
+/** navigator.onLine 只作提示，不作安全边界；离线也允许编辑，服务端 CAS + 权限才权威。 */
 const online = ref(true)
 function syncOnline(): void {
   online.value = navigator.onLine
@@ -172,14 +85,27 @@ onUnmounted(() => {
   window.removeEventListener('offline', syncOnline)
 })
 
-const disabled = computed(() => !props.canEdit || !online.value)
-const disabledHint = computed(() =>
-  !props.canEdit ? t('tagEdit.forbidden') : t('tagEdit.offlineDisabled'),
-)
+/** P1：只有权限是安全边界；离线仍可编辑，navigator.onLine 仅切换提示与提交路径。 */
+const disabled = computed(() => !props.canEdit)
+const disabledHint = computed(() => t('tagEdit.forbidden'))
 
 const deviceId = props.deviceId !== '' ? props.deviceId : stableDeviceId()
 /** 多笔交易同时在列表展开编辑器时，input id 仍唯一（label 关联不串台）。 */
 const inputId = computed(() => `tag-inline-input-${props.uuid}`)
+
+/** 串行化 chip 事件写入：保存前必须等所有已产生的事件落库，避免预测值漏算。 */
+let pendingAppend: Promise<void> = Promise.resolve()
+
+/** chip 变更当下写事件（add / remove 墓碑），事件只进 tag_events，不进 pending。 */
+function appendEvent(tag: string, op: 'add' | 'remove'): void {
+  pendingAppend = pendingAppend.then(() =>
+    tagMergeCoordinator.appendTagEvent(props.uuid, { tag, op }, {
+      baseTags: baseTags.value,
+      tagsUpdatedAt: props.tagsUpdatedAt,
+      deviceId,
+    }),
+  )
+}
 
 function addTag(): void {
   const value = input.value.trim()
@@ -187,6 +113,7 @@ function addTag(): void {
   if (value === '') {
     return
   }
+  appendEvent(value, 'add')
   draft.value = normalizeTags(draft.value.concat([value]))
   error.value = ''
 }
@@ -198,6 +125,10 @@ function removeTag(tag: string): void {
       next.push(item)
     }
   }
+  if (next.length === draft.value.length) {
+    return
+  }
+  appendEvent(tag, 'remove')
   draft.value = next
   error.value = ''
 }
@@ -217,57 +148,65 @@ function retryWithLatest(): void {
   if (conflict.value === null || saving.value) {
     return
   }
-  baseTags.value = conflict.value.current.slice()
+  const current = conflict.value.current.slice()
+  baseTags.value = current
   conflict.value = null
-  void submit()
+  void submit(draft.value.slice(), current)
 }
 
-async function submit(): Promise<void> {
+/**
+ * 保存：在线走 reconciler 的 PUT；离线只落事件 + 预测回显（edit_id=0）。
+ * `baseOverride` 供 P0「用最新标签重试」复用：目标 tags 不变，只换 CAS 基线。
+ */
+async function submit(targetOverride?: string[], baseOverride?: string[]): Promise<void> {
   if (saving.value || disabled.value) {
     return
   }
   saving.value = true
   error.value = ''
-  const target = normalizeTags(draft.value)
-  const base = baseTags.value.slice()
+  // 用户可能在事件写入完成前就点保存；先等队列落库，再做收敛 / PUT。
+  await pendingAppend
+  const target = normalizeTags(targetOverride ?? draft.value)
+  const base = baseOverride ?? baseTags.value.slice()
   try {
-    const response = await transactionApi.updateTags(props.uuid, {
-      tags: target,
-      base_tags: base,
-      device_id: deviceId,
-    })
-    markDirty('local-write')
-    emit('saved', response)
-    emit('close')
-  } catch (err) {
-    if (err instanceof ApiError && err.code === 'txn_tags_conflict') {
-      const current = readStringArray(err.details === undefined ? undefined : err.details.current_tags)
-      const updatedAt =
-        err.details !== undefined && typeof err.details['current_tags_updated_at'] === 'string'
-          ? (err.details['current_tags_updated_at'] as string)
-          : ''
-      // §3.3：重放同一请求时 current_tags 已等于目标 tags → 结果幂等，视为成功。
-      if (sameTags(normalizeTags(current), target)) {
-        const replayed: TagEditResponse = {
-          uuid: props.uuid,
-          tags: target,
-          tags_updated_at: updatedAt,
-          edit_id: 0,
-        }
-        markDirty('local-write')
-        emit('saved', replayed)
-        emit('close')
-        return
+    if (!online.value) {
+      const predicted = await tagMergeCoordinator.predictTags(props.uuid, {
+        baseTags: base,
+        tagsUpdatedAt: props.tagsUpdatedAt,
+      })
+      const offlineResponse: TagEditResponse = {
+        uuid: props.uuid,
+        tags: predicted,
+        tags_updated_at: props.tagsUpdatedAt,
+        edit_id: 0,
       }
-      conflict.value = { current, updatedAt }
-      // 以最新值为新 base；用户点「用最新标签重试」即可直接重放。
-      baseTags.value = current.slice()
-      error.value = t('tagEdit.conflictHint')
-    } else if (err instanceof ApiError) {
-      error.value = codeMessage(err.code ?? '') || err.message || t('tagEdit.errGeneric')
-    } else {
-      error.value = t('tagEdit.errGeneric')
+      markDirty('local-write')
+      notifyOfflineSaved(props.uuid)
+      emit('saved', offlineResponse)
+      emit('close')
+      return
     }
+
+    const outcome: CommitOutcome = await tagMergeCoordinator.commitBatch(props.uuid, {
+      baseTags: base,
+      tagsUpdatedAt: props.tagsUpdatedAt,
+      deviceId,
+      targetTags: target,
+      maxAttempts: 1,
+    })
+    if (outcome.status === 'saved') {
+      markDirty('local-write')
+      emit('saved', outcome.response)
+      emit('close')
+      return
+    }
+    if (outcome.status === 'conflict') {
+      conflict.value = { current: outcome.current, updatedAt: outcome.updatedAt }
+      baseTags.value = outcome.current.slice()
+      error.value = t('tagEdit.conflictHint')
+      return
+    }
+    error.value = codeMessage(outcome.code) || outcome.message || t('tagEdit.errGeneric')
   } finally {
     saving.value = false
   }
@@ -287,6 +226,9 @@ function cancel(): void {
 
     <p class="tag-inline__hint">{{ t('tagEdit.hint') }}</p>
     <p v-if="disabled" class="tag-inline__disabled" role="status">{{ disabledHint }}</p>
+    <p v-else-if="!online" class="tag-inline__offline" role="status" data-testid="tag-offline-hint">
+      {{ t('tagEdit.offlineSaved') }}
+    </p>
 
     <div class="tag-inline__row">
       <span class="tag-inline__label">{{ t('tagEdit.currentLabel') }}</span>
@@ -358,7 +300,7 @@ function cancel(): void {
         class="tag-inline__primary"
         data-testid="tag-save"
         :disabled="disabled || saving"
-        @click="submit"
+        @click="submit()"
       >{{ saving ? t('tagEdit.saving') : t('tagEdit.save') }}</button>
     </div>
   </section>
@@ -399,6 +341,7 @@ function cancel(): void {
 
 .tag-inline__hint,
 .tag-inline__disabled,
+.tag-inline__offline,
 .tag-inline__error {
   margin: 8px 0 0;
   font-size: 11px;
@@ -411,6 +354,11 @@ function cancel(): void {
 
 .tag-inline__disabled {
   color: var(--fb-warn);
+}
+
+/* 离线提示是浅色非阻断信息，与红色 role=alert 的 error / conflict 区分。 */
+.tag-inline__offline {
+  color: var(--fb-sub);
 }
 
 .tag-inline__error {

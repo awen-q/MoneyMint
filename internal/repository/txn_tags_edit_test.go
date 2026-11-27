@@ -226,3 +226,162 @@ func TestTagEditsByUUID_DescendingAndLimit(t *testing.T) {
 		t.Fatalf("不同 uuid 应隔离，实际 %d err=%v", len(other), err)
 	}
 }
+
+// TestUpdateTags_DedupReplay 锁定 P1 去重分支前移（方案 §4.2）的核心语义：
+// 首次 PUT 已成功落库但响应在网络中丢失时，客户端用同一 client_op_id + 旧
+// base_tags 重试，即使 base 已与当前 tags 不符，也必须命中去重分支幂等返回
+// 既有 edit_id，而不是先撞 CAS（409）。审计 / sync_log 均只写 1 条。
+// 同时验证：换一个 op id（真实并发冲突）仍返回 TagsConflict（HTTP 409），
+// 证明前移没有吞掉真实冲突。
+func TestUpdateTags_DedupReplay(t *testing.T) {
+	conn := openReversalTestDB(t)
+	seedTagEditFixture(t, conn)
+	store := New(conn)
+
+	const opID = "dev-replay:batch-1"
+
+	// ① 首次落库：tags 从 ["餐饮"] → ["甲"]，审计 + sync_log 各 1 条。
+	first, err := store.UpdateTagsTx(TagsUpdateInput{
+		LedgerID: 1, EntityUUID: "txn-1",
+		Tags: []string{"甲"}, BaseTags: []string{"餐饮"},
+		ActorID: 1, DeviceID: "dev-replay", ClientOpID: opID,
+	})
+	if err != nil {
+		t.Fatalf("首次写入: %v", err)
+	}
+	if first.EditID <= 0 {
+		t.Fatalf("首次写入应返回有效 edit_id，实际 %d", first.EditID)
+	}
+
+	// ② 响应丢失重放：同 op id + 过期 base_tags（仍是首次前的 ["餐饮"]）。
+	// 若去重仍在 CAS 之后，这里会返回 TagsConflict（409）；前移后必须幂等成功。
+	replay, err := store.UpdateTagsTx(TagsUpdateInput{
+		LedgerID: 1, EntityUUID: "txn-1",
+		Tags: []string{"甲"}, BaseTags: []string{"餐饮"}, // 故意用旧快照
+		ActorID: 1, DeviceID: "dev-replay", ClientOpID: opID,
+	})
+	if err != nil {
+		var tc *TagsConflict
+		if errors.As(err, &tc) {
+			t.Fatalf("同 op id 重放不应撞 CAS（当前 tags=%q ts=%q）", tc.CurrentTags, tc.CurrentTagsUpdatedAt)
+		}
+		t.Fatalf("同 op id 重放应幂等成功: %v", err)
+	}
+	if replay.EditID != first.EditID {
+		t.Fatalf("重放应返回既有 edit_id=%d，实际 %d", first.EditID, replay.EditID)
+	}
+	if len(replay.Tags) != 1 || replay.Tags[0] != "甲" {
+		t.Fatalf("重放应回显当前 tags=[\"甲\"]，实际 %+v", replay.Tags)
+	}
+	if replay.TagsUpdatedAt != first.TagsUpdatedAt {
+		t.Fatalf("重放不得推进 tags_updated_at（%q → %q）", first.TagsUpdatedAt, replay.TagsUpdatedAt)
+	}
+
+	// ③ 审计 / sync_log 各只 1 条；标签、交易行数不变。
+	if n := tagEditCount(t, conn, `SELECT count(*) FROM tag_edit_log WHERE entity_uuid='txn-1'`); n != 1 {
+		t.Fatalf("重放不应写第二条审计，实际 %d", n)
+	}
+	if n := tagEditCount(t, conn,
+		`SELECT count(*) FROM sync_log WHERE entity_type=? AND entity_uuid=? AND op=?`,
+		domain.EntityTransaction, "txn-1", domain.OpUpdate,
+	); n != 1 {
+		t.Fatalf("重放不应写第二条 sync_log，实际 %d", n)
+	}
+	if n := tagEditCount(t, conn, `SELECT count(*) FROM transactions WHERE ledger_id=1`); n != 1 {
+		t.Fatalf("交易行数必须保持 1，实际 %d", n)
+	}
+	var tagsRaw string
+	if err := conn.QueryRow(`SELECT COALESCE(tags,'') FROM transactions WHERE uuid='txn-1'`).Scan(&tagsRaw); err != nil {
+		t.Fatalf("回读交易: %v", err)
+	}
+	if tagsRaw != `["甲"]` {
+		t.Fatalf("重放不得改动当前 tags，实际 %s", tagsRaw)
+	}
+
+	// ④ 真实并发冲突：换 op id + 仍用过期 base → 必须是 TagsConflict（HTTP 409）。
+	_, err = store.UpdateTagsTx(TagsUpdateInput{
+		LedgerID: 1, EntityUUID: "txn-1",
+		Tags: []string{"乙"}, BaseTags: []string{"餐饮"},
+		ActorID: 1, ClientOpID: "dev-replay:batch-2",
+	})
+	var conflict *TagsConflict
+	if !errors.As(err, &conflict) {
+		t.Fatalf("新 op id + 过期 base 应仍返回 TagsConflict（409），实际 %v", err)
+	}
+	if len(conflict.CurrentTags) != 1 || conflict.CurrentTags[0] != "甲" {
+		t.Fatalf("冲突应回带当前 tags=[\"甲\"]，实际 %+v", conflict.CurrentTags)
+	}
+	if n := tagEditCount(t, conn, `SELECT count(*) FROM tag_edit_log`); n != 1 {
+		t.Fatalf("真实冲突不得写审计，实际 %d", n)
+	}
+}
+
+// TestTagEditOpUniqueIndex 迁移 018 的部分唯一索引 uniq_tag_edit_op 保证
+// (ledger_id, client_op_id) 重复写入必然失败；空 op id 不受约束（P0 在线可写多条）。
+func TestTagEditOpUniqueIndex(t *testing.T) {
+	conn := openReversalTestDB(t)
+	seedTagEditFixture(t, conn)
+	insert := func(opID string) error {
+		_, err := conn.Exec(
+			`INSERT INTO tag_edit_log
+			 (ledger_id, entity_uuid, action, old_tags, new_tags, actor_id, client_op_id, ts)
+			 VALUES(1, 'txn-1', 'replace', '[]', '["甲"]', 1, ?, '2026-11-27T09:31:12.345Z')`,
+			opID,
+		)
+		return err
+	}
+	if err := insert("dev-idx:batch-1"); err != nil {
+		t.Fatalf("首次插入: %v", err)
+	}
+	if err := insert("dev-idx:batch-1"); err == nil {
+		t.Fatal("同 (ledger_id, client_op_id) 必须被部分唯一索引拒绝")
+	}
+	if err := insert(""); err != nil {
+		t.Fatalf("空 op id 首次插入: %v", err)
+	}
+	if err := insert(""); err != nil {
+		t.Fatalf("空 op id 二次插入仍应成功（被 WHERE client_op_id <> '' 排除）: %v", err)
+	}
+	if n := tagEditCount(t, conn, `SELECT count(*) FROM tag_edit_log`); n != 3 {
+		t.Fatalf("应恰好 3 条审计（1 + 2 条空 op id），实际 %d", n)
+	}
+}
+
+// TestTagEditByClientOpID 去重短路读方法：命中回显审计行 id/new_tags/ts；
+// 未命中与空 op id 都返回 (nil, nil)，不能误判为命中。
+func TestTagEditByClientOpID(t *testing.T) {
+	conn := openReversalTestDB(t)
+	seedTagEditFixture(t, conn)
+	store := New(conn)
+
+	miss, err := store.TagEditByClientOpID(1, "dev-lookup:none")
+	if err != nil || miss != nil {
+		t.Fatalf("未命中应返回 (nil, nil)，实际 %+v err=%v", miss, err)
+	}
+	empty, err := store.TagEditByClientOpID(1, "")
+	if err != nil || empty != nil {
+		t.Fatalf("空 op id 应返回 (nil, nil)，实际 %+v err=%v", empty, err)
+	}
+
+	first, err := store.UpdateTagsTx(TagsUpdateInput{
+		LedgerID: 1, EntityUUID: "txn-1",
+		Tags: []string{"甲", "乙"}, BaseTags: []string{"餐饮"},
+		ActorID: 1, ClientOpID: "dev-lookup:batch-1",
+	})
+	if err != nil {
+		t.Fatalf("首次写入: %v", err)
+	}
+	got, err := store.TagEditByClientOpID(1, "dev-lookup:batch-1")
+	if err != nil || got == nil {
+		t.Fatalf("命中查询: %v got=%+v", err, got)
+	}
+	if got.ID != first.EditID || got.EntityUUID != "txn-1" {
+		t.Fatalf("命中回显 id/uuid 不符: %+v", got)
+	}
+	if len(got.NewTags) != 2 || got.NewTags[0] != "甲" || got.NewTags[1] != "乙" {
+		t.Fatalf("命中应回显审计行 new_tags，实际 %+v", got.NewTags)
+	}
+	if !tagEditTSRE.MatchString(got.Ts) {
+		t.Fatalf("ts 格式不符: %q", got.Ts)
+	}
+}
