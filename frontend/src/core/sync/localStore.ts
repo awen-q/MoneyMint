@@ -230,6 +230,10 @@ export class MemorySyncStore implements SyncStore {
             ...(c.entity as unknown as LocalAccount),
           })
         } else if (c.entity_type === 'transaction') {
+          // P0：transaction 的 op=update 仍整条覆盖（loadEntity 给全量实体，
+          // 含当前 tags 与可选 tags_updated_at），交易始终 1 行。
+          // P1 接口位：覆盖后若该 uuid 有本地 pending 标签事件，在此重放并按
+          // §5.5「并集 + 墓碑 / ts + device_id LWW」收敛；P0 不启用。
           this.txns.set(this.k(ledgerId, uuid), c.entity as unknown as LocalTxn)
         }
       } else if (op === 'close') {

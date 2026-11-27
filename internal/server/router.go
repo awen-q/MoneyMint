@@ -127,6 +127,14 @@ func newRouter(h *handler.Handler, svc *service.Service, webRoot string, corsCfg
 	mux.HandleFunc("/api/transactions/{uuid}/restore", methodSwitch(map[string]http.HandlerFunc{
 		http.MethodPost: h.HandleRestoreTransaction,
 	}))
+	// 标签原地更新（注解层）：字面后缀 /tags 与 /tag-edits 比 /api/transactions/{uuid}
+	// 更具体，Go 1.22 ServeMux 优先命中，不会掉进 PATCH 的经济事实冲正路径。
+	mux.HandleFunc("/api/transactions/{uuid}/tags", methodSwitch(map[string]http.HandlerFunc{
+		http.MethodPut: h.HandleUpdateTransactionTags,
+	}))
+	mux.HandleFunc("/api/transactions/{uuid}/tag-edits", methodSwitch(map[string]http.HandlerFunc{
+		http.MethodGet: h.HandleListTagEdits,
+	}))
 	mux.HandleFunc("/api/transactions/{uuid}", methodSwitch(map[string]http.HandlerFunc{
 		http.MethodPatch:  h.HandleUpdateTransaction, // 0.6.0 S6：修改 = 冲正 + 新建
 		http.MethodDelete: h.HandleDeleteTransaction,

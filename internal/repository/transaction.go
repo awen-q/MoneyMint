@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"sort"
 	"strings"
 
 	"familyledger/internal/domain"
@@ -315,14 +317,15 @@ func (s *Store) TransactionByUUID(ledgerID int64, uuid string) (domain.Transacti
 		        COALESCE(t.reversal_of, ''), COALESCE(t.opening_account_uuid, ''),
 		        COALESCE(t.opening_version, 0), COALESCE(t.opening_key, ''),
 		        COALESCE(t.reversed_by, ''),
-		        COALESCE(t.balance_date, ''), COALESCE(t.balance_key, '')
+		        COALESCE(t.balance_date, ''), COALESCE(t.balance_key, ''),
+		        COALESCE(t.tags_updated_at, '')
 		 FROM transactions t
 		 LEFT JOIN users u ON t.created_by = u.id
 		 WHERE t.ledger_id=? AND t.uuid=? AND t.deleted_at IS NULL`,
 		ledgerID, uuid,
 	).Scan(&t.ID, &t.UUID, &t.Date, &t.Flag, &t.Description, &tags, &t.CreatedBy, &t.CreatedByName,
 		&t.ReversalOf, &t.OpeningAccountUUID, &t.OpeningVersion, &t.OpeningKey, &t.ReversedBy,
-		&t.BalanceDate, &t.BalanceKey)
+		&t.BalanceDate, &t.BalanceKey, &t.TagsUpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Transaction{}, domain.ErrNotFound
 	}
@@ -767,4 +770,241 @@ func sqlArgsIn(ids []int64) (string, []any, error) {
 		args[i] = id
 	}
 	return "IN (" + strings.Join(ph, ",") + ")", args, nil
+}
+
+// ---------------------------------------------------------------------------
+// 标签原地更新（注解层；与经济事实冲正路径物理隔离）
+// ---------------------------------------------------------------------------
+//
+// 本段是 P0 唯一新增的交易写入通道。红线：
+//   - UPDATE 的 SET 列表只允许 tags 与 tags_updated_at；
+//   - uuid 不变、绝不 INSERT 交易、绝不写 reversed_by / deleted_at / postings；
+//   - 审计行与 sync_log op=update 必须与 UPDATE 在同一事务内提交。
+
+// TagsUpdateInput 是标签原地更新的落库输入。
+//
+// Tags / BaseTags 由 service 层规范化（权威口径）；BaseTags 用于事务内 CAS 终审，
+// 防止 service 判定之后、本事务开始之前原交易被改（TOCTOU）。
+// ClientOpID 为 P1 离线批次去重键，P0 在线调用传空串。
+type TagsUpdateInput struct {
+	LedgerID   int64
+	EntityUUID string
+	Tags       []string
+	BaseTags   []string
+	ActorID    int64
+	DeviceID   string
+	ClientOpID string
+}
+
+// TagsUpdateResult 是标签原地更新的落库结果。
+type TagsUpdateResult struct {
+	UUID          string
+	Tags          []string
+	TagsUpdatedAt string
+	EditID        int64 // tag_edit_log.id
+}
+
+// TagsConflict 表示事务内 CAS 终审失败（当前标签集合已变）。
+// service 把它映射为 409 txn_tags_conflict，并把两个字段回给客户端供重试。
+type TagsConflict struct {
+	CurrentTags          []string
+	CurrentTagsUpdatedAt string
+}
+
+// Error 实现 error 接口。
+func (e *TagsConflict) Error() string { return "标签已被他人更新" }
+
+// UpdateTagsTx 在单一事务内完成「CAS 终审 → 原地 UPDATE → 审计 → sync_log」。
+//
+// 判定顺序与 UpdateTransaction 逐字同序：已冲正 → 系统交易 → CAS → 落库；
+// 权限与载荷校验在 service 层完成，这里只做并发终审（不重复判定角色）。
+// 任一步失败整体回滚，绝不会产生「标签改了但没审计 / 没同步」的半成品。
+func (s *Store) UpdateTagsTx(in TagsUpdateInput) (*TagsUpdateResult, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// 1) 事务内重读原交易（含全部不可编辑身份列）。
+	var id int64
+	var tagsRaw sql.NullString
+	var tagsUpdatedAt, reversedBy, openingUUID, balanceKey, reversalOf string
+	err = tx.QueryRow(
+		`SELECT id, tags, COALESCE(tags_updated_at, ''),
+		        COALESCE(reversed_by, ''), COALESCE(opening_account_uuid, ''),
+		        COALESCE(balance_key, ''), COALESCE(reversal_of, '')
+		 FROM transactions
+		 WHERE ledger_id=? AND uuid=? AND deleted_at IS NULL`,
+		in.LedgerID, in.EntityUUID,
+	).Scan(&id, &tagsRaw, &tagsUpdatedAt, &reversedBy, &openingUUID, &balanceKey, &reversalOf)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, domain.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if reversedBy != "" {
+		return nil, domain.Codedf(domain.ErrConflict, domain.CodeTxnAlreadyReversed,
+			"该交易已被冲正，请修改最新版本")
+	}
+	if openingUUID != "" || balanceKey != "" || reversalOf != "" {
+		return nil, domain.Codedf(domain.ErrConflict, domain.CodeTxnNotEditable,
+			"期初 / 冲正 / 校准交易不能修改")
+	}
+
+	// 2) CAS 终审：两侧都用与 service 相同的规范化规则，避免调用方
+	// 传来的快照带空白/乱序/重复时造成伪冲突（service 通常已规范化，这里
+	// 再归一化一次是防御性冗余，不是安全边界的替代）。
+	curTags := normalizeTagsForCAS(parseTags(tagsRaw))
+	baseTags := normalizeTagsForCAS(in.BaseTags)
+	if !slices.Equal(curTags, baseTags) {
+		return nil, &TagsConflict{CurrentTags: curTags, CurrentTagsUpdatedAt: tagsUpdatedAt}
+	}
+
+	// 2.1) P1 去重预留：client_op_id 命中则不重复写审计 / sync_log。
+	// P0 在线调用恒传空串，走不到这里。
+	if in.ClientOpID != "" {
+		var existingID int64
+		err := tx.QueryRow(
+			`SELECT id FROM tag_edit_log WHERE ledger_id=? AND client_op_id=?`,
+			in.LedgerID, in.ClientOpID,
+		).Scan(&existingID)
+		if err == nil {
+			if err := tx.Commit(); err != nil {
+				return nil, err
+			}
+			return &TagsUpdateResult{
+				UUID: in.EntityUUID, Tags: curTags,
+				TagsUpdatedAt: tagsUpdatedAt, EditID: existingID,
+			}, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+	}
+
+	// 3) 原地 UPDATE：SET 列表只有 tags + tags_updated_at（代码审查红线）。
+	target := append([]string(nil), in.Tags...)
+	res, err := tx.Exec(
+		`UPDATE transactions SET tags=?, tags_updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+		 WHERE id=? AND (reversed_by IS NULL OR reversed_by='')`,
+		marshalTags(target), id,
+	)
+	if err != nil {
+		return nil, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if n == 0 {
+		// 并发：本事务重读之后、UPDATE 之前原交易被冲正或被他人改标签。
+		return nil, &TagsConflict{CurrentTags: curTags, CurrentTagsUpdatedAt: tagsUpdatedAt}
+	}
+	var updatedAt string
+	if err := tx.QueryRow(`SELECT tags_updated_at FROM transactions WHERE id=?`, id).Scan(&updatedAt); err != nil {
+		return nil, err
+	}
+
+	// 4) 审计（old→new，服务端归因 actor_id）。空数组落库为 '[]' 而非 NULL，
+	// 保证 tag_edit_log 的 NOT NULL DEFAULT '[]' 契约、响应始终是 []。
+	editRes, err := tx.Exec(
+		`INSERT INTO tag_edit_log
+		 (ledger_id, entity_uuid, action, old_tags, new_tags, actor_id, device_id, client_op_id, ts)
+		 VALUES(?, ?, 'replace', ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+		in.LedgerID, in.EntityUUID, marshalTagsJSON(curTags), marshalTagsJSON(target),
+		in.ActorID, in.DeviceID, in.ClientOpID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	editID, err := editRes.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+
+	// 5) 出站同步意图：op=update 指向原 uuid；payload 在 pull 时由 loadEntity 现取现组装。
+	if _, err := appendSyncLogOn(tx, in.LedgerID, domain.EntityTransaction, in.EntityUUID, domain.OpUpdate); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &TagsUpdateResult{
+		UUID: in.EntityUUID, Tags: target,
+		TagsUpdatedAt: updatedAt, EditID: editID,
+	}, nil
+}
+
+// normalizeTagsForCAS 是仓库层的 CAS 规范化，规则与 service.canonicalTags 逐字一致：
+// trim → 丢空 → 精确去重（大小写敏感）→ 排序。不做长度/黑名单校验——库里的
+// 历史标签可能不符合新规则，校验失败会让 CAS 永远无法通过。
+func normalizeTagsForCAS(tags []string) []string {
+	out := make([]string, 0, len(tags))
+	seen := make(map[string]bool, len(tags))
+	for _, t := range tags {
+		t = strings.TrimSpace(t)
+		if t == "" || seen[t] {
+			continue
+		}
+		seen[t] = true
+		out = append(out, t)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// marshalTagsJSON 把标签数组序列化为 JSON 字符串；空数组落库为 '[]'。
+// 与 marshalTags（空→NULL，用于 transactions.tags）不同：审计列是 NOT NULL。
+func marshalTagsJSON(tags []string) string {
+	if len(tags) == 0 {
+		return "[]"
+	}
+	b, err := json.Marshal(tags)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+// TagEditsByUUID 按 uuid 倒序取标签编辑审计（默认最多 50 条，与 B7 purge_log 同口径）。
+// 审计不写 sync_log、不进 loadEntity，只在二级面板按需 GET。
+func (s *Store) TagEditsByUUID(ledgerID int64, uuid string, limit int) ([]domain.TagEditLog, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 50
+	}
+	rows, err := s.db.Query(
+		`SELECT l.id, l.ledger_id, l.entity_uuid, l.action, l.old_tags, l.new_tags,
+		        l.actor_id, COALESCE(u.display_name, ''), l.device_id, l.client_op_id, l.ts
+		 FROM tag_edit_log l LEFT JOIN users u ON l.actor_id=u.id
+		 WHERE l.ledger_id=? AND l.entity_uuid=?
+		 ORDER BY l.id DESC LIMIT ?`,
+		ledgerID, uuid, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []domain.TagEditLog{}
+	for rows.Next() {
+		var e domain.TagEditLog
+		var oldRaw, newRaw sql.NullString
+		if err := rows.Scan(&e.ID, &e.LedgerID, &e.EntityUUID, &e.Action, &oldRaw, &newRaw,
+			&e.ActorID, &e.ActorName, &e.DeviceID, &e.ClientOpID, &e.Ts); err != nil {
+			return nil, err
+		}
+		e.OldTags = parseTags(oldRaw)
+		e.NewTags = parseTags(newRaw)
+		if e.OldTags == nil {
+			e.OldTags = []string{}
+		}
+		if e.NewTags == nil {
+			e.NewTags = []string{}
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }

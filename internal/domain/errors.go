@@ -18,6 +18,11 @@ var (
 	ErrForbidden = errors.New("无权限")
 	// ErrInvalid 表示请求参数/业务规则校验失败。
 	ErrInvalid = errors.New("参数或业务规则校验失败")
+	// ErrTxnTagsConflict 表示 base_tags 与当前 tags 不一致（乐观并发冲突 → 409）。
+	// 用 %w 包住 ErrConflict，使既有的 statusOf 映射直接得到 409，无需改 handler。
+	ErrTxnTagsConflict = fmt.Errorf("%w: 标签已被他人更新", ErrConflict)
+	// ErrTxnTagsInvalid 表示标签载荷非法（数量/长度/控制字符 → 400）。
+	ErrTxnTagsInvalid = fmt.Errorf("%w: 标签参数非法", ErrInvalid)
 )
 
 // Invalidf 构造一条携带具体原因的 ErrInvalid（保留 errors.Is(err, ErrInvalid) 语义）。
@@ -87,6 +92,12 @@ const (
 	CodeTxnPurgeNotDeleted      = "txn_purge_not_deleted"
 	CodeTxnPurgeNotAllowed      = "txn_purge_not_allowed"
 	CodeTxnNotFound             = "txn_not_found"
+
+	// 标签原地更新（P0）：只新增两个码，其余复用上面的交易码
+	// （txn_already_reversed / txn_not_editable / txn_edit_forbidden /
+	//  opening_via_api_only / txn_not_found）。
+	CodeTxnTagsConflict = "txn_tags_conflict"
+	CodeTxnTagsInvalid  = "txn_tags_invalid"
 
 	// 账户图标 / 颜色（批 II）：PATCH /api/accounts/{uuid} 与 create 路径共用的
 	// 视觉字段校验失败码（icon 超长 / color 非 #RRGGBB）。

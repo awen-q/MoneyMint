@@ -1,6 +1,7 @@
 /**
- * 后端端点路径常量（批 0 起，**现为 44 条**：批 4 扩至 36 条后，B3 搜索分页、
- * B5 资产页、B6 资产时序、B7 永久删除两条、P0 分类排序批量提交陆续补齐；数量由
+ * 后端端点路径常量（批 0 起，**现为 46 条**：批 4 扩至 36 条后，B3 搜索分页、
+ * B5 资产页、B6 资产时序、B7 永久删除两条、P0 分类排序批量提交陆续补齐；
+ * 标签原地更新 P0 文末顺延 transactionTags / transactionTagEdits 两条；数量由
  * `api/client.contract.test.ts` 硬断言）
  *
  * 与 `internal/server/router.go` 的 `mux.HandleFunc("/api/...")` 一一对应；
@@ -110,6 +111,15 @@ export const API_ROUTES = {
 
   /** GET /api/settings/registration · POST /api/settings/registration */
   settingsRegistration: '/api/settings/registration',
+
+  /**
+   * PUT /api/transactions/{uuid}/tags —— 标签原地更新（注解层，非经济事实）。
+   * Body {tags, base_tags, device_id?}；200 {uuid, tags, tags_updated_at, edit_id}。
+   * 绝不走整包 PATCH（transactionByUuid），后者仍为冲正 + 新建。
+   */
+  transactionTags: '/api/transactions/{uuid}/tags',
+  /** GET /api/transactions/{uuid}/tag-edits —— 二级编辑记录（viewer 可读，倒序限 50）。 */
+  transactionTagEdits: '/api/transactions/{uuid}/tag-edits',
 } as const
 
 /** 路由常量名联合类型。 */

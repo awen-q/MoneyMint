@@ -151,6 +151,9 @@ export const zhCN = {
   'apiErrors.txn_edit_forbidden': '只能修改自己记的账，或由账本 owner 修改',
   'apiErrors.txn_not_editable': '期初 / 冲正 / 校准交易不能修改',
   'apiErrors.txn_already_reversed': '该交易已被冲正，请修改最新版本',
+  // ---- 标签原地更新 P0（注解层）----
+  'apiErrors.txn_tags_conflict': '标签已被他人更新，请刷新后重试',
+  'apiErrors.txn_tags_invalid': '标签不合法：单个不超过 64 字符、最多 32 个、不能含控制字符',
   // ---- 0.6.0 导入（S5）----
   'apiErrors.import_pad_balance_unsupported':
     '文件含 pad / balance 指令，请展开成普通交易后重导，或改用新建账本模式',
@@ -1424,6 +1427,43 @@ export const zhCN = {
   'assetStats.hintPrefix': '净资产 = 总资产 + 负债（负债为负值，故相加）；12 月末：总资产 ',
   'assetStats.hintLiabilities': ' · 负债 ',
   'assetStats.hintNet': ' · 净资产 ',
+
+  // 标签原地更新 P0（注解层）：就地编辑器 + 详情页二级编辑记录。
+  // 文案刻意与经济事实的「修改需联网」区分：P0 标签离线是**禁用**而非排队。
+  'tagEdit.editButton': '编辑标签',
+  'tagEdit.title': '编辑标签',
+  'tagEdit.currentLabel': '当前标签',
+  'tagEdit.empty': '暂无标签',
+  'tagEdit.inputLabel': '新标签',
+  'tagEdit.inputPlaceholder': '输入标签后回车或点添加',
+  'tagEdit.add': '添加',
+  'tagEdit.remove': '移除标签：{tag}',
+  'tagEdit.save': '保存标签',
+  'tagEdit.saving': '保存中…',
+  'tagEdit.cancel': '取消',
+  'tagEdit.hint': '标签是注解字段：原地更新、不产生冲正交易，保存后仍可再次编辑。',
+  'tagEdit.noticeSaved': '标签已更新',
+  'tagEdit.offlineDisabled': '标签编辑暂需联网，离线编辑将在后续版本支持',
+  'tagEdit.forbidden': '当前账号无权修改该交易的标签',
+  'tagEdit.conflictTitle': '标签已被他人更新',
+  'tagEdit.conflictHint': '标签已被他人更新，请核对后重试',
+  'tagEdit.conflictCurrent': '对方当前标签',
+  'tagEdit.retryWithLatest': '用最新标签重试',
+  'tagEdit.mergeLatest': '并入我的编辑',
+  'tagEdit.errInvalid': '标签不合法：单个不超过 64 字符、最多 32 个、不能含控制字符',
+  'tagEdit.errGeneric': '标签保存失败，请稍后重试',
+  'tagEdit.detailHint': '标签为注解字段：原地更新、不产生冲正，仍可再次编辑。',
+  'tagEdit.historyTitle': '编辑记录',
+  'tagEdit.historyToggleExpand': '展开编辑记录',
+  'tagEdit.historyToggleCollapse': '收起编辑记录',
+  'tagEdit.historyLoading': '正在加载编辑记录…',
+  'tagEdit.historyEmpty': '还没有标签编辑记录。',
+  'tagEdit.historyLegacyHint': '升级前的标签改动没有记录，下方只显示升级后的编辑。',
+  'tagEdit.historyActionReplace': '修改标签',
+  'tagEdit.historyMeta': '{who} · {when} · 设备 {device}',
+  'tagEdit.historyUnknownActor': '未知成员',
+  'tagEdit.historyNoDevice': '未记录',
+  'tagEdit.historyLoadFailed': '编辑记录加载失败，请重试',
 }
 
 /** 消息键类型：由源语言字典推导；en.ts 必须逐键给出英文（缺失即 typecheck 红）。 */

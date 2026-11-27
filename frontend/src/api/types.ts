@@ -487,6 +487,11 @@ export interface TransactionView {
   created_at?: string
   /** 标签（迁移 005 持久化；列表响应已透出，无标签交易按 omitempty 缺省；报表 #tag 下钻与详情原生片段依赖）。 */
   tags?: string[]
+  /**
+   * 标签原地更新的权威时间（迁移 018；P1 LWW 与冲突提示用）。
+   * 可选且容忍旧响应：缺失时按空串处理，不参与任何判定。
+   */
+  tags_updated_at?: string
   postings: PostingView[]
   /** 非空 = 已被冲正（失效原交易；0.6.0 S6，徽章数据源）。 */
   reversed_by?: string
@@ -583,6 +588,51 @@ export interface TransactionUpdated {
   original_uuid: TransactionUUID
   reversal_uuid: TransactionUUID
   new_uuid: TransactionUUID
+}
+
+// ---------- 标签原地更新 + 二级编辑记录（注解层） ----------
+
+/**
+ * PUT /api/transactions/{uuid}/tags 请求体。
+ *
+ * - `tags` 为**目标全集**，`[]` 表示清空全部标签；
+ * - `base_tags` 是客户端进入编辑器时看到的快照，服务端规范化后做 CAS；
+ * - `device_id` 仅审计用（best-effort），不作安全边界。
+ *
+ * 不存在 `client_request_id` / `edit_id`：前者 create-only，后者只在响应回显。
+ */
+export interface UpdateTagsRequest {
+  tags: string[]
+  base_tags: string[]
+  device_id?: string
+}
+
+/** PUT /api/transactions/{uuid}/tags 响应体（`tags` 为服务端规范化后的最终值）。 */
+export interface TagEditResponse {
+  uuid: TransactionUUID
+  tags: string[]
+  tags_updated_at: string
+  /** tag_edit_log.id，供定位与 P1 去重；不是版本链。 */
+  edit_id: number
+}
+
+/** GET /api/transactions/{uuid}/tag-edits 的单条审计（倒序，服务端限 50 条）。 */
+export interface TagEditItem {
+  id: number
+  /** P0 恒为 'replace'；预留 add/remove/rename 给 P2。 */
+  action: string
+  old_tags: string[]
+  new_tags: string[]
+  /** 服务端 user id（权威归因，不信客户端）。 */
+  actor_id: number
+  actor_name: string
+  device_id: string
+  ts: ISODateTime
+}
+
+/** GET /api/transactions/{uuid}/tag-edits 响应体。 */
+export interface TagEditsResponse {
+  edits: TagEditItem[]
 }
 
 /** 回收站分录视图（account 为 Beancount 全名，account_display 为展示名）。 */

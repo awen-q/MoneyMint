@@ -68,11 +68,14 @@ import type {
   SyncPullResponse,
   PushChange,
   SyncPushResponse,
+  TagEditResponse,
+  TagEditsResponse,
   TransactionCreated,
   TransactionListPage,
   TransactionListQuery,
   TransactionListResponse,
   TransactionUpdated,
+  UpdateTagsRequest,
   TrashListResponse,
   UpdateAccountRequest,
   UpdateAccountResponse,
@@ -719,6 +722,35 @@ export const transactionApi = {
     return api.patch<TransactionUpdated>(
       formatApiPath(API_ROUTES.transactionByUuid, { uuid: transactionUuid }),
       body,
+    )
+  },
+  /**
+   * 标签原地更新（注解层，P0）：PUT /api/transactions/{uuid}/tags。
+   *
+   * **与上面的 `update` 物理隔离**：本方法只改 tags 一列，uuid 不变、不产生冲正行，
+   * 返回体回显服务端规范化后的最终 tags（前端以回显为准，不再自行拼）。
+   *
+   * `base_tags` 做 CAS：冲突时服务端 409 `txn_tags_conflict`，响应带
+   * `current_tags` / `current_tags_updated_at`（由 ApiError.details 承载）；
+   * 调用方须展示最新值并允许以新 base 重试。其余码沿用统一错误通道。
+   *
+   * 业务端点：X-CSRF / X-Ledger-Id 由 `request` 统一注入并断言。
+   */
+  updateTags(transactionUuid: string, body: UpdateTagsRequest): Promise<TagEditResponse> {
+    return api.put<TagEditResponse>(
+      formatApiPath(API_ROUTES.transactionTags, { uuid: transactionUuid }),
+      body,
+    )
+  },
+  /**
+   * 二级「编辑记录」（P0）：GET /api/transactions/{uuid}/tag-edits。
+   *
+   * 只读审计，viewer 亦可调用；服务端倒序限 50 条。不进主流水 / 搜索 / 导出，
+   * 只由详情页折叠面板按需拉取。
+   */
+  listTagEdits(transactionUuid: string): Promise<TagEditsResponse> {
+    return api.get<TagEditsResponse>(
+      formatApiPath(API_ROUTES.transactionTagEdits, { uuid: transactionUuid }),
     )
   },
   /**

@@ -178,6 +178,11 @@ func (s *Service) loadEntity(ledgerID int64, typ, uuid string) (json.RawMessage,
 		if t.ReversedBy != "" {
 			payload["reversed_by"] = t.ReversedBy
 		}
+		// 标签原地更新的权威时间随 pull 下发（additive）：P1 离线端据此做
+		// LWW 收敛；旧端忽略未知字段，向后兼容。无值不输出。
+		if t.TagsUpdatedAt != "" {
+			payload["tags_updated_at"] = t.TagsUpdatedAt
+		}
 		return json.Marshal(payload)
 	default:
 		return nil, fmt.Errorf("未知实体类型 %q", typ)

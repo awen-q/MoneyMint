@@ -42,6 +42,11 @@ export interface LocalTxn {
   flag: string
   description: string
   tags: string[]
+  /**
+   * 标签原地更新的权威时间（服务端迁移 018 随 loadEntity 下发；旧响应缺失）。
+   * P0 只做类型兼容与整条覆盖，不据此处做合并判定；P1 的 LWW 收敛再消费。
+   */
+  tags_updated_at?: string
   reversed_of?: string
   /** A-02：原交易「已冲正」标记，随 pull 的 op=update 整条覆盖下发；旧响应可能缺失。 */
   reversed_by?: string

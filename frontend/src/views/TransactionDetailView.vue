@@ -15,8 +15,8 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { accountApi, transactionApi } from '@/api/client'
-import { ApiError } from '@/api/errors'
-import type { AccountView, TransactionView } from '@/api/types'
+import { ApiError, codeMessage } from '@/api/errors'
+import type { AccountView, TagEditItem, TagEditResponse, TransactionView } from '@/api/types'
 import { formatSessionTime } from '@/core/batch3'
 import { buildBeanSnippet } from '@/core/bean'
 import { t } from '@/i18n'
@@ -31,6 +31,7 @@ import { useRecordSheetStore } from '@/stores/recordSheet'
 import { useSessionStore } from '@/stores/session'
 import ReceiptShareSheet from '@/components/ReceiptShareSheet.vue'
 import ReceiptSlip from '@/components/ReceiptSlip.vue'
+import TagInlineEditor from '@/components/TagInlineEditor.vue'
 import { buildShareReceipt } from '@/core/shareReceiptData'
 import type { ShareReceiptData, ShareReceiptDetails } from '@/core/receiptImage'
 import { usePrivacyStore } from '@/stores/privacy'
@@ -403,6 +404,118 @@ function onEdit(): void {
   sheet.openEdit(txn.value)
 }
 
+// ---------- 标签原地更新 P0（注解层，与上面的经济事实编辑物理隔离） ----------
+
+/** 就地编辑器默认收起；入口与整包 PATCH 按钮各占一行，互不复用。 */
+const tagEditorOpen = ref(false)
+
+/**
+ * 标签编辑入口状态：权限直接复用服务端 `can_edit`。
+ * 已冲正 / 期初 / 校准 / 非本人 → can_edit=false → forbidden；
+ * P0 离线 → offline **禁用 + 专属文案**，与经济事实的「修改需联网」刻意区分。
+ * navigator.onLine 只用于提示，服务端 CAS + 权限才是安全边界。
+ */
+const tagEditState = computed<'ready' | 'offline' | 'forbidden'>(() => {
+  const item = txn.value
+  if (item === null || item.can_edit !== true) {
+    return 'forbidden'
+  }
+  if (!online.value) {
+    return 'offline'
+  }
+  return 'ready'
+})
+
+const tagEditDisabled = computed(() => tagEditState.value !== 'ready')
+
+const tagEditHint = computed<string>(() => {
+  switch (tagEditState.value) {
+    case 'offline':
+      return t('tagEdit.offlineDisabled')
+    case 'forbidden':
+      return t('tagEdit.forbidden')
+    default:
+      return t('tagEdit.detailHint')
+  }
+})
+
+function openTagEditor(): void {
+  if (txn.value === null || tagEditDisabled.value) {
+    return
+  }
+  tagEditorOpen.value = true
+}
+
+/**
+ * 保存成功：只用响应回显的 tags 替换当前视图的标签字段。
+ * **绝不插入 / 复制交易行**，uuid 与 postings 原样保留，主流水仍「一笔 = 一行」。
+ */
+function onTagSaved(response: TagEditResponse): void {
+  const item = txn.value
+  if (item === null) {
+    return
+  }
+  const updated: TransactionView = {
+    ...item,
+    tags: response.tags.slice(),
+    tags_updated_at: response.tags_updated_at,
+  }
+  const index = transactions.value.findIndex((candidate) => candidate.id === item.id)
+  if (index >= 0) {
+    const next = transactions.value.slice()
+    next[index] = updated
+    transactions.value = next
+  }
+  // 审计面板下次展开时重新拉取，避免显示刚改动前的旧记录。
+  tagEditsLoaded.value = false
+  notice.value = t('tagEdit.noticeSaved')
+}
+
+// ---------- 二级「编辑记录」面板（默认收起，与原生语法片段同款交互） ----------
+
+const tagEditsOpen = ref(false)
+const tagEdits = ref<TagEditItem[]>([])
+const tagEditsLoaded = ref(false)
+const tagEditsLoading = ref(false)
+const tagEditsError = ref('')
+
+function toggleTagEdits(): void {
+  tagEditsOpen.value = !tagEditsOpen.value
+  if (tagEditsOpen.value && !tagEditsLoaded.value && !tagEditsLoading.value) {
+    void loadTagEdits()
+  }
+}
+
+/** 按需从服务端拉审计；viewer 可读。不进主流水 / 搜索 / 导出 / loadEntity。 */
+async function loadTagEdits(): Promise<void> {
+  const item = txn.value
+  if (item === null) {
+    return
+  }
+  tagEditsLoading.value = true
+  tagEditsError.value = ''
+  try {
+    const res = await transactionApi.listTagEdits(item.uuid)
+    tagEdits.value = Array.isArray(res.edits) ? res.edits : []
+    tagEditsLoaded.value = true
+  } catch (err) {
+    tagEditsError.value =
+      err instanceof ApiError
+        ? codeMessage(err.code ?? '') || err.message
+        : t('tagEdit.historyLoadFailed')
+  } finally {
+    tagEditsLoading.value = false
+  }
+}
+
+/** 审计行的人类可读元信息（时间戳走本地时区，与登录设备页同口径）。 */
+function historyMeta(edit: TagEditItem): string {
+  const who = (edit.actor_name ?? '') !== '' ? edit.actor_name : t('tagEdit.historyUnknownActor')
+  const when = formatSessionTime(edit.ts ?? '')
+  const device = (edit.device_id ?? '') !== '' ? edit.device_id : t('tagEdit.historyNoDevice')
+  return t('tagEdit.historyMeta', { who, when, device })
+}
+
 onMounted(() => {
   syncOnline()
   window.addEventListener('online', syncOnline)
@@ -420,6 +533,10 @@ watch(
   () => {
     accounts.value = []
     transactions.value = []
+    tagEditorOpen.value = false
+    tagEditsOpen.value = false
+    tagEditsLoaded.value = false
+    tagEdits.value = []
     void load()
   },
 )
@@ -465,6 +582,40 @@ watch(
         />
       </div>
 
+      <!--
+        标签原地更新 P0：小票标签 chip 区旁的「编辑标签」入口。
+        与下方「修改这笔交易」（整包 PATCH / RecordSheet）物理隔离：
+        本入口只提交 tags + base_tags，不产生冲正行，uuid 不变。
+      -->
+      <div class="detail__tags" data-testid="tag-edit-entry">
+        <span class="detail__tags-label">{{ t('txnDetail.rowTags') }}</span>
+        <div class="detail__tags-chips">
+          <span v-for="tag in txn.tags ?? []" :key="tag" class="detail__tags-chip">{{ tag }}</span>
+          <span v-if="(txn.tags ?? []).length === 0" class="detail__tags-empty">{{ t('tagEdit.empty') }}</span>
+        </div>
+        <button
+          type="button"
+          class="detail__tags-edit"
+          data-testid="tag-edit-open"
+          :disabled="tagEditDisabled"
+          @click="openTagEditor"
+        >{{ t('tagEdit.editButton') }}</button>
+      </div>
+      <p
+        class="detail__tags-hint"
+        :class="{ 'detail__hint--warn': tagEditDisabled }"
+        data-testid="tag-edit-hint"
+      >{{ tagEditHint }}</p>
+
+      <TagInlineEditor
+        v-if="tagEditorOpen"
+        :uuid="txn.uuid"
+        :tags="txn.tags ?? []"
+        :can-edit="txn.can_edit === true"
+        @saved="onTagSaved"
+        @close="tagEditorOpen = false"
+      />
+
       <!-- P0-1：默认收起的原生语法片段。列表 / 搜索页不渲染，默认视图保持干净。 -->
       <section class="detail__bean" data-testid="bean-snippet">
         <button
@@ -480,6 +631,55 @@ watch(
             <li v-for="item in beanSemantics" :key="item.label">
               <span>{{ item.label }}</span>
               <span>{{ item.value }}</span>
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <!--
+        二级「编辑记录」：默认收起，与原生语法片段同款折叠交互。
+        只读审计（viewer 可读），绝不进主流水 / 搜索筛选 / .beancount 导出。
+      -->
+      <section class="detail__history" data-testid="tag-edit-history">
+        <button
+          type="button"
+          class="detail__bean-toggle detail__history-toggle"
+          :aria-expanded="tagEditsOpen"
+          @click="toggleTagEdits"
+        >
+          <span class="detail__history-title">{{ t('tagEdit.historyTitle') }}</span>
+          <span class="detail__history-toggle-text">
+            {{ tagEditsOpen ? t('tagEdit.historyToggleCollapse') : t('tagEdit.historyToggleExpand') }}
+          </span>
+        </button>
+        <div v-if="tagEditsOpen" class="detail__history-body">
+          <p class="detail__bean-note">{{ t('tagEdit.historyLegacyHint') }}</p>
+          <p v-if="tagEditsLoading" class="detail__bean-note">{{ t('tagEdit.historyLoading') }}</p>
+          <p v-else-if="tagEditsError !== ''" class="detail__bean-note detail__history-error" role="alert">{{ tagEditsError }}</p>
+          <p v-else-if="tagEdits.length === 0" class="detail__bean-note">{{ t('tagEdit.historyEmpty') }}</p>
+          <ul v-else class="detail__history-list">
+            <li v-for="edit in tagEdits" :key="edit.id" class="detail__history-item">
+              <div class="detail__history-line">
+                <span class="detail__history-action">{{ t('tagEdit.historyActionReplace') }}</span>
+                <span class="detail__history-meta">{{ historyMeta(edit) }}</span>
+              </div>
+              <div class="detail__history-tags">
+                <span
+                  v-for="tag in edit.old_tags"
+                  :key="`old-${tag}`"
+                  class="detail__history-tag detail__history-tag--old"
+                >{{ tag }}</span>
+                <span class="detail__history-arrow" aria-hidden="true">→</span>
+                <span
+                  v-for="tag in edit.new_tags"
+                  :key="`new-${tag}`"
+                  class="detail__history-tag detail__history-tag--new"
+                >{{ tag }}</span>
+                <span
+                  v-if="edit.old_tags.length === 0 && edit.new_tags.length === 0"
+                  class="detail__history-tag"
+                >{{ t('tagEdit.empty') }}</span>
+              </div>
             </li>
           </ul>
         </div>
@@ -609,6 +809,180 @@ watch(
   justify-content: space-between;
   gap: 10px;
   padding: 3px 0;
+  color: var(--fb-sub);
+  font-size: 11px;
+}
+
+/* 标签原地更新 P0：chip 区旁的轻量编辑入口（与整包 PATCH 按钮分行隔离）。 */
+.detail__tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 340px;
+  margin: 14px auto 0;
+  padding: 10px 12px;
+  border: 1px solid var(--fb-line);
+  border-radius: var(--fb-radius-card);
+  background: var(--fb-card);
+}
+
+.detail__tags-label {
+  flex: none;
+  color: var(--fb-sub);
+  font-size: 11px;
+}
+
+.detail__tags-chips {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+
+.detail__tags-chip {
+  display: inline-block;
+  padding: 2px 7px;
+  border: 1px solid var(--fb-blue-line);
+  border-radius: var(--fb-radius-pill);
+  background: var(--fb-blue-soft);
+  color: var(--fb-blue);
+  font-size: 11px;
+}
+
+.detail__tags-empty {
+  color: var(--fb-sub);
+  font-size: 11px;
+}
+
+.detail__tags-edit {
+  flex: none;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--fb-blue-line);
+  border-radius: var(--fb-radius-input);
+  background: var(--fb-card);
+  color: var(--fb-blue);
+  font-family: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.detail__tags-edit:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.detail__tags-hint {
+  width: 100%;
+  max-width: 340px;
+  margin: 8px auto 0;
+  color: var(--fb-sub);
+  font-size: 11px;
+  line-height: 1.7;
+  text-align: center;
+}
+
+/* 二级编辑记录：与原生语法片段同款折叠区，默认收起。 */
+.detail__history {
+  width: 100%;
+  max-width: 340px;
+  margin: 12px auto 0;
+}
+
+.detail__history-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.detail__history-title {
+  font-weight: 600;
+}
+
+.detail__history-toggle-text {
+  font-size: 11px;
+}
+
+.detail__history-body {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--fb-line);
+  border-radius: var(--fb-radius-card);
+  background: var(--fb-soft);
+}
+
+.detail__history-error {
+  color: var(--fb-danger);
+}
+
+.detail__history-list {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.detail__history-item {
+  padding: 8px 0;
+  border-top: 1px dotted var(--fb-line);
+}
+
+.detail__history-item:first-child {
+  border-top: none;
+}
+
+.detail__history-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.detail__history-action {
+  color: var(--fb-ink);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.detail__history-meta {
+  color: var(--fb-sub);
+  font-size: 10.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.detail__history-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin-top: 5px;
+}
+
+.detail__history-tag {
+  padding: 1px 6px;
+  border: 1px solid var(--fb-line);
+  border-radius: var(--fb-radius-pill);
+  color: var(--fb-sub);
+  font-size: 10.5px;
+}
+
+.detail__history-tag--old {
+  border-color: var(--fb-line-strong);
+  text-decoration: line-through;
+}
+
+.detail__history-tag--new {
+  border-color: var(--fb-blue-line);
+  background: var(--fb-blue-soft);
+  color: var(--fb-blue);
+}
+
+.detail__history-arrow {
   color: var(--fb-sub);
   font-size: 11px;
 }

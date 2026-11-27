@@ -324,6 +324,77 @@ func (h *Handler) HandleRestoreTransaction(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// tagEditLogLimit 是二级编辑记录面板的服务端硬上限（与 B7 purge_log 同口径）。
+const tagEditLogLimit = 50
+
+// HandleUpdateTransactionTags 原地更新标签：PUT /api/transactions/{uuid}/tags
+//
+// 与父资源 PATCH 严格分工：PATCH 改经济事实（冲正 + 新建，新 uuid），
+// 本端点只替换 tags 一个字段（uuid 不变、可反复编辑、有审计）。
+// 请求体 {tags, base_tags, device_id?, client_op_id?}；base_tags 必填且可为 []，
+// 缺失时明确 400 txn_tags_invalid（readJSON 只管未知字段，不会替我们校验必填）。
+// 响应回显服务端规范化后的最终 tags。
+func (h *Handler) HandleUpdateTransactionTags(w http.ResponseWriter, r *http.Request) {
+	ledgerID, ok := auth.LedgerID(r.Context())
+	if !ok {
+		writeError(w, domain.ErrForbidden)
+		return
+	}
+	uid, ok := auth.UserID(r.Context())
+	if !ok {
+		writeError(w, domain.ErrUnauthorized)
+		return
+	}
+	var req struct {
+		Tags       []string  `json:"tags"`
+		BaseTags   *[]string `json:"base_tags"`
+		DeviceID   string    `json:"device_id"`
+		ClientOpID string    `json:"client_op_id"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, err)
+		return
+	}
+	if req.BaseTags == nil {
+		writeError(w, domain.Codedf(domain.ErrTxnTagsInvalid, domain.CodeTxnTagsInvalid,
+			"缺少 base_tags（客户端提交时看到的标签快照）"))
+		return
+	}
+	deviceID := strings.TrimSpace(req.DeviceID)
+	if deviceID == "" {
+		deviceID = strings.TrimSpace(r.Header.Get("X-Device-Id"))
+	}
+	res, err := h.svc.UpdateTransactionTags(ledgerID, uid, r.PathValue("uuid"), service.TagsUpdateInput{
+		Tags:       req.Tags,
+		BaseTags:   *req.BaseTags,
+		DeviceID:   deviceID,
+		ClientOpID: strings.TrimSpace(req.ClientOpID),
+	})
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// HandleListTagEdits 返回二级编辑记录：GET /api/transactions/{uuid}/tag-edits
+//
+// viewer 可读（只读审计，不触及经济事实）。不写 sync_log、不进 loadEntity、
+// 不进主流水；跨端一致性靠「按需从服务端拉」实现，而不是把审计当同步实体扩散。
+func (h *Handler) HandleListTagEdits(w http.ResponseWriter, r *http.Request) {
+	ledgerID, ok := auth.LedgerID(r.Context())
+	if !ok {
+		writeError(w, domain.ErrForbidden)
+		return
+	}
+	edits, err := h.svc.ListTagEdits(ledgerID, r.PathValue("uuid"), tagEditLogLimit)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"edits": edits})
+}
+
 // HandleDeleteTransaction 按 uuid 软删一笔交易。
 func (h *Handler) HandleDeleteTransaction(w http.ResponseWriter, r *http.Request) {
 	ledgerID, ok := auth.LedgerID(r.Context())

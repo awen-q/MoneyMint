@@ -4,13 +4,16 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math/big"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"familyledger/internal/domain"
 	"familyledger/internal/repository"
@@ -879,4 +882,222 @@ func (s *Service) UpdateTransaction(
 		ReversalUUID: res.ReversalUUID,
 		NewUUID:      res.NewUUID,
 	}, nil
+}
+
+// ---------------------------------------------------------------------------
+// 标签原地更新（注解层；P0 唯一新增的交易写入通道）
+// ---------------------------------------------------------------------------
+//
+// 与经济事实 PATCH 物理隔离：这里只改 tags 一列（+ tags_updated_at），
+// uuid 不变、不生成冲正行、不打 reversed_by，因此可以反复编辑。
+// 判定顺序与 UpdateTransaction 逐字同序：已冲正 → 系统交易 → 权限 → 载荷校验 → CAS → 落库。
+
+// 标签上限（实施方案 §3.1；防止导出元数据行失控）。
+const (
+	maxTagsPerTxn = 32
+	maxTagRunes   = 64
+)
+
+// canonicalTags 是标签数组的纯规范化：TrimSpace → 丢空 → 精确去重（大小写敏感）
+// → 排序（Unicode 码点序）。不做校验，供 CAS 比较历史值使用。
+func canonicalTags(tags []string) []string {
+	out := make([]string, 0, len(tags))
+	seen := make(map[string]bool, len(tags))
+	for _, t := range tags {
+		t = strings.TrimSpace(t)
+		if t == "" || seen[t] {
+			continue
+		}
+		seen[t] = true
+		out = append(out, t)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// normalizeTags 是服务端权威的标签规范化 + 校验（前端必须对齐同一套规则）：
+//  1. trim → 丢空 → 精确去重 → 排序（canonicalTags）；
+//  2. 数量 ≤ 32、单个标签 ≤ 64 字符、不含控制字符（<0x20 / 0x7f）；
+//  3. opening 黑名单（与在线 create 同口径，走 opening_via_api_only）。
+//
+// 返回规范化后的最终值，前端以响应回显为准。
+func normalizeTags(tags []string) ([]string, error) {
+	out := canonicalTags(tags)
+	if len(out) > maxTagsPerTxn {
+		return nil, domain.Codedf(domain.ErrTxnTagsInvalid, domain.CodeTxnTagsInvalid,
+			"标签最多 %d 个", maxTagsPerTxn)
+	}
+	for _, t := range out {
+		if utf8.RuneCountInString(t) > maxTagRunes {
+			return nil, domain.Codedf(domain.ErrTxnTagsInvalid, domain.CodeTxnTagsInvalid,
+				"单个标签不能超过 %d 个字符", maxTagRunes)
+		}
+		for _, r := range t {
+			if r < 0x20 || r == 0x7f {
+				return nil, domain.Codedf(domain.ErrTxnTagsInvalid, domain.CodeTxnTagsInvalid,
+					"标签不能包含控制字符")
+			}
+		}
+	}
+	if containsTag(out, "opening") {
+		return nil, domain.Codedf(domain.ErrInvalid, domain.CodeOpeningViaAPIOnly,
+			"期初余额请通过账户期初专用端点设置")
+	}
+	return out, nil
+}
+
+// TagsUpdateInput 是 PUT /api/transactions/{uuid}/tags 的 service 输入。
+// BaseTags 是客户端看到时的快照，必填且可为 []；DeviceID / ClientOpID 供审计与 P1 去重。
+type TagsUpdateInput struct {
+	Tags       []string
+	BaseTags   []string
+	DeviceID   string
+	ClientOpID string
+}
+
+// TagEditResult 是原地改标签的响应（回显服务端规范化后的最终值）。
+// EditID 复用 tag_edit_log.id，供前端编辑记录面板定位与 P1 去重，不是版本链。
+type TagEditResult struct {
+	UUID          string   `json:"uuid"`
+	Tags          []string `json:"tags"`
+	TagsUpdatedAt string   `json:"tags_updated_at"`
+	EditID        int64    `json:"edit_id"`
+}
+
+// TagEditItem 是二级「编辑记录」面板中的一条审计。
+type TagEditItem struct {
+	ID        int64    `json:"id"`
+	Action    string   `json:"action"`
+	OldTags   []string `json:"old_tags"`
+	NewTags   []string `json:"new_tags"`
+	ActorID   int64    `json:"actor_id"`
+	ActorName string   `json:"actor_name"`
+	DeviceID  string   `json:"device_id"`
+	Ts        string   `json:"ts"`
+}
+
+// tagsConflictError 构造 409 txn_tags_conflict，并把服务端当前值回给客户端，
+// 使前端可以直接用 current_tags 作为新 base 重放（不必先刷新整页）。
+func tagsConflictError(current []string, updatedAt string) error {
+	if current == nil {
+		current = []string{}
+	}
+	return &domain.CodedError{
+		Code:     domain.CodeTxnTagsConflict,
+		Message:  "标签已被他人更新，请刷新后重试",
+		Sentinel: domain.ErrTxnTagsConflict,
+		Details: map[string]any{
+			"current_tags":           current,
+			"current_tags_updated_at": updatedAt,
+		},
+	}
+}
+
+// UpdateTransactionTags 原地更新一笔交易的标签（uuid 不变、无冲正、可再次编辑）。
+//
+// 判定顺序与 UpdateTransaction 逐字同序（D-15：已冲正优先于角色）：
+//  1. reversed_by 非空 → 409 txn_already_reversed；
+//  2. 期初 / 校准 / 冲正交易 → 409 txn_not_editable；
+//  3. 权限：owner 全账本；created_by==uid 且非 viewer 可改；否则 403 txn_edit_forbidden；
+//  4. 载荷校验：normalizeTags（超量/超长/控制字符/ opening）；
+//  5. CAS：canonicalTags(base_tags) == canonicalTags(current.tags)，否则 409 txn_tags_conflict；
+//  6. 落库：repository.UpdateTagsTx 在同一事务内重判 CAS、UPDATE、审计、sync_log。
+//
+// service 层判定只是快速失败，真正的安全边界在 repository 事务内。
+func (s *Service) UpdateTransactionTags(
+	ledgerID, userID int64, txnUUID string, in TagsUpdateInput,
+) (TagEditResult, error) {
+	orig, err := s.repo.TransactionByUUID(ledgerID, txnUUID)
+	if err != nil {
+		return TagEditResult{}, err // ErrNotFound → 404
+	}
+
+	// 1) D-15：已冲正优先于角色判定。
+	if orig.ReversedBy != "" {
+		return TagEditResult{}, domain.Codedf(domain.ErrConflict, domain.CodeTxnAlreadyReversed,
+			"该交易已被冲正，请修改最新版本")
+	}
+	// 2) 系统交易走专用端点，标签端一律拒绝。
+	if orig.OpeningAccountUUID != "" || orig.BalanceKey != "" || orig.ReversalOf != "" {
+		return TagEditResult{}, domain.Codedf(domain.ErrConflict, domain.CodeTxnNotEditable,
+			"期初 / 冲正 / 校准交易不能修改标签")
+	}
+	// 3) 权限：复用与 UpdateTransaction 完全相同的口径（computeCanEdit 的写侧版本）。
+	role, err := s.LedgerRole(userID, ledgerID)
+	if err != nil {
+		return TagEditResult{}, err
+	}
+	if role == "" || role == domain.RoleViewer {
+		return TagEditResult{}, domain.Codedf(domain.ErrForbidden, domain.CodeTxnEditForbidden,
+			"无权修改该交易")
+	}
+	if role != domain.RoleOwner && orig.CreatedBy != userID {
+		return TagEditResult{}, domain.Codedf(domain.ErrForbidden, domain.CodeTxnEditForbidden,
+			"只能修改自己记的账，或由账本 owner 修改")
+	}
+
+	// 4) 载荷校验（服务端权威规范化；无效标签 → 400）。
+	tags, err := normalizeTags(in.Tags)
+	if err != nil {
+		return TagEditResult{}, err
+	}
+	// 5) 快速失败式 CAS。base_tags 是快照，不对其做长度/黑名单校验，
+	// 仅按同一套规则规范化后比较集合，避免「乱序/空白/重复」造成伪冲突。
+	base := canonicalTags(in.BaseTags)
+	current := canonicalTags(orig.Tags)
+	if !slices.Equal(base, current) {
+		return TagEditResult{}, tagsConflictError(current, orig.TagsUpdatedAt)
+	}
+
+	// 6) 落库：事务内再判一次 CAS，UPDATE + 审计 + sync_log 同事务提交。
+	res, err := s.repo.UpdateTagsTx(repository.TagsUpdateInput{
+		LedgerID:   ledgerID,
+		EntityUUID: txnUUID,
+		Tags:       tags,
+		BaseTags:   base,
+		ActorID:    userID,
+		DeviceID:   in.DeviceID,
+		ClientOpID: in.ClientOpID,
+	})
+	if err != nil {
+		var conflict *repository.TagsConflict
+		if errors.As(err, &conflict) {
+			return TagEditResult{}, tagsConflictError(conflict.CurrentTags, conflict.CurrentTagsUpdatedAt)
+		}
+		return TagEditResult{}, err
+	}
+	outTags := res.Tags
+	if outTags == nil {
+		outTags = []string{}
+	}
+	return TagEditResult{
+		UUID: res.UUID, Tags: outTags,
+		TagsUpdatedAt: res.TagsUpdatedAt, EditID: res.EditID,
+	}, nil
+}
+
+// ListTagEdits 返回二级编辑记录（倒序，服务端限量 50 条）。
+// viewer 可读：审计只读、不触及经济事实，鉴权由 middleware 的账本成员校验承担。
+func (s *Service) ListTagEdits(ledgerID int64, uuid string, limit int) ([]TagEditItem, error) {
+	logs, err := s.repo.TagEditsByUUID(ledgerID, uuid, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]TagEditItem, 0, len(logs))
+	for _, l := range logs {
+		oldTags, newTags := l.OldTags, l.NewTags
+		if oldTags == nil {
+			oldTags = []string{}
+		}
+		if newTags == nil {
+			newTags = []string{}
+		}
+		out = append(out, TagEditItem{
+			ID: l.ID, Action: l.Action,
+			OldTags: oldTags, NewTags: newTags,
+			ActorID: l.ActorID, ActorName: l.ActorName,
+			DeviceID: l.DeviceID, Ts: l.Ts,
+		})
+	}
+	return out, nil
 }

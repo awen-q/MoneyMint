@@ -99,7 +99,10 @@ type Transaction struct {
 	// CreatedAt 是记录写入时间（SQLite datetime('now')，UTC，形如 2026-11-26 05:22:44）。
 	// 对外用于详情页「修改记录」行；前端负责转本地时区展示（core/batch3.ts）。
 	CreatedAt string
-	Tags        []string   // 标签（展示/检索/导出 #tag 用）
+	Tags        []string   // 标签（展示/检索/导出 tags 元数据行用）
+	// TagsUpdatedAt 是标签最近一次原地更新的时间戳（迁移 018）。
+	// 格式 strftime('%Y-%m-%dT%H:%M:%fZ','now')；空串表示从未改过（旧数据零回填）。
+	TagsUpdatedAt string
 	Postings    []Posting
 	DeletedAt   string // 软删时间（回收站用）；空串表示未删除
 
@@ -202,6 +205,25 @@ const (
 
 // OpeningEquityName 是期初余额对应的权益账户名（固定，不带账本前缀）。
 const OpeningEquityName = "Equity:Opening-Balances"
+
+// TagEditLog 是一条标签原地更新审计（迁移 018；服务端权威，只写不删）。
+//
+// 不参与同步协议：不写 sync_log、不进 loadEntity、不进主流水；只在
+// GET /api/transactions/{uuid}/tag-edits 按需返回给账本成员（viewer 可读）。
+// OldTags / NewTags 是规范化后的完整标签数组（空数组而非 nil）。
+type TagEditLog struct {
+	ID         int64
+	LedgerID   int64
+	EntityUUID string // 交易 uuid（不可变身份，跨端一致）
+	Action     string // P0 恒 "replace"；预留 add/remove/rename 给 P2
+	OldTags    []string
+	NewTags    []string
+	ActorID    int64  // 服务端 user id（权威归因，不信客户端）
+	ActorName  string // JOIN users.display_name，展示用
+	DeviceID   string
+	ClientOpID string // P1 离线批次去重键
+	Ts         string // strftime('%Y-%m-%dT%H:%M:%fZ','now')
+}
 
 // SyncLogEntry 是 sync_log 中的一条变更事件。
 type SyncLogEntry struct {

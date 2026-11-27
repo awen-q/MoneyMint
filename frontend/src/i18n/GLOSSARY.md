@@ -18,6 +18,8 @@ For translators and contributors working on `frontend/src/i18n/en.ts`.
 | 回收站 | Trash | Soft-deleted transactions. |
 | 永久删除 | Purge | Physical delete; only the ledger owner can purge. |
 | 标签 | Tags | Stored as `tags: "..."` metadata, not `#tag`. |
+| 标签原地更新 | In-place tag update | Annotation-layer-only edit (tags column), no reversal row. |
+| 编辑记录 | Edit history | The secondary `tag_edit_log` panel; never call it "transaction history" (that is the reversal chain). |
 | 标记 | Flag | Beancount flag `*` (complete) / `!` (incomplete). |
 | 期初权益 | Opening equity | Equity account absorbing opening balances. |
 | 对账 | Reconciliation | Only for external bank/statement matching; keep "reconciliation". |

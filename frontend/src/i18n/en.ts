@@ -160,6 +160,10 @@ export const en: Record<MessageKey, string> = {
   'apiErrors.txn_not_editable':
     'Opening balance / reversal / calibration entries cannot be edited',
   'apiErrors.txn_already_reversed': 'This entry has been reversed; please edit the latest version',
+  // ---- Tag in-place editing P0 (annotation layer) ----
+  'apiErrors.txn_tags_conflict': 'Tags were updated by someone else; refresh and try again',
+  'apiErrors.txn_tags_invalid':
+    'Invalid tags: at most 32 tags, 64 characters each, no control characters',
   // ---- 0.6.0 import (S5) ----
   'apiErrors.import_pad_balance_unsupported':
     'The file contains pad / balance directives; expand them into regular transactions and re-import, or use new-ledger mode',
@@ -1532,4 +1536,41 @@ export const en: Record<MessageKey, string> = {
   'assetStats.hintPrefix': 'Net worth = total assets + liabilities (liabilities are negative, so they add); at the end of December: total assets ',
   'assetStats.hintLiabilities': ' · liabilities ',
   'assetStats.hintNet': ' · net worth ',
+
+  // ---- Tag in-place editing P0 (annotation layer) ----
+  // Copy deliberately distinguishes P0 offline (disabled) from the economic-fact "editing needs a connection".
+  'tagEdit.editButton': 'Edit tags',
+  'tagEdit.title': 'Edit tags',
+  'tagEdit.currentLabel': 'Current tags',
+  'tagEdit.empty': 'No tags yet',
+  'tagEdit.inputLabel': 'New tag',
+  'tagEdit.inputPlaceholder': 'Type a tag, then press Enter or click Add',
+  'tagEdit.add': 'Add',
+  'tagEdit.remove': 'Remove tag: {tag}',
+  'tagEdit.save': 'Save tags',
+  'tagEdit.saving': 'Saving…',
+  'tagEdit.cancel': 'Cancel',
+  'tagEdit.hint': 'Tags are annotations: they update in place, create no reversal, and stay editable.',
+  'tagEdit.noticeSaved': 'Tags updated',
+  'tagEdit.offlineDisabled': 'Tag editing requires a connection for now; offline editing is coming in a later release',
+  'tagEdit.forbidden': 'Your account cannot edit the tags on this entry',
+  'tagEdit.conflictTitle': 'Tags were updated by someone else',
+  'tagEdit.conflictHint': 'Tags were updated by someone else; check them and try again',
+  'tagEdit.conflictCurrent': 'Their current tags',
+  'tagEdit.retryWithLatest': 'Retry with latest tags',
+  'tagEdit.mergeLatest': 'Merge into my edit',
+  'tagEdit.errInvalid': 'Invalid tags: at most 32 tags, 64 characters each, no control characters',
+  'tagEdit.errGeneric': 'Could not save tags; please try again',
+  'tagEdit.detailHint': 'Tags are annotations: they update in place, create no reversal, and stay editable.',
+  'tagEdit.historyTitle': 'Edit history',
+  'tagEdit.historyToggleExpand': 'Show edit history',
+  'tagEdit.historyToggleCollapse': 'Hide edit history',
+  'tagEdit.historyLoading': 'Loading edit history…',
+  'tagEdit.historyEmpty': 'No tag edits recorded yet.',
+  'tagEdit.historyLegacyHint': 'Tag edits made before the upgrade were not recorded; only later edits appear below.',
+  'tagEdit.historyActionReplace': 'Tags changed',
+  'tagEdit.historyMeta': '{who} · {when} · device {device}',
+  'tagEdit.historyUnknownActor': 'Unknown member',
+  'tagEdit.historyNoDevice': 'Not recorded',
+  'tagEdit.historyLoadFailed': 'Could not load edit history; please retry',
 }

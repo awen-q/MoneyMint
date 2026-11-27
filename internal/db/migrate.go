@@ -32,6 +32,7 @@ var migrations = []struct {
 	{"015_ledger_ops", migrate015},
 	{"016_import_batch_manifest", migrate016},
 	{"017_txn_purge_log", migrate017},
+	{"018_txn_tag_edit_log", migrate018},
 }
 
 // migrate011：sessions 增加设备信息（M3 会话列表与吊销）。

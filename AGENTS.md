@@ -124,7 +124,7 @@ python -m pip install beancount    # 激活 .venv 后执行
 - `transactions`(id, ledger_id, uuid UNIQUE, date, flag[*|!], description, version, created_by, deleted_at, **client_request_id**)
 - `postings`(id, transaction_id, account_id, commodity, amount 有符号, position)
 
-**迁移（`internal/db/migrate.go`，追加式、幂等、记录 `schema_migrations`；当前至 **017**）**：
+**迁移（`internal/db/migrate.go`，追加式、幂等、记录 `schema_migrations`；当前至 **018**）**：
 - 001_sync：补 `accounts/commodities/prices` 的 `uuid`+`updated_at`；建 `sync_log`(id 自增即全局水位)；重建 `sync_checkpoints`；建 `sessions`。
 - 002_delete_semantics：交易/账户加 `deleted_at`（软删）；账户重建部分唯一索引 `(ledger_id,name) WHERE deleted_at IS NULL`；旧库 owner 密码置为初始默认值。
 - 003~009：账户显示名 / 视觉与层级字段、交易 `tags`、关户语义、账户排序、`users.is_admin`、`app_settings`。
@@ -134,6 +134,7 @@ python -m pip install beancount    # 激活 .venv 后执行
 - **015_ledger_ops（0.6.0 S0，已实现）**：ledgers/commodities 的 deleted_at、transactions 的 balance_date/balance_key/import_batch_id + 两个部分索引；不含 edit_key / supersedes。
 - **016_import_batch_manifest（0.6.0 QA 修复，已实现）**：`import_batch_entities(ledger_id, batch_id, entity_type, entity_uuid)` 清单表 + `(ledger_id,batch_id)` 索引与 `(batch_id,entity_type,entity_uuid)` 唯一索引；导入事务内登记本批新建（非复用）账户/币种/价格，批次撤销按清单精确删（取代「撤销后零引用」全账本扫描，根治越界硬删）；016 前的历史批次无清单行，撤销安全降级为只删交易与分录。
 - **017_txn_purge_log（B7，已实现）**：`txn_purge_log(id, ledger_id, uuid, description, amount_note, was_in_trash, pair_uuid, actor_id, purged_at, origin_deleted_at)` + `idx_purge_log_ledger(ledger_id, id DESC)`。纯加法：交易被物理删除后审计必须留在**独立表**（原表的 `deleted_by` 会随行一起消失）。只写不删、**不参与同步协议**、不随 `instance_id` 轮换；`pair_uuid` 对称写，`origin_deleted_at` 记录删除前软删时间（未软删的配对成员为空串）。
+- **018_txn_tag_edit_log（标签原地更新 P0，已实现）**：`tag_edit_log(id, ledger_id, entity_uuid, action, old_tags, new_tags, actor_id, device_id, client_op_id, ts)` + `idx_tag_edit_log_txn(ledger_id, entity_uuid, id DESC)` + 部分唯一索引 `uniq_tag_edit_op(ledger_id, client_op_id) WHERE client_op_id <> ''`；`transactions` 加 `tags_updated_at TEXT NOT NULL DEFAULT ''`（旧数据零回填）。纯加法、可安全重跑、不动 `schema.sql`。审计只写不删、服务端权威、**不进同步协议/loadEntity**（跨端靠按需 GET）；`action` 恒 `replace`，预留 add/remove/rename 给 P2；`client_op_id` 为 P1 离线去重键。
 
 > **修改 schema 必须走迁移脚本**，不要直接改 `schema.sql` 后手动 ALTER 线上库。
 > **幂等实现边界**：落库用 `INSERT ... ON CONFLICT(ledger_id, client_request_id) WHERE client_request_id IS NOT NULL DO NOTHING`（conflict target 必须重复部分索引谓词，否则 SQLite 报 no matching unique index）；业务行与 `sync_log` 必须同事务。当前并发安全还隐式依赖 `MaxOpenConns=1`，放开连接数或切 Postgres 前必须补齐。
@@ -282,6 +283,15 @@ python -m pip install beancount    # 激活 .venv 后执行
 |---|---|---|---|
 | `/api/accounts/{uuid}` | PATCH | 登录+成员（非 viewer；viewer 由 middleware 403） | 批 II：修改账户展示字段（与既有 DELETE 同路径新增方法），Body 白名单 `{display_name?, icon?, color?}`，指针语义区分「键缺失 = 不改」与「显式空串 = 清除」；display_name trim 后空串 = 清除、**无重名判定**（重名判定是 name 字段规则且本端点不改 name）；icon 非空按 rune 计数 ≤8、color 非空须匹配 `^#[0-9A-Fa-f]{6}$`，违反 → `400 account_visual_invalid`（create 路径同步接入该校验）；白名单外键出现 → 400 并列明拒绝字段（防夹带改 name/sort_order）；全 nil → 400；已关户账户可改。单事务 UPDATE 三列 + `sync_log op=update`（同值更新也写一条）；软删 / 跨账本 / 不存在 → 回滚并 `404 account_not_found`；响应 `200 {ok:true, account:{uuid, display_name, icon, color}}`（最小回显，前端走 markDirty→reload 收敛）。三字段不进 .beancount 导出；无需迁移、不改同步协议（pull 载荷本就含三字段）。 |
 
+### 标签原地更新新增端点（P0，第二个 append-only 例外，按 Q-10 顺延）
+
+| 端点 | 方法 | 鉴权 | 说明 |
+|---|---|---|---|
+| `/api/transactions/{uuid}/tags` | PUT | 登录+成员（复用 `computeCanEdit`：owner 全账本 / editor 仅本人 / viewer 禁止） | 注解层窄通道：**只**改 `transactions.tags` 一列，uuid 不变、不冲正、不新建。Body `{tags: string[], base_tags: string[], device_id?: string, client_op_id?: string}`；`base_tags` **必填**（缺失 → `400 txn_tags_invalid`，用指针区分缺失与显式 `[]`），是客户端看到的快照用于 CAS；`tags` 为目标全集（缺省 / `[]` 经规范化后均为清空）；`device_id` 可来自 body 或 `X-Device-Id` 头；`client_op_id` 为 P1 离线批次去重键，P0 在线调用传空串（服务端已预留字段与唯一索引）。服务端权威规范化（trim→丢空→精确去重大小写敏感→排序→校验 ≤32 个/≤64 字符/无控制字符/opening 黑名单）。判定顺序与 `UpdateTransaction` 逐字同序：已冲正 → 期初/校准/冲正 → 权限 → 载荷校验 → CAS → 落库（已冲正优先于角色）。错误：`409 txn_tags_conflict`（带 `current_tags`/`current_tags_updated_at`）、`400 txn_tags_invalid`、复用 `403 txn_edit_forbidden` / `409 txn_already_reversed` / `409 txn_not_editable` / `400 opening_via_api_only` / `404 txn_not_found`。同事务 UPDATE + 写 `tag_edit_log` 审计 + `sync_log op=update`（**出站**），不写冲正交易；响应 `200 {uuid, tags, tags_updated_at, edit_id}`。**离线端不能通过 sync/push 改标签**（push 侧 `applyUpdateEntity` 拒绝夹带 tags，合法离线改动重连后走本端点由服务端裁决）；P0 前端离线禁用。 |
+| `/api/transactions/{uuid}/tag-edits` | GET | 登录+成员（**viewer 可读**） | 二级「编辑记录」：`200 {edits:[{id, action, old_tags, new_tags, actor_id, actor_name, device_id, ts}]}`，`id DESC` 倒序、服务端限 50 条。**不写 sync_log、不进 loadEntity、不进主流水**，按需从服务端拉；仅详情页折叠面板可见。 |
+
+> `GET /api/transactions` 的 `?tag=` 筛选基于 `transactions.tags` 当前值 —— 标签 PUT 原地更新该列 → 删标签后交易立即从对应筛选消失，无需改筛选代码。**既有整包 `PATCH /api/transactions/{uuid}` 契约零改动**；其载荷虽含 tags，前端经济事实编辑前必须重新拉详情预填，避免过期视图把旧 tags 经冲正链带回。
+
 ---
 
 ## 8. 约定与惯例（给 AI 的硬约束）
@@ -289,10 +299,10 @@ python -m pip install beancount    # 激活 .venv 后执行
 - **Beancount 兼容**：改 `internal/export/beancount.go` / `files.go` 后必须重新跑 bean-check。**测试中 `BEAN_CHECK_STRICT=1` 时找不到校验器即失败**，不要改回静默跳过（会形成「测试全绿但账芯从未被验证」的假绿灯）。
 - **备份必须用 `VACUUM INTO`，禁止复制 db 文件**：WAL 模式下未 checkpoint 的数据在 `-wal` 里。实测主库 188 KB / WAL 4.1 MB 时直接复制只得到 236/300 条记录，且**不报错**。快照后必须过 `PRAGMA integrity_check` 与行数比对。
 - **全库级操作要系统管理员**：备份 / 下载 / 恢复校验 `users.is_admin`，不能用账本级 `owner` 代替。
-- **迁移优先**：任何 schema 改动走 `migrate.go`，幂等、记录 `schema_migrations`；新增编号顺延（当前至 017，下一个是 018）。
+- **迁移优先**：任何 schema 改动走 `migrate.go`，幂等、记录 `schema_migrations`；新增编号顺延（当前至 018，下一个是 019）。
 - **借贷平衡**：后端 `handleCreateTransaction` 按币种平衡校验；前端记一笔页实时指示。
 - **UUID 引用**：同步实体一律用 `uuid` 互引，勿用服务端自增 `id` 跨端传递；在线用 `account_id`、离线 push 用 `account_uuid`（§6）。
-- **不可变**：交易一旦创建不原地改；改账 = 新增冲正交易。
+- **不可变**：交易一旦创建不原地改；改账 = 新增冲正交易。**唯一字段级例外**：`tags` 注解可经 `PUT /{uuid}/tags` 原地更新（不冲正），详见 §9.3；经济事实四字段（date/flag/description/postings）仍严格冲正。
 - **会话安全**：token 不落 `localStorage` / URL；Cookie 路径非 GET 必须带 `X-CSRF`；`SameSite=None` 禁用；Bearer 兜底观察期结束前不删。
 - **兼容基线（iOS 14.8 / Safari 14.1.2）**：`build.target: 'es2015'` + plugin-legacy；**禁 WASM / WebGL / CanvasKit / OffscreenCanvas**；禁用 `structuredClone` / `crypto.randomUUID` / `.at()` / `findLast` / `Object.hasOwn` / `showModal` / `BroadcastChannel` / `navigator.locks`；CSS 不用 `aspect-ratio` / `:has()` / `dvh` / `inset`。`es-check` 只查语法，须另补 API / CSS 扫描；**升级任何前端依赖都要过 AC-19 与真机冒烟**，不允许「本地能跑就升」。
 - **`/legacy/` 回滚通道已废弃（批 6 之后）**：后端 `static.go` 从来没有 `/legacy/` 托管，该通道一直是「一个产物目录 + 一个校验脚本 + 一堆文档承诺」；目录被 `npm run build` 的 `emptyOutDir` 清掉、`scripts/check-legacy.sh` 也已删除。需要旧版只能从 git 历史（批 ≤5）重建源码，**不存在「打开开关就能回滚」这回事**。旧 SW 清理已由 Vue 版 `public/sw.js` activate 步骤覆盖（删除非 fambean 前缀缓存；旧 `flutter_service_worker.js` 404 后浏览器自动注销）。
@@ -308,7 +318,7 @@ python -m pip install beancount    # 激活 .venv 后执行
 
 ### 9.1 仍有效的硬约束（B7 账务语义与陷阱）
 
-> B7 回收站永久删除是**唯一破 append-only 语义的批次**，单独上线；以下账务语义与实现陷阱是仍有效的约束，勿当漏洞回退（端点契约见 §7 B7 小节，审计表见 §4 迁移 017）。
+> B7 回收站永久删除与标签原地更新（P0）是**两个显式、有边界、可单独回滚的 append-only 例外**，各自单独上线；B7 破的是物理删除承诺，标签破的是「全字段不可变」字面承诺（仅限 `tags` 一个注解字段）。以下账务语义与实现陷阱是仍有效的约束，勿当漏洞回退（端点契约见 §7 对应小节，审计表见 §4 迁移 017 / 018；标签例外详见 §9.3）。
 
 - **迁移 017 `txn_purge_log`**：审计表只写不删、**不参与同步协议**、不随 `instance_id` 轮换；`pair_uuid` 对称写，`origin_deleted_at` 记录删除前软删时间（未软删的配对成员为空串）。
 - **仅 owner**：editor `403 txn_purge_forbidden`；审计全成员可见（`GET /api/transactions/trash` additive 增 `purge_summary` / `purge_log`，不开新 GET），入口 owner-only（`TrashItemView` 增 `can_purge` / `is_system` / `pair_uuid`）。
@@ -328,12 +338,27 @@ python -m pip install beancount    # 激活 .venv 后执行
 4. **B7 已交付但仍需单独上线**：它破的是 append-only 承诺，出事要能单独回滚 —— 放量顺序「后端+迁移先上、前端不暴露入口 → curl 验证六个码与幂等 → 再上前端」；迁移 017 纯加法，回滚不必删表（数据留作事后审计），**已物理删除的数据只能靠备份还原**（还原会让已删数据复活，数据安全页已写明）。
 5. **回收站页从未接入隐私遮罩**（B7 之前既有问题，非本批引入）：`TrashView.vue` 无 `usePrivacyStore`，`sumPostings` 与审计 `amount_note` 都是明文 —— 开了「隐藏金额」回收站仍明码标价，B7 把金额又搬进页脚审计，暴露面变大。**待另立 issue**。
 6. 下期（M4+）：OFX/CSV 自动导入、Beancount 子集外通用语法（cost 注解 / 价格指令等）、价格 CRUD、规则引擎、Postgres 横向扩展。0.6.0 的遗留实现细节与开放项以交付包内产品文档的留档为准（N-12）。
+7. **标签原地更新（P0）放量顺序**：它与 B7 同为破 append-only 承诺的例外，出事要能单独回滚 —— 放量顺序「后端 + 迁移 018 先上、前端不暴露入口 → curl 验证新错误码与 CAS → 再上前端」；前端入口是唯一用户可见开关，出问题先摘前端止血。迁移 018 纯加法，回滚不必删表（数据留作事后审计）。
 
 > 旧版功能在新版**一律 Must，不得降级**：CSV 导出、分类拖拽排序、导出不平告警、注册开关、默认账户管理。
+
+### 9.3 标签注解例外（P0，第二个 append-only 例外）
+
+> 产品定级 P0：经济事实（date/flag/description/postings）走冲正对，标签这类主观注解走冲正是产品事故。本例外只给 `tags` 开窄通道，**不碰、不放宽经济事实的冲正机制**。设计全文见设计文档（本机留存，不入库）。
+
+- **边界（严格）**：可写字段集合严格等于 `{tags, tags_updated_at}`；入口严格只有 `PUT /{uuid}/tags` 一处；经济事实四文件（`repository/reversal.go`、`repository.UpdateTransaction`、`service.UpdateTransaction`、`HandleUpdateTransaction` 及 PATCH 路由）与 `sync.go` 的 `applyUpdateEntity` transaction 分支**禁改**。
+- **不可变精神不破**：只 UPDATE 同一行、uuid 不变、不 INSERT、不写 `reversed_by`、`can_edit` 不被打 false；主流水「一笔消费 = 一行」保住。改金额等经济事实仍走冲正 + 新建。
+- **审计与同步**：`tag_edit_log` 只写不删、服务端权威、**不进同步协议/loadEntity**（与 B7 本机私有不同，它对所有成员可见，靠按需 GET）；审计写入与 `sync_log op=update` **同一事务**，任一失败整体回滚；出站允许、入站 push 拒绝（离线端无法伪造原地改）。二级「编辑记录」面板默认收起、viewer 可读、**绝不进主流水/搜索/导出**。
+- **导出底线**：导出读当前 `tags`、仍写单行 `tags: "..."` 元数据行（中文标签用 `#tag` 会触发 bean-check `unexpected HASH`），导出层零改动；旧「冲正: XXX」行不回溯、不重写，只面向未来停止为改标签生成冲正。
+- **规范化三处一致**：前端编辑器 / `service.normalizeTags` / 审计展示同一套规则——trim→丢空→精确去重（大小写敏感）→排序→校验（≤32 个 / ≤64 字符 / 无控制字符 / opening 黑名单）；权威在服务端，409 以响应回显的 `current_tags` 为准。
+- **回滚**：三级——摘前端入口 → 摘 PUT 路由 → 回滚代码；迁移 018 纯加法，回滚不必删表。因 `tags` 本就在 `loadEntity` 里下发，完整回滚不会让标签分叉或弹回旧值。
+- **P1 待办（未做）**：离线标签编辑（并集 + 墓碑合并，时间戳后者为准、非阻断提示）；若删除语义失控，退路是标签外置为 append-only 注解事件流（新表 + 新同步实体）。迁移 018 已备好数据模型，P1 不需要再动表。
 
 ---
 
 ## 10. 快速运行与测试
+
+> **测试/构建进程超时铁律（硬约束）**：任何测试或构建命令（`npm run test` / `npm run build` / `go test ./...` 等）若**等待超过 5 分钟仍未结束**，视为卡死 —— 立即终止该进程（连同其子进程），**不要把命令反复重跑**。终止后把该命令原样交给用户，由用户在本机自行执行并反馈结果。AI 侧连续两次跑同一测试命令仍未出结果时，也必须停下移交，不得第三次重跑。理由：卡住的进程会长期占用资源、掩盖真实失败，反复重跑只会堆积僵尸进程（实测 `vue-tsc --noEmit` 卡住 40 分钟 + 多个 node 进程堆积）。
 
 ```bash
 # 后端（托管 frontend/dist，Vue 版）

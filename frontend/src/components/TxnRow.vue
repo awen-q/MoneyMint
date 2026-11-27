@@ -17,10 +17,13 @@
  * 4. **`drawer` 档默认不可点**：抽屉里的行本身在抽屉内，再包一层 button 会产生
  *    「点一行跳一次页」的嵌套语义，默认渲染 `div`。
  */
-import { computed } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 
 import MoneyText from './MoneyText.vue'
+import TagInlineEditor from './TagInlineEditor.vue'
+import { transactionApi } from '@/api/client'
 import { t } from '@/i18n'
+import type { TagEditResponse, TransactionView } from '@/api/types'
 import type { BadgeTone, TxnRowView, TxnRowVariant } from '@/core/txnRow'
 
 const props = withDefaults(
@@ -34,16 +37,29 @@ const props = withDefaults(
      * 显式传值可覆盖（例如搜索结果里不可点的汇总行）。
      */
     interactive?: boolean
+    /**
+     * 标签原地更新 P0 的可选上下文。传入后副行 tag 项进入同一个 TagInlineEditor，
+     * 不新增页面路由、不触发整行的 `open`（`@click.stop`）。
+     *
+     * 不传时 chip 仍可点：本组件按 `view.id` 现拉一次详情列表，取回该笔的
+     * uuid / **完整** tags / can_edit 后再打开编辑器。这是为了让现网所有
+     * `TxnRow` 消费方（账单 / 搜索 / 当日抽屉）无需改动即可获得 P0 入口；
+     * 现拉同时保证 base_tags 不是 bill 档截断后的 1 个 tag（否则伪 409）。
+     */
+    tagEdit?: { uuid: string; tags: string[]; canEdit?: boolean }
   }>(),
   {
     // undefined 表示「按 variant 自动」，故此处不设默认值。
     interactive: undefined,
+    tagEdit: undefined,
   },
 )
 
 const emit = defineEmits<{
   /** 整行被激活（点击或键盘 Enter/Space）。 */
   open: []
+  /** 标签保存成功（父级可据此刷新列表数据；编辑器内部已 markDirty）。 */
+  'tag-saved': [response: TagEditResponse]
 }>()
 
 /**
@@ -64,20 +80,99 @@ const metaItems = computed(() =>
   props.variant === 'bill' ? props.view.meta.slice(0, BILL_META_LIMIT) : props.view.meta,
 )
 
+/**
+ * 编辑器打开时把根元素从 button 换成 div：避免把 <input>/<button> 嵌进按钮里，
+ * 也顺带阻止「编辑标签时点一下就跳详情」。关闭后恢复原档位行为。
+ */
+const rootTag = computed(() =>
+  tagEditorOpen.value ? 'div' : clickable.value ? 'button' : 'div',
+)
+
 function onClick(): void {
-  if (!clickable.value) {
+  if (!clickable.value || tagEditorOpen.value) {
     return
   }
   emit('open')
+}
+
+// ---------- 标签 chip 就地编辑（P0，opt-in） ----------
+
+const tagEditorOpen = ref(false)
+/** 未显式传 tagEdit 时，点击 chip 后由服务端现取的上下文。 */
+const resolvedTagEdit = ref<{ uuid: string; tags: string[]; canEdit: boolean } | null>(null)
+/** 模板统一消费：显式 prop 优先，否则用现取结果。 */
+const activeTagEdit = computed(() => props.tagEdit ?? resolvedTagEdit.value)
+const online = ref(true)
+
+function syncOnline(): void {
+  online.value = navigator.onLine
+}
+
+onMounted(() => {
+  syncOnline()
+  window.addEventListener('online', syncOnline)
+  window.addEventListener('offline', syncOnline)
+})
+onUnmounted(() => {
+  window.removeEventListener('online', syncOnline)
+  window.removeEventListener('offline', syncOnline)
+})
+
+/** P0 离线禁用入口，文案与经济事实的「修改需联网」区分；服务端仍以 CAS / 权限为准。 */
+const tagEditDisabled = computed(() =>
+  !online.value || (props.tagEdit !== undefined && props.tagEdit.canEdit === false),
+)
+const tagEditTitle = computed(() =>
+  !online.value ? t('tagEdit.offlineDisabled') : t('tagEdit.editButton'),
+)
+
+/**
+ * 点击 chip：先拿到权威的 uuid / 完整 tags / can_edit，再打开编辑器。
+ * 服务端 can_edit=false 时不打开（viewer / 已冲正等由服务端判定）。
+ */
+async function openTagEditor(): Promise<void> {
+  if (tagEditDisabled.value || tagEditorOpen.value) {
+    return
+  }
+  if (props.tagEdit === undefined) {
+    try {
+      const res = await transactionApi.list()
+      const found: TransactionView | undefined = (res.transactions ?? []).find(
+        (item) => item.id === props.view.id,
+      )
+      if (found === undefined || found.can_edit !== true) {
+        return
+      }
+      resolvedTagEdit.value = {
+        uuid: found.uuid,
+        tags: Array.isArray(found.tags) ? found.tags.slice() : [],
+        canEdit: true,
+      }
+    } catch {
+      // 拉取失败不打开半成品编辑器；不改变整行的 open 行为。
+      return
+    }
+  }
+  tagEditorOpen.value = true
+}
+
+function closeTagEditor(): void {
+  tagEditorOpen.value = false
+  resolvedTagEdit.value = null
+}
+
+function onTagSaved(response: TagEditResponse): void {
+  closeTagEditor()
+  emit('tag-saved', response)
 }
 </script>
 
 <template>
   <component
-    :is="clickable ? 'button' : 'div'"
+    :is="rootTag"
     class="txn-row"
-    :class="`txn-row--${variant}`"
-    :type="clickable ? 'button' : undefined"
+    :class="[`txn-row--${variant}`, { 'txn-row--tag-editing': tagEditorOpen }]"
+    :type="rootTag === 'button' ? 'button' : undefined"
     @click="onClick"
   >
     <span class="txn-row__body">
@@ -114,7 +209,18 @@ function onClick(): void {
       >
         <template v-for="(item, index) in metaItems" :key="`${item.kind}-${index}`">
           <span v-if="index > 0" class="txn-row__sep" aria-hidden="true">·</span>
-          <span class="txn-row__meta-item">{{ item.text }}</span>
+          <span
+            v-if="item.kind === 'tag'"
+            class="txn-row__meta-item txn-row__tag-chip"
+            role="button"
+            tabindex="0"
+            :title="tagEditTitle"
+            :aria-disabled="tagEditDisabled"
+            @click.stop="openTagEditor"
+            @keydown.enter.prevent="openTagEditor"
+            @keydown.space.prevent="openTagEditor"
+          >{{ item.text }}</span>
+          <span v-else class="txn-row__meta-item">{{ item.text }}</span>
         </template>
       </span>
     </span>
@@ -130,6 +236,20 @@ function onClick(): void {
       也不要用 display:none / visibility:hidden —— 那会把这段文字从可访问树里删掉。
     -->
     <span v-if="clickable" class="txn-row__a11y">{{ t('txnRow.a11yViewDetail') }}</span>
+
+    <!--
+      标签就地编辑器（P0，opt-in）：只在同一组件内展开，不新增页面路由；
+      @click.stop 阻断编辑器内的输入 / 按钮冒泡成「整行查看详情」。
+    -->
+    <div v-if="activeTagEdit !== null && tagEditorOpen" class="txn-row__tag-editor" @click.stop>
+      <TagInlineEditor
+        :uuid="activeTagEdit.uuid"
+        :tags="activeTagEdit.tags"
+        :can-edit="activeTagEdit.canEdit !== false"
+        @saved="onTagSaved"
+        @close="closeTagEditor"
+      />
+    </div>
   </component>
 </template>
 
@@ -296,6 +416,30 @@ button.txn-row:focus-visible .txn-row__arrow {
  * 不用 clip-path: inset(50%)（新推荐，但老 Safari 行为不一致），
  * 也不用 display:none / visibility:hidden（会把它从可访问树删除）。
  */
+/* 标签原地更新 P0（opt-in）：副行 tag 项可点，进入同一个轻量编辑器。 */
+.txn-row__tag-chip {
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.txn-row__tag-chip[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.txn-row--tag-editing {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.txn-row__tag-editor {
+  flex: 1 0 100%;
+  min-width: 0;
+  margin-top: 8px;
+  /* 覆盖 scoped 深层样式：编辑器自带卡片，不继承行内 font-size。 */
+  font-size: 13px;
+}
+
 .txn-row__a11y {
   position: absolute;
   width: 1px;
