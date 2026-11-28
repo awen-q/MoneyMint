@@ -15,6 +15,7 @@
 - **同步失败可观测性**：`SyncState.lastSyncError` 带真实 code/message/at/phase 且成功时清空；`PendingEntry` 补 `display_label` 等 7 个可观测字段；`errorMessages.ts` 薄映射错误码（未知码原文透传）；`/sync` 页四段信息架构（错误横幅 / 重试中 / 死信 / 摘要条）、批量限组内、徽标按可处置状态、移动端展开复制、导出补 `last_error` 全文。
 - **批量处置**：`retryNow(ledgerId, ids)` 双实现（保留 attempts）+ `requestRetry` 仅持租约 tab 执行；失败子集单一 `isRetryingPending` 来源贯穿引擎 / store / UI / 徽标。
 - **服务端日志最小集（第一段）**：push 逐条拒绝记 `sync.push.reject` WARN（ledger/user/client/index/entity/op/uuid/code/err，与前端 code 对齐）；`writeError` 未映射未知错误记 `http.error` ERROR，已知 4xx / CodedError 不记。走标准库 `slog` 输出到 stderr（`docker logs` 可见），不引依赖、不落盘、不改变任何响应与同步行为。
+- **PWA 手动刷新入口**：standalone 模式无浏览器刷新键，在「更多」弹层新增「刷新页面」（移动底栏「更多」与 PC 顶栏「⋯」共用）。主动 `registration.update()` 检查新版本：有更新只出横幅、用户确认后才激活（AC-35 不打断录入），无更新 / 离线则重载缓存壳。
 
 ### Fixed
 

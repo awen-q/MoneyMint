@@ -2,9 +2,9 @@
 /**
  * MoreSheet 回归（T23a）：
  * - 复用 SelectSheet：open=false 不渲染，open=true 得到 role=dialog + aria-label 更多；
- * - 三段结构：10 个管理项 + 修改密码 + 退出登录，段间有分隔（3 个 section）；
+ * - 三段结构：10 个管理项 + 刷新页面 + 修改密码 + 退出登录，段间有分隔（3 个 section）；
  * - **不放「记一笔」**（D-4：FAB 是唯一记账入口）；
- * - 三类事件：select(item) / changePassword / logout，行高满足 44px。
+ * - 四类事件：select(item) / refresh / changePassword / logout，行高满足 44px。
  */
 import { mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -36,20 +36,21 @@ describe('MoreSheet：渲染', () => {
     expect(dialog.find('.ss-title').text()).toBe('更多')
   })
 
-  it('三段结构：10 管理项 + 修改密码 + 退出登录', () => {
+  it('三段结构：10 管理项 + 刷新页面 + 修改密码 + 退出登录', () => {
     const wrapper = mount(MoreSheet, { props: { open: true } })
     expect(wrapper.findAll('.ms__group')).toHaveLength(3)
-    // 10 + 1 + 1
-    expect(wrapper.findAll('.ms__row')).toHaveLength(12)
+    // 10 管理 + 1 刷新 + 1 改密 + 1 退出
+    expect(wrapper.findAll('.ms__row')).toHaveLength(13)
     expect(wrapper.text()).toContain('回收站')
     expect(wrapper.text()).toContain('设置')
+    expect(wrapper.text()).toContain('刷新页面')
     expect(wrapper.text()).toContain('修改密码')
     expect(wrapper.text()).toContain('退出登录')
   })
 
   it('不放「记一笔」（FAB 是唯一记账入口）', () => {
     const wrapper = mount(MoreSheet, { props: { open: true } })
-    expect(wrapper.findAll('.ms__row')).toHaveLength(12)
+    expect(wrapper.findAll('.ms__row')).toHaveLength(13)
     expect(wrapper.text()).not.toContain('记一笔')
   })
 })
@@ -66,7 +67,8 @@ describe('MoreSheet：事件', () => {
   it('点修改密码 emit changePassword', async () => {
     const wrapper = mount(MoreSheet, { props: { open: true } })
     const rows = wrapper.findAll('.ms__row')
-    await rows[10].trigger('click')
+    // 刷新行占索引 10，改密/退出顺移一位
+    await rows[11].trigger('click')
     expect(wrapper.emitted('changePassword')).toHaveLength(1)
     expect(wrapper.emitted('select')).toBeUndefined()
   })
@@ -74,7 +76,7 @@ describe('MoreSheet：事件', () => {
   it('点退出登录 emit logout', async () => {
     const wrapper = mount(MoreSheet, { props: { open: true } })
     const rows = wrapper.findAll('.ms__row')
-    await rows[11].trigger('click')
+    await rows[12].trigger('click')
     expect(wrapper.emitted('logout')).toHaveLength(1)
   })
 

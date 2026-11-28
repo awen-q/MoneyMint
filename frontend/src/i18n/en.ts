@@ -124,6 +124,7 @@ export const en: Record<MessageKey, string> = {
   'shell.needsInvite': 'Please wait for the owner to invite you into a ledger',
   'shell.updateAvailable': 'A new version is available',
   'shell.updateNow': 'Update now',
+  'shell.refreshPage': 'Refresh page',
 
   // Settings: language switch entry (stage 1; the rest of this page moves in stage 2)
   'settings.language': 'Language / 语言',

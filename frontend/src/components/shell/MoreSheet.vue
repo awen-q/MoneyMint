@@ -33,6 +33,8 @@ const emit = defineEmits<{
   changePassword: []
   /** 退出登录。 */
   logout: []
+  /** 手动刷新页面（PWA 独立模式下没有地址栏刷新按钮）。 */
+  refresh: []
 }>()
 </script>
 
@@ -53,6 +55,10 @@ const emit = defineEmits<{
       >
         <span class="ms__ico" aria-hidden="true">{{ item.icon }}</span>
         <span class="ms__label">{{ item.label }}</span>
+      </button>
+      <button type="button" class="ms__row" @click="emit('refresh')">
+        <span class="ms__ico" aria-hidden="true">🔄</span>
+        <span class="ms__label">{{ t('shell.refreshPage') }}</span>
       </button>
     </section>
 

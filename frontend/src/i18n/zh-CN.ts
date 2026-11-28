@@ -121,6 +121,7 @@ export const zhCN = {
   'shell.needsInvite': '请先等待 owner 邀请加入账本',
   'shell.updateAvailable': '有新版本可用',
   'shell.updateNow': '立即更新',
+  'shell.refreshPage': '刷新页面',
 
   // 设置页：语言切换入口（阶段 1；本页其余文案阶段 2 迁移）
   'settings.language': '语言 / Language',

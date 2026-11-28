@@ -24,7 +24,7 @@ import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { t } from '@/i18n'
-import { registerServiceWorker } from '@/core/pwa'
+import { registerServiceWorker, type PwaHandle } from '@/core/pwa'
 import { useSessionStore } from '@/stores/session'
 import { useSyncStore } from '@/stores/sync'
 import { useRecordSheetStore } from '@/stores/recordSheet'
@@ -49,7 +49,7 @@ const moreOpen = ref(false)
 // 批 5：同步内核随登录布局启动（自动同步 + 状态订阅）；
 // PWA 更新提示：新版本就绪时出横幅，用户确认才刷新（不得打断录入，AC-35）。
 const updateReady = ref(false)
-let pwaHandle: { confirmUpdate: () => void } | null = null
+let pwaHandle: PwaHandle | null = null
 
 onMounted(() => {
   void sync.bootstrap()
@@ -62,6 +62,17 @@ function applyUpdate(): void {
   if (pwaHandle !== null) {
     pwaHandle.confirmUpdate()
   }
+}
+
+/** 手动刷新：先关弹层；有新版本则只出横幅，绝不自动激活（AC-35）。 */
+async function refreshPage(): Promise<void> {
+  moreOpen.value = false
+  const hasUpdate = await pwaHandle?.checkForUpdate() ?? false
+  if (hasUpdate) {
+    updateReady.value = true
+    return
+  }
+  window.location.reload()
 }
 
 /** 导航入口点击：未上线的入口只提示，不跳转（永不死链）。 */
@@ -158,6 +169,7 @@ function goChangePassword(): void {
       @select="onSelectFromSheet"
       @change-password="goChangePassword"
       @logout="logout"
+      @refresh="refreshPage"
     />
 
     <!-- C-01 单实例：PC 弹窗 / 移动 Sheet / 全屏由同一组件按断点收敛 -->
