@@ -9,10 +9,12 @@
  * 四条断言的分工：
  *  - echarts chunk 单块 ≤ 190KB gzip：防止有人 `import 'echarts'` 全量，或顺手注册
  *    CanvasRenderer/DatasetComponent 把体积撑回去。
- *  - 全站 JS gzip 总和 ≤ 420KB：防止「没超标但一路加」的温水式膨胀。
+ *  - 全站 JS gzip 总和 ≤ 425KB：防止「没超标但一路加」的温水式膨胀。
  *  - **echarts chunk 不可从入口静态到达**：防懒加载失效（首屏白拉约 174KB）。
  *  - **echarts 特征串必须恰好命中 1 个 chunk**：防 manualChunks 失效导致代码被拆散
  *    或并进主包，也防「检测手段本身失效」时静默放行（后者是最危险的一种绿）。
+ *  - **dist 新鲜度**：比对 dist/i18n/build-meta.json 里的源码指纹与当前源码、
+ *    以及 dist/public 两份 en.json 的 sha256，堵住「拿陈旧 dist 跑门禁假绿」。
  *
  * 为什么用 `_echarts_instance_` 而不是 `zrender` / `echarts` / 版本号做特征串：
  *  - `zrender` 那 1 次命中来自 license banner 注释，打开 `legalComments:'none'` 后归零
@@ -25,11 +27,22 @@
  *
  * 零新依赖：只用 node 内置 zlib / fs / path / os。
  */
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import zlib from 'node:zlib'
+
+import { sha256, sourceFingerprint } from './generate-en-dict.mjs'
 
 /**
  * echarts chunk gzip 上限（KB）。
@@ -43,17 +56,18 @@ import zlib from 'node:zlib'
 const ECHARTS_GZIP_LIMIT_KB = 190
 
 /**
- * 全站 JS gzip 总和上限（KB）= 引入 ECharts 前的基线 + echarts chunk + 余量。
+ * 全站 JS gzip 总和上限（KB）。
+ *
  * 初始口径（2026-11-19）：基线 181.6 KB + echarts 169.3 KB ≈ 351 KB，余量放到 420 KB。
  *
- * 2026-11-28 校正为 460 KB：用真实 vite build 重建后实测 P0 基线 437.8 KB、
- * P1 后 444.2 KB gzip，旧上限 420 KB 早已被突破，但 11-22 的陈旧 dist 产物
- * （393.7 KB）让门禁长期假绿。本次上调是把历史欠账显式化，**非因引入新依赖**。
- * 460 = 实测 444.2 + 约 3.5% 余量，是刻意收紧的临时止损上限，不是给膨胀背书。
- * 后续任何再上调必须先做体积优化（polyfills 目标收窄 → index chunk 依赖审计 →
- * 字典按需加载），不得直接改这个数字；否则门禁形同虚设。
+ * 2026-11-28 再收紧为 425 KB：按老板拍板的稳妥路线，只做 en 字典搬出
+ * （构建期生成 public/i18n/en.json + 运行时 fetch，字典不再出现在 assets/*.js），
+ * 架构评估实测 en 边际 gzip 21.72 KB，全站预计 422.8 KB。425 = 实测 + 小余量，
+ * 是诚实止损线而非给膨胀背书。polyfills 收窄这条**刻意不做**：iOS 14.8 运行时
+ * 兼容风险需真机验证后再单独评估，本轮不动 vite.config.ts 的 legacy/polyfills。
+ * 后续任何上调必须先做可证明的体积优化并重跑真实 build，不得直接改数字。
  */
-const TOTAL_GZIP_LIMIT_KB = 460
+const TOTAL_GZIP_LIMIT_KB = 425
 
 /**
  * echarts 特征串：`init()` 写进容器 DOM 的属性名常量（DOM_ATTRIBUTE_KEY）。
@@ -345,6 +359,83 @@ export function scanEChartsValueImports(root) {
   return findEChartsValueImports(readModuleSources(root))
 }
 
+/**
+ * dist 新鲜度校验：防止拿旧 dist 跑出门禁绿灯。
+ *
+ * 判据（全部来自 npm run build 的 prebuild 产物，不依赖 mtime）：
+ *  1. dist/i18n/build-meta.json 必须存在且合法（没走 prebuild 就没有它）；
+ *  2. meta.sourceHash 必须等于当前源码指纹（src + index.html + vite.config.ts +
+ *     package.json 的内容 sha256），源码改了却没重建即失败；
+ *  3. dist/i18n/en.json 的 sha256 必须等于 meta.enJsonSha256，且与
+ *     public/i18n/en.json 逐字节一致（防手工塞一份旧字典进 dist）；
+ *  4. dist/index.html 的 module 入口必须真实存在于 dist/assets。
+ *
+ * @param {string} frontendRoot frontend 根目录绝对路径
+ * @returns {string[]} 问题清单；空数组表示 dist 与当前源码一致
+ */
+export function checkDistFreshness(frontendRoot) {
+  const problems = []
+  const distI18n = path.join(frontendRoot, 'dist', 'i18n')
+  let meta = null
+  try {
+    meta = JSON.parse(readFileSync(path.join(distI18n, 'build-meta.json'), 'utf8'))
+  } catch {
+    problems.push('dist/i18n/build-meta.json 缺失或非法 JSON（请走 npm run build，prebuild 会生成它）')
+    return problems
+  }
+  if (typeof meta !== 'object' || meta === null) {
+    problems.push('dist/i18n/build-meta.json 内容不是对象')
+    return problems
+  }
+
+  const currentHash = sourceFingerprint()
+  if (meta.sourceHash !== currentHash) {
+    problems.push(
+      `源码指纹不一致：构建时 ${String(meta.sourceHash)} / 当前 ${currentHash}` +
+        ' —— 源码改动后未重新 npm run build',
+    )
+  }
+
+  let distEn = null
+  try {
+    distEn = readFileSync(path.join(distI18n, 'en.json'))
+  } catch {
+    problems.push('dist/i18n/en.json 缺失（public/i18n 未被 Vite 复制到 dist）')
+  }
+  if (distEn !== null) {
+    if (meta.enJsonSha256 !== sha256(distEn)) {
+      problems.push('dist/i18n/en.json 内容与 build-meta.json 记录的 sha256 不符')
+    }
+    try {
+      const publicEn = readFileSync(path.join(frontendRoot, 'public', 'i18n', 'en.json'))
+      if (!distEn.equals(publicEn)) {
+        problems.push('dist/i18n/en.json 与 public/i18n/en.json 不一致（字典来源已被篡改）')
+      }
+    } catch {
+      problems.push('public/i18n/en.json 缺失（请先 npm run build 生成字典）')
+    }
+  }
+
+  let html = ''
+  try {
+    html = readFileSync(path.join(frontendRoot, 'dist', 'index.html'), 'utf8')
+  } catch {
+    problems.push('dist/index.html 缺失')
+  }
+  if (html !== '') {
+    const entries = parseEntryScripts(html)
+    if (entries.length === 0) {
+      problems.push('dist/index.html 中没有 module 入口脚本')
+    }
+    for (const name of entries) {
+      if (!existsSync(path.join(frontendRoot, 'dist', 'assets', name))) {
+        problems.push(`dist/index.html 引用的入口 chunk 不存在：${name}`)
+      }
+    }
+  }
+  return problems
+}
+
 function fail(message) {
   console.error(`\n[check-bundle-size] ✗ ${message}\n`)
   process.exit(1)
@@ -429,6 +520,39 @@ function selfCheckRules() {
     const echartsHits = findEChartsValueImports(echartsSamples)
     const echartsLines = echartsHits.map((hit) => hit.line).sort((a, b) => a - b)
 
+    // dist 新鲜度规则的正反例：合成一个「指纹一致」的 dist，再制造两种陈旧形态。
+    // 没有反例，这条规则将来被改成 `return []` 也会永久假绿。
+    const freshRoot = path.join(dir, 'fresh')
+    mkdirSync(path.join(freshRoot, 'dist', 'i18n'), { recursive: true })
+    mkdirSync(path.join(freshRoot, 'dist', 'assets'), { recursive: true })
+    mkdirSync(path.join(freshRoot, 'public', 'i18n'), { recursive: true })
+    writeFileSync(
+      path.join(freshRoot, 'dist', 'index.html'),
+      '<script type="module" src="./assets/entry.js"></script>',
+    )
+    writeFileSync(path.join(freshRoot, 'dist', 'assets', 'entry.js'), 'void 0')
+    const sampleDict = '{"sample.key":"sample value"}\n'
+    writeFileSync(path.join(freshRoot, 'dist', 'i18n', 'en.json'), sampleDict, 'utf8')
+    writeFileSync(path.join(freshRoot, 'public', 'i18n', 'en.json'), sampleDict, 'utf8')
+    const freshMetaPath = path.join(freshRoot, 'dist', 'i18n', 'build-meta.json')
+    writeFileSync(
+      freshMetaPath,
+      JSON.stringify({
+        sourceHash: sourceFingerprint(),
+        enJsonSha256: sha256(Buffer.from(sampleDict, 'utf8')),
+      }),
+      'utf8',
+    )
+    const freshOk = checkDistFreshness(freshRoot).length === 0
+    writeFileSync(
+      freshMetaPath,
+      JSON.stringify({ sourceHash: 'stale', enJsonSha256: sha256(Buffer.from(sampleDict, 'utf8')) }),
+      'utf8',
+    )
+    const staleHashDetected = checkDistFreshness(freshRoot).some((p) => p.includes('源码指纹不一致'))
+    rmSync(freshMetaPath, { force: true })
+    const missingMetaDetected = checkDistFreshness(freshRoot).some((p) => p.includes('build-meta.json'))
+
     return (
       viaStatic.reachable.has('payload.js') &&
       viaStatic.missing.length === 0 &&
@@ -449,7 +573,10 @@ function selfCheckRules() {
       echartsLines.every((line, index) => line === index + 3) &&
       echartsHits.every((hit) => hit.file === 'src/components/Demo.vue') &&
       entries.length === 1 &&
-      entries[0] === 'entry.js'
+      entries[0] === 'entry.js' &&
+      freshOk &&
+      staleHashDetected &&
+      missingMetaDetected
     )
   } finally {
     rmSync(dir, { recursive: true, force: true })
@@ -464,6 +591,17 @@ function main() {
   }
 
   const frontendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+
+  // ---- 断言 -1（最先）：dist 必须是用当前源码构建的 ----
+  // 放在产物清单之前：陈旧 dist 的体积数字再漂亮也没有意义。
+  const freshnessProblems = checkDistFreshness(frontendRoot)
+  if (freshnessProblems.length > 0) {
+    console.error('[check-bundle-size] ✗ dist 与当前源码不一致：')
+    for (const problem of freshnessProblems) console.error(`  - ${problem}`)
+    fail('请执行 npm run build（含 prebuild 生成字典）后，用新产物重跑门禁')
+  }
+  console.log('[check-bundle-size] ✓ dist 新鲜度：源码指纹 / en.json 与本次源码一致')
+
   const assetsDir = path.join(frontendRoot, 'dist', 'assets')
 
   let files

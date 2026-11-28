@@ -62,3 +62,7 @@ Thumbs.db
 # HTML-share 工具产物（zip 打包副本），一律不入库——一次 `git add -A`
 # 不得把设计稿/过程文档带进仓库。
 .trae-html-share-packages/
+
+# 构建期生成的 dist 新鲜度元数据：含 generatedAt 时间戳，每次 build 都变，
+# 由 prebuild（scripts/generate-en-dict.mjs）生成；en.json 是确定性产物，随源码入库。
+frontend/public/i18n/build-meta.json
