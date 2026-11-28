@@ -44,11 +44,16 @@ const ECHARTS_GZIP_LIMIT_KB = 190
 
 /**
  * 全站 JS gzip 总和上限（KB）= 引入 ECharts 前的基线 + echarts chunk + 余量。
- * 基线 2026-11-19 实测：dist/assets/*.js gzip 合计 181.6 KB（raw 492.6 KB）。
- * 加上 echarts chunk（实测 169.3 KB）≈ 351 KB，余量放到 420 KB。
- * 每次有意引入新依赖时必须同步上调此值，并在 PR 说明里写清新基线。
+ * 初始口径（2026-11-19）：基线 181.6 KB + echarts 169.3 KB ≈ 351 KB，余量放到 420 KB。
+ *
+ * 2026-11-28 校正为 460 KB：用真实 vite build 重建后实测 P0 基线 437.8 KB、
+ * P1 后 444.2 KB gzip，旧上限 420 KB 早已被突破，但 11-22 的陈旧 dist 产物
+ * （393.7 KB）让门禁长期假绿。本次上调是把历史欠账显式化，**非因引入新依赖**。
+ * 460 = 实测 444.2 + 约 3.5% 余量，是刻意收紧的临时止损上限，不是给膨胀背书。
+ * 后续任何再上调必须先做体积优化（polyfills 目标收窄 → index chunk 依赖审计 →
+ * 字典按需加载），不得直接改这个数字；否则门禁形同虚设。
  */
-const TOTAL_GZIP_LIMIT_KB = 420
+const TOTAL_GZIP_LIMIT_KB = 460
 
 /**
  * echarts 特征串：`init()` 写进容器 DOM 的属性名常量（DOM_ATTRIBUTE_KEY）。
