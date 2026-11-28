@@ -17,10 +17,16 @@ import push2 from './fixtures/push-2-remapped-accept.json'
 import push3 from './fixtures/push-3-duplicate-idempotent.json'
 import pullEmpty from './fixtures/pull-incremental-empty.json'
 import push6 from './fixtures/push-6-account-closed.json'
-import { SyncEngine, type PushChange, type SyncApiClient } from './engine'
-import { MemorySyncStore } from './localStore'
-import { classifyResult, DEAD_CODES } from './models'
-import type { SyncPullResponse, SyncPushResponse } from '@/api/types'
+import {
+  SyncEngine,
+  decideDisposition,
+  validatePushResults,
+  type PushChange,
+  type SyncApiClient,
+} from './engine'
+import { MemorySyncStore, backoffMs } from './localStore'
+import { classifyResult, DEAD_CODES, type PendingEntry } from './models'
+import type { PushResult, SyncPullResponse, SyncPushResponse } from '@/api/types'
 
 const LID = 1
 const INSTANCE = '73ba0e6e-a86f-4c1d-abd5-d9b43ff599c0'
@@ -264,7 +270,8 @@ describe('C-3：死信分类（§6.6.1 #1 / AC-30）', () => {
     // 只推 1 条交易；服务端持续返回 account_not_found（重映射后自然键依旧对不上）。
     const notFoundResp: SyncPushResponse = {
       ...(push1 as unknown as SyncPushResponse),
-      results: [(push1 as unknown as SyncPushResponse).results[2]],
+      // P0：results 必须严格按本次变更的 index 对齐（单条变更 → index=0）。
+      results: [{ ...(push1 as unknown as SyncPushResponse).results[2], index: 0 }],
     }
     const api = makeApi({
       pulls: [pullResp([], 0), pullResp([], 50), pullResp([], 50)],
@@ -440,5 +447,279 @@ describe('C-5：wire 契约样本断言（AC-17，与旧版行为逐条一致）
   })
 })
 
-// 占位引用，防止未使用导入告警（vi 在本文件仅用于类型对齐场景）。
-void vi
+// ---------------------------------------------------------------------------
+// P0 正确性修复回归
+// ---------------------------------------------------------------------------
+
+describe('P0：decideDisposition / validatePushResults 纯函数', () => {
+  function entry(id: number, key: string, attempts = 0): PendingEntry {
+    return {
+      id,
+      ledger_id: LID,
+      state: 'pending',
+      attempts,
+      next_retry_at: 0,
+      change: { entity_type: 'transaction', key, entity: { uuid: key } },
+    }
+  }
+
+  function result(index: number, extra: Partial<PushResult>): PushResult {
+    return {
+      index,
+      entity_type: 'transaction',
+      status: 'ok',
+      accepted: true,
+      ...extra,
+    }
+  }
+
+  it('account_not_found 按条目判定：本条 retry-now，其他条 retry-backoff，二次失败 dead', () => {
+    const now = 5_000
+    const notFound = decideDisposition({
+      entry: entry(1, 'a'),
+      result: result(0, { status: 'error', accepted: false, code: 'account_not_found', error: 'missing' }),
+      round: 1,
+      now,
+      maxPushRounds: 2,
+    })
+    expect(notFound.kind).toBe('retry-now')
+    if (notFound.kind === 'retry-now') {
+      expect(notFound.retry.nextRetryAt).toBe(now)
+      expect(notFound.retry.attempts).toBe(1)
+      expect(notFound.retry.code).toBe('account_not_found')
+    }
+
+    const other = decideDisposition({
+      entry: entry(2, 'b'),
+      result: result(1, { status: 'error', accepted: false, code: 'server_busy', error: 'busy' }),
+      round: 1,
+      now,
+      maxPushRounds: 2,
+    })
+    expect(other.kind).toBe('retry-backoff')
+    if (other.kind === 'retry-backoff') {
+      expect(other.retry.nextRetryAt).toBe(now + backoffMs(1))
+      expect(other.retry.error).toBe('busy')
+    }
+
+    const secondFailure = decideDisposition({
+      entry: entry(3, 'c', 1),
+      result: result(2, { status: 'error', accepted: false, code: 'account_not_found', error: 'again' }),
+      round: 2,
+      now,
+      maxPushRounds: 2,
+    })
+    expect(secondFailure.kind).toBe('dead')
+  })
+
+  it('merged 保留本地→服务端映射，dead 逐条带自己的 code/error', () => {
+    const now = 5_000
+    const merged = decideDisposition({
+      entry: entry(1, 'loc-acc'),
+      result: result(0, { status: 'ok', accepted: false, uuid: 'loc-acc', server_uuid: 'srv-acc' }),
+      round: 1,
+      now,
+      maxPushRounds: 2,
+    })
+    expect(merged).toEqual({
+      kind: 'merged',
+      id: 1,
+      localUuid: 'loc-acc',
+      serverUuid: 'srv-acc',
+    })
+
+    const dead = decideDisposition({
+      entry: entry(2, 'x'),
+      result: result(1, { status: 'error', accepted: false, code: 'validation', error: 'bad-x' }),
+      round: 1,
+      now,
+      maxPushRounds: 2,
+    })
+    expect(dead).toEqual({
+      kind: 'dead',
+      dead: { id: 2, code: 'validation', error: 'bad-x' },
+    })
+  })
+
+  it('校验 results 数量、index 完整性与越界/重复', () => {
+    const two = [
+      { index: 0, entity_type: 'transaction' as const, status: 'ok', accepted: true },
+      { index: 1, entity_type: 'transaction' as const, status: 'ok', accepted: true },
+    ]
+    expect(validatePushResults(two, 2)).toEqual({ ok: true })
+    expect(validatePushResults(two.slice(0, 1), 2).ok).toBe(false)
+    expect(validatePushResults([two[0], { ...two[0] }], 2).ok).toBe(false)
+    expect(validatePushResults([two[0], { ...two[1], index: 2 }], 2).ok).toBe(false)
+    expect(validatePushResults(two, 3).ok).toBe(false)
+  })
+})
+
+describe('P0：push 结果落地路径', () => {
+  function record(store: MemorySyncStore, key: string): Promise<number> {
+    return store.recordEntry(LID, {
+      pending: { entity_type: 'transaction', key, entity: { uuid: key } },
+    })
+  }
+
+  it('getState 返回真实 pending/dead 计数（不再恒为 0）', async () => {
+    const store = new MemorySyncStore()
+    const engine = new SyncEngine(store, makeApi({ pulls: [] }), () => LID)
+    const deadId = await record(store, 'a')
+    await store.markDead(LID, [{ id: deadId, code: 'validation', error: 'x' }])
+    await record(store, 'b')
+
+    const state = await engine.getState()
+    expect(state.status).toBe('idle')
+    expect(state.pendingCount).toBe(1)
+    expect(state.deadCount).toBe(1)
+  })
+
+  it('三条不同 code 的死信逐条保存各自的 code/error（原共享变量 bug）', async () => {
+    const store = new MemorySyncStore()
+    await record(store, 'a')
+    await record(store, 'b')
+    await record(store, 'c')
+    const api = makeApi({
+      pulls: [pullResp([], 0), pullResp([], 0)],
+      pushes: [
+        {
+          instance_id: INSTANCE,
+          checkpoint: 60,
+          accepted: 0,
+          results: [
+            { index: 0, entity_type: 'transaction', status: 'error', accepted: false, code: 'account_closed', error: 'closed-a' },
+            { index: 1, entity_type: 'transaction', status: 'error', accepted: false, code: 'validation', error: 'bad-b' },
+            { index: 2, entity_type: 'transaction', status: 'error', accepted: false, code: 'account_balance_not_zero', error: 'balance-c' },
+          ],
+        },
+      ],
+    })
+    await new SyncEngine(store, api, () => LID).sync()
+
+    const dead = await store.getPending(LID, 'dead')
+    expect(dead.map((d) => d.last_error_code)).toEqual([
+      'account_closed',
+      'validation',
+      'account_balance_not_zero',
+    ])
+    expect(dead.map((d) => d.last_error)).toEqual(['closed-a', 'bad-b', 'balance-c'])
+  })
+
+  it('一条 account_not_found 不再连坐：下一轮只重推命中条目', async () => {
+    const now = 1_000_000
+    const store = new MemorySyncStore()
+    await record(store, 'a')
+    await record(store, 'b')
+    const api = makeApi({
+      pulls: [pullResp([], 0), pullResp([], 50), pullResp([], 50)],
+      onPush: (changes) => {
+        if (changes.length === 2) {
+          return {
+            instance_id: INSTANCE,
+            checkpoint: 0,
+            accepted: 0,
+            results: [
+              { index: 0, entity_type: 'transaction', status: 'error', accepted: false, code: 'account_not_found', error: 'missing' },
+              { index: 1, entity_type: 'transaction', status: 'error', accepted: false, code: 'server_busy', error: 'busy' },
+            ],
+          }
+        }
+        return {
+          instance_id: INSTANCE,
+          checkpoint: 50,
+          accepted: 1,
+          results: [{ index: 0, entity_type: 'transaction', uuid: 'a', status: 'ok', accepted: true }],
+        }
+      },
+    })
+    await new SyncEngine(store, api, () => LID, { now: () => now }).sync()
+
+    expect(api.pushBodies).toHaveLength(2)
+    expect(api.pushBodies[1]).toHaveLength(1)
+    expect(api.pushBodies[1][0].entity['uuid']).toBe('a')
+    const pending = await store.getPending(LID, 'pending')
+    expect(pending.map((p) => p.change.key)).toEqual(['b'])
+    expect(pending[0].attempts).toBe(1)
+    expect(pending[0].next_retry_at).toBe(now + backoffMs(1))
+  })
+
+  it('results 数量不匹配 → 整批退避重试，不 remove 任何条目、不推进水位', async () => {
+    const now = 2_000_000
+    const store = new MemorySyncStore()
+    await record(store, 'a')
+    await record(store, 'b')
+    const api = makeApi({
+      pulls: [pullResp([], 0), pullResp([], 0)],
+      pushes: [
+        {
+          instance_id: INSTANCE,
+          checkpoint: 999,
+          accepted: 1,
+          // 少了 index=1 的结果：整批按协议错误处理。
+          results: [{ index: 0, entity_type: 'transaction', uuid: 'a', status: 'ok', accepted: true }],
+        },
+      ],
+    })
+    await new SyncEngine(store, api, () => LID, { now: () => now }).sync()
+
+    const pending = await store.getPending(LID, 'pending')
+    expect(pending.map((p) => p.change.key)).toEqual(['a', 'b'])
+    expect(pending.map((p) => p.attempts)).toEqual([1, 1])
+    expect(pending.map((p) => p.last_error_code)).toEqual(['invalid_push_results', 'invalid_push_results'])
+    expect(pending.every((p) => p.next_retry_at > now)).toBe(true)
+    expect(await store.getLastSeq(LID)).toBe(0)
+    expect(api.pushBodies).toHaveLength(1)
+  })
+
+  it('严格按 result.index 对齐条目，乱序结果也不会错配', async () => {
+    const store = new MemorySyncStore()
+    await record(store, 'a')
+    await record(store, 'b')
+    const api = makeApi({
+      pulls: [pullResp([], 0), pullResp([], 0)],
+      pushes: [
+        {
+          instance_id: INSTANCE,
+          checkpoint: 70,
+          accepted: 0,
+          // 故意先给 index=1、再给 index=0；错误码必须跟着各自条目走。
+          results: [
+            { index: 1, entity_type: 'transaction', status: 'error', accepted: false, code: 'validation', error: 'bad-b' },
+            { index: 0, entity_type: 'transaction', status: 'error', accepted: false, code: 'account_closed', error: 'closed-a' },
+          ],
+        },
+      ],
+    })
+    await new SyncEngine(store, api, () => LID).sync()
+
+    const dead = await store.getPending(LID, 'dead')
+    expect(dead.find((d) => d.change.key === 'a')?.last_error_code).toBe('account_closed')
+    expect(dead.find((d) => d.change.key === 'b')?.last_error_code).toBe('validation')
+  })
+
+  it('主路径只调用一次 applyPushOutcome，不再分开调用 applyPushResults/markDead', async () => {
+    const store = new MemorySyncStore()
+    await record(store, 'a')
+    await record(store, 'b')
+    const outcomeSpy = vi.spyOn(store, 'applyPushOutcome')
+    const resultsSpy = vi.spyOn(store, 'applyPushResults')
+    const api = makeApi({
+      pulls: [pullResp([], 0), pullResp([], 0)],
+      pushes: [
+        {
+          instance_id: INSTANCE,
+          checkpoint: 80,
+          accepted: 0,
+          results: [
+            { index: 0, entity_type: 'transaction', status: 'error', accepted: false, code: 'account_closed', error: 'closed' },
+            { index: 1, entity_type: 'transaction', status: 'error', accepted: false, code: 'server_busy', error: 'busy' },
+          ],
+        },
+      ],
+    })
+    await new SyncEngine(store, api, () => LID).sync()
+
+    expect(outcomeSpy).toHaveBeenCalledTimes(1)
+    expect(resultsSpy).not.toHaveBeenCalled()
+  })
+})

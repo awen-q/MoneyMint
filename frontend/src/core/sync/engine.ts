@@ -11,6 +11,10 @@
  * 5. 库世代：pull/push 响应 `instance_id` 与本地不一致 → pending 转隔离区 +
  *    清实体 + 全量重拉；水位只单调推进，空结果（checkpoint=0）不回退。
  *
+ * P0 修复：push 结果先做完整性校验，再由纯函数 decideDisposition 逐条定责；
+ * 四类处置一次性 applyPushOutcome 落地；死信 code/error 逐条独立；
+ * account_not_found 只影响本条目，不再全局连坐；getState 返回真实计数。
+ *
  * 同步节奏与旧版一致：pull → push（最多两轮，自然键合并重映射）→ pull。
  */
 import { ApiError } from '@/api/errors'
@@ -25,9 +29,13 @@ import {
   type LocalTxn,
   type PendingChange,
   type PendingEntry,
-  type ResultDisposition,
 } from './models'
-import { backoffMs, type SyncStore } from './localStore'
+import {
+  backoffMs,
+  type DeadOutcome,
+  type RetryOutcome,
+  type SyncStore,
+} from './localStore'
 import { getTabId } from './dataChangeChannel'
 
 /** 同步 API 适配层（生产用 `@/api/client` 的 syncApi，测试注入 mock）。 */
@@ -87,6 +95,120 @@ export interface SyncEngineOptions {
   now?: () => number
 }
 
+// ---------------------------------------------------------------------------
+// P0：push 结果校验 + 纯函数定责（可独立单测）
+// ---------------------------------------------------------------------------
+
+export type PushResultsValidation = { ok: true } | { ok: false; reason: string }
+
+/**
+ * 完整性校验：results 数量必须等于本次 changes 数量，且 index 恰好覆盖 0..n-1。
+ * 任何缺失 / 重复 / 越界都视为协议错误，由调用方整批按重试处理（绝不删条目）。
+ */
+export function validatePushResults(results: PushResult[], expectedCount: number): PushResultsValidation {
+  if (!Array.isArray(results)) {
+    return { ok: false, reason: 'push 响应缺少 results 数组' }
+  }
+  if (results.length !== expectedCount) {
+    return {
+      ok: false,
+      reason: `push 结果数 ${results.length} 与变更数 ${expectedCount} 不一致`,
+    }
+  }
+  const seen = new Set<number>()
+  for (const result of results) {
+    if (result === null || typeof result !== 'object') {
+      return { ok: false, reason: 'push 响应含空结果项' }
+    }
+    const index = result.index
+    if (!Number.isInteger(index) || index < 0 || index >= expectedCount) {
+      return { ok: false, reason: `push 结果 index 越界: ${String(index)}` }
+    }
+    if (seen.has(index)) {
+      return { ok: false, reason: `push 结果 index 重复: ${index}` }
+    }
+    seen.add(index)
+  }
+  if (seen.size !== expectedCount) {
+    return { ok: false, reason: 'push 结果 index 集合不完整' }
+  }
+  return { ok: true }
+}
+
+export interface DispositionInput {
+  entry: PendingEntry
+  result: PushResult
+  round: number
+  now: number
+  maxPushRounds: number
+}
+
+export type PushDisposition =
+  | { kind: 'removed'; id: number }
+  | { kind: 'merged'; id: number; localUuid: string; serverUuid: string }
+  | { kind: 'dead'; dead: DeadOutcome }
+  | { kind: 'retry-now'; retry: RetryOutcome }
+  | { kind: 'retry-backoff'; retry: RetryOutcome }
+
+/**
+ * 单条 push 结果的处置（纯函数，无副作用）。
+ *
+ * `account_not_found` 严格按本条目判断：只有该条目自己命中时才产生 retry-now，
+ * 由调用方据此触发全量 pull + 重映射重试；不再因为同批另一条命中而全批立即重推。
+ * 命中两次（attempts 已达 2）或已无剩余轮次 → dead。
+ */
+export function decideDisposition(input: DispositionInput): PushDisposition {
+  const { entry, result, round, now, maxPushRounds } = input
+  const kind = classifyResult(result)
+  if (kind === 'removed') {
+    return { kind: 'removed', id: entry.id }
+  }
+  if (kind === 'merged') {
+    return {
+      kind: 'merged',
+      id: entry.id,
+      localUuid: result.uuid ?? '',
+      serverUuid: result.server_uuid ?? '',
+    }
+  }
+  if (kind === 'dead') {
+    return {
+      kind: 'dead',
+      dead: {
+        id: entry.id,
+        code: result.code ?? 'dead',
+        error: result.error ?? '永久失败',
+      },
+    }
+  }
+
+  const attempts = entry.attempts + 1
+  const code = result.code ?? 'error'
+  const error = result.error ?? ''
+  if (code === 'account_not_found') {
+    if (attempts >= 2 || round >= maxPushRounds) {
+      return {
+        kind: 'dead',
+        dead: { id: entry.id, code, error: error === '' ? '账户重映射重试仍失败' : error },
+      }
+    }
+    return {
+      kind: 'retry-now',
+      retry: { id: entry.id, attempts, nextRetryAt: now, code, error },
+    }
+  }
+  return {
+    kind: 'retry-backoff',
+    retry: {
+      id: entry.id,
+      attempts,
+      nextRetryAt: now + backoffMs(attempts),
+      code,
+      error,
+    },
+  }
+}
+
 export class SyncEngine {
   private syncing = false
   private listeners = new Set<(state: SyncState) => void>()
@@ -136,27 +258,33 @@ export class SyncEngine {
     }
   }
 
+  /** 从 store 读取真实队列计数（P0：getState 与 emit 共用同一口径）。 */
+  private async snapshot(status: SyncStatus): Promise<SyncState> {
+    const ledgerId = this.ledgerIdProvider()
+    if (ledgerId === null) {
+      return { status, lastSyncAt: this.lastSyncAt, pendingCount: 0, deadCount: 0 }
+    }
+    const [pendingCount, deadCount] = await Promise.all([
+      this.store.countPending(ledgerId, 'pending'),
+      this.store.countPending(ledgerId, 'dead'),
+    ])
+    return { status, lastSyncAt: this.lastSyncAt, pendingCount, deadCount }
+  }
+
   private async emit(status: SyncStatus): Promise<void> {
     this.statusValue = status
-    const ledgerId = this.ledgerIdProvider()
-    const state: SyncState = {
-      status,
-      lastSyncAt: this.lastSyncAt,
-      pendingCount: ledgerId === null ? 0 : await this.store.countPending(ledgerId, 'pending'),
-      deadCount: ledgerId === null ? 0 : await this.store.countPending(ledgerId, 'dead'),
-    }
+    const state = await this.snapshot(status)
     for (const listener of this.listeners) {
       listener(state)
     }
   }
 
-  getState(): SyncState {
-    return {
-      status: this.statusValue,
-      lastSyncAt: this.lastSyncAt,
-      pendingCount: 0,
-      deadCount: 0,
-    }
+  /**
+   * 当前状态快照（P0：async，真实计数）。
+   * 现有 UI 不直接调用它，而是走 subscribe 推送；本方法供测试 / 命令式读取使用。
+   */
+  async getState(): Promise<SyncState> {
+    return this.snapshot(this.statusValue)
   }
 
   /**
@@ -308,88 +436,116 @@ export class SyncEngine {
       const lastSeq = await this.store.getLastSeq(ledgerId)
       const resp = await this.api.push(clientId, lastSeq, changes)
 
-      let sawNotFound = false
+      // P0：结果完整性优先。缺失 / 重复 / 越界 → 整批退避重试，一条都不删。
+      const validation = validatePushResults(resp.results, entries.length)
+      if (!validation.ok) {
+        await this.retryWholeBatch(ledgerId, entries, now, validation.reason)
+        continue
+      }
+
       const uuidMap: Record<string, string> = {}
       const removedIds: number[] = []
-      const deadIds: number[] = []
-      const retryIds: number[] = []
-      const retryCodes = new Map<number, string>()
-      const retryErrors = new Map<number, string>()
-      let deadCode = ''
-      let deadError = ''
+      const dead: DeadOutcome[] = []
+      const retries: RetryOutcome[] = []
+      let needsRemapPull = false
+      let allSettled = true
 
-      for (let i = 0; i < resp.results.length; i += 1) {
-        const result = resp.results[i]
-        const entry = entries[result.index] ?? entries[i]
-        if (entry === undefined) continue
-        const disposition = this.dispositionOf(result)
-        if (disposition === 'merged') {
-          // 自然键合并：服务端已有同名账户 → 记映射并**移除本地 pending**（旧版
-          // r.ok → removedKeys 口径）；本地账户实体由 applyPushResults 重映射。
-          uuidMap[result.uuid ?? ''] = result.server_uuid ?? ''
-          removedIds.push(entry.id)
-        } else if (disposition === 'removed') {
-          removedIds.push(entry.id)
-        } else if (disposition === 'dead') {
-          deadIds.push(entry.id)
-          deadCode = result.code ?? 'dead'
-          deadError = result.error ?? '永久失败'
-        } else {
-          // 临时失败（含 account_not_found）。
-          retryIds.push(entry.id)
-          retryCodes.set(entry.id, result.code ?? 'error')
-          retryErrors.set(entry.id, result.error ?? '')
-          if (result.code === 'account_not_found') sawNotFound = true
+      for (const result of resp.results) {
+        // 严格按 result.index 定位；校验已保证对齐，这里再做防御性检查，
+        // 绝不用 `?? entries[i]` 静默兜底造成条目错配。
+        const entry: PendingEntry | undefined = entries[result.index]
+        if (entry === undefined) {
+          await this.retryWholeBatch(
+            ledgerId,
+            entries,
+            now,
+            `push 结果 index 越界: ${String(result.index)}`,
+          )
+          return
+        }
+        const disposition = decideDisposition({
+          entry,
+          result,
+          round,
+          now,
+          maxPushRounds: this.maxPushRounds,
+        })
+        switch (disposition.kind) {
+          case 'removed':
+            removedIds.push(disposition.id)
+            break
+          case 'merged':
+            // 自然键合并：记录本地→服务端映射并移除本地 pending；
+            // 本地账户实体由 store 在同事务里重映射。
+            if (disposition.localUuid !== '' && disposition.serverUuid !== '') {
+              uuidMap[disposition.localUuid] = disposition.serverUuid
+            }
+            removedIds.push(disposition.id)
+            break
+          case 'dead':
+            dead.push(disposition.dead)
+            allSettled = false
+            break
+          case 'retry-now':
+            retries.push(disposition.retry)
+            needsRemapPull = true
+            allSettled = false
+            break
+          case 'retry-backoff':
+            retries.push(disposition.retry)
+            allSettled = false
+            break
         }
       }
 
       // 合并重映射：修正剩余 pending 的 postings 引用（与旧版 _rewritePendingRefs 一致）。
-      const removedSet = new Set<number>(removedIds)
-      const updates = collectPendingUpdates(entries, removedSet, uuidMap)
+      const updates = collectPendingUpdates(entries, new Set<number>(removedIds), uuidMap)
 
-      await this.store.applyPushResults(ledgerId, {
+      // P0：四类处置一次性落地（单事务）；不再 applyPushResults 之后重新 getPending。
+      await this.store.applyPushOutcome(ledgerId, {
         uuidMap,
         removedIds,
         updates,
+        dead,
+        retries,
         checkpoint: resp.checkpoint,
       })
-      if (deadIds.length > 0) {
-        await this.store.markDead(ledgerId, deadIds, deadCode, deadError)
-      }
 
-      // 临时失败处置：account_not_found 全量 pull 后重映射重试一次，二次失败才 dead；
-      // 其余退避（§6.6.1 #1）。
-      if (retryIds.length > 0) {
-        const retrySet = new Set(retryIds)
-        const stillPending = await this.store.getPending(ledgerId, 'pending')
-        for (const entry of stillPending) {
-          if (!retrySet.has(entry.id)) continue
-          const code = retryCodes.get(entry.id) ?? 'error'
-          const message = retryErrors.get(entry.id) ?? ''
-          const nextAttempt = entry.attempts + 1
-          if (code === 'account_not_found' && (nextAttempt >= 2 || round >= this.maxPushRounds)) {
-            await this.store.markDead(ledgerId, [entry.id], code, message !== '' ? message : '账户重映射重试仍失败')
-            continue
-          }
-          // 还有轮次的重映射失败：记 attempt 但保持立即可推（下一轮重试）；
-          // 其他临时失败：指数退避。
-          const nextRetryAt = sawNotFound && round < this.maxPushRounds ? this.nowFn() : this.nowFn() + backoffMs(nextAttempt)
-          await this.store.scheduleRetry(ledgerId, entry.id, nextAttempt, nextRetryAt, code, message)
-        }
-      }
-      if (sawNotFound && round < this.maxPushRounds) {
+      // 只有本条目自己命中 account_not_found 才触发全量 pull + 重映射重试。
+      if (needsRemapPull && round < this.maxPushRounds) {
         await this.pullNow(ledgerId, clientId, true)
       }
 
-      if (resp.results.every((r) => this.dispositionOf(r) === 'removed' || this.dispositionOf(r) === 'merged')) {
-        return
-      }
+      if (allSettled) return
     }
   }
 
-  /** 与 models.classifyResult 同一判定（引擎内复用，避免双口径）。 */
-  private dispositionOf(result: PushResult): ResultDisposition {
-    return classifyResult(result)
+  /** 协议错误：整批按临时失败退避；checkpoint=0 由 store 单调守卫挡住，不推进水位。 */
+  private async retryWholeBatch(
+    ledgerId: number,
+    entries: PendingEntry[],
+    now: number,
+    reason: string,
+  ): Promise<void> {
+    if (entries.length === 0) return
+    const retries: RetryOutcome[] = entries.map((entry) => {
+      const attempts = entry.attempts + 1
+      return {
+        id: entry.id,
+        attempts,
+        nextRetryAt: now + backoffMs(attempts),
+        code: 'invalid_push_results',
+        error: reason,
+      }
+    })
+    await this.store.applyPushOutcome(ledgerId, {
+      uuidMap: {},
+      removedIds: [],
+      updates: [],
+      dead: [],
+      retries,
+      checkpoint: 0,
+    })
   }
 
   /** uuid_map 崩溃回放：把映射再应用到 pending 引用（幂等）。 */

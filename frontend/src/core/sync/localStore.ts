@@ -12,6 +12,10 @@
  *     （uuid_map 与删 pending 同事务——§6.6.1 #3 崩溃回放的前提）
  *   - applyPullChanges pull 变更应用 + 推水位（同事务）
  *
+ * P0 补充：pending 行带 `ledger_id`，所有账本作用域读写都严格按归属过滤；
+ * `applyPushOutcome` 把 push 结果的四类处置（删除 / 合并 / 死信 / 重试）
+ * 合并进同一个事务；`markDead` 按条目保存各自的 code/error。
+ *
  * 双实现：IndexedDB（生产，`typeof indexedDB !== 'undefined'`）与内存
  * （jsdom 单测 / 无 IndexedDB 环境降级）。两者行为由同一组测试约束。
  */
@@ -35,6 +39,20 @@ export function backoffMs(attempts: number): number {
   return Math.min(ms, PENDING_BACKOFF_MAX_MS)
 }
 
+/**
+ * 账本归属判定（P0）：只有显式写入的 `ledger_id === ledgerId` 才算归属。
+ *
+ * 兼容口径：升级前落库、没有 `ledger_id` 的旧行视为「未知归属」——
+ * 它们既不会被任何账本读出，也不会被删除 / 改状态 / 重试（不静默丢数据），
+ * 保留在原 store 中等人工迁移；新写入的行一律带归属。
+ */
+export function ownsPendingRow<T extends { ledger_id?: number }>(
+  row: T | undefined | null,
+  ledgerId: number,
+): row is T {
+  return row !== undefined && row !== null && row.ledger_id === ledgerId
+}
+
 export interface RecordEntryInput {
   account?: LocalAccount
   txn?: LocalTxn
@@ -52,6 +70,28 @@ export interface ApplyPushResultsInput {
   checkpoint: number
 }
 
+/** 单条死信：code/error 必须逐条保存，不能共享同一组变量（P0 修复）。 */
+export interface DeadOutcome {
+  id: number
+  code: string
+  error: string
+}
+
+/** 单条重试：attempts / 下次重试时间 / 失败码也逐条保存。 */
+export interface RetryOutcome {
+  id: number
+  attempts: number
+  nextRetryAt: number
+  code: string
+  error: string
+}
+
+/** push 结果一次性落地的完整输入（四路处置同事务，P0 修复）。 */
+export interface ApplyPushOutcomeInput extends ApplyPushResultsInput {
+  dead: DeadOutcome[]
+  retries: RetryOutcome[]
+}
+
 export interface SyncStore {
   /** 是否为持久实现（IndexedDB）；内存实现用于测试。 */
   readonly persistent: boolean
@@ -67,11 +107,13 @@ export interface SyncStore {
 
   recordEntry(ledgerId: number, input: RecordEntryInput): Promise<number>
   applyPushResults(ledgerId: number, input: ApplyPushResultsInput): Promise<void>
+  /** 引擎主路径：四类处置合并为单事务，重复应用同批结果无副作用。 */
+  applyPushOutcome(ledgerId: number, input: ApplyPushOutcomeInput): Promise<void>
   applyPullChanges(ledgerId: number, changes: SyncChange[], checkpoint: number): Promise<void>
 
   getPending(ledgerId: number, state?: 'pending' | 'dead'): Promise<PendingEntry[]>
   countPending(ledgerId: number, state?: 'pending' | 'dead'): Promise<number>
-  markDead(ledgerId: number, ids: number[], code: string, error: string): Promise<void>
+  markDead(ledgerId: number, items: DeadOutcome[]): Promise<void>
   scheduleRetry(
     ledgerId: number,
     id: number,
@@ -186,6 +228,7 @@ export class MemorySyncStore implements SyncStore {
     this.nextId += 1
     this.pendings.set(id, {
       id,
+      ledger_id: ledgerId,
       state: 'pending',
       attempts: 0,
       next_retry_at: 0,
@@ -194,7 +237,12 @@ export class MemorySyncStore implements SyncStore {
     return id
   }
 
+  /** 兼容公开 API：不带死信/重试输入，等价于空处置的 applyPushOutcome。 */
   async applyPushResults(ledgerId: number, input: ApplyPushResultsInput): Promise<void> {
+    await this.applyPushOutcome(ledgerId, { ...input, dead: [], retries: [] })
+  }
+
+  async applyPushOutcome(ledgerId: number, input: ApplyPushOutcomeInput): Promise<void> {
     const map = this.uuidMaps.get(String(ledgerId)) ?? {}
     for (const [localUuid, serverUuid] of Object.entries(input.uuidMap)) {
       map[localUuid] = serverUuid
@@ -218,15 +266,45 @@ export class MemorySyncStore implements SyncStore {
     if (Object.keys(map).length > 0) {
       this.uuidMaps.set(String(ledgerId), map)
     }
-    for (const id of input.removedIds) {
-      this.pendings.delete(id)
+
+    // 删除 / 引用改写：严格带账本守卫，绝不跨账本误改。
+    const removedSet = new Set(input.removedIds)
+    for (const id of removedSet) {
+      if (ownsPendingRow(this.pendings.get(id), ledgerId)) this.pendings.delete(id)
     }
     for (const u of input.updates) {
       const cur = this.pendings.get(u.id)
-      if (cur !== undefined) {
-        this.pendings.set(u.id, { ...cur, change: u.change })
+      if (ownsPendingRow(cur, ledgerId)) {
+        this.pendings.set(u.id, { ...(cur as PendingEntry), change: u.change })
       }
     }
+
+    // 死信：逐条保存 code/error，且仅对仍为 pending 的同账本行生效（幂等）。
+    for (const item of input.dead) {
+      const cur = this.pendings.get(item.id)
+      if (ownsPendingRow(cur, ledgerId) && cur.state === 'pending') {
+        this.pendings.set(item.id, {
+          ...cur,
+          state: 'dead',
+          last_error_code: item.code,
+          last_error: item.error,
+        })
+      }
+    }
+    // 重试：同样逐条落盘，重复应用同批结果不会二次推进 attempts。
+    for (const item of input.retries) {
+      const cur = this.pendings.get(item.id)
+      if (ownsPendingRow(cur, ledgerId) && cur.state === 'pending') {
+        this.pendings.set(item.id, {
+          ...cur,
+          attempts: item.attempts,
+          next_retry_at: item.nextRetryAt,
+          last_error_code: item.code,
+          last_error: item.error,
+        })
+      }
+    }
+
     const cur = await this.getLastSeq(ledgerId)
     if (input.checkpoint > cur) {
       this.meta.set(`seq.${ledgerId}`, input.checkpoint)
@@ -297,6 +375,7 @@ export class MemorySyncStore implements SyncStore {
   async getPending(ledgerId: number, state?: 'pending' | 'dead'): Promise<PendingEntry[]> {
     const out: PendingEntry[] = []
     for (const entry of this.pendings.values()) {
+      if (!ownsPendingRow(entry, ledgerId)) continue
       if (state === undefined || entry.state === state) out.push(entry)
     }
     return out.sort((a, b) => a.id - b.id)
@@ -306,15 +385,15 @@ export class MemorySyncStore implements SyncStore {
     return (await this.getPending(ledgerId, state)).length
   }
 
-  async markDead(ledgerId: number, ids: number[], code: string, error: string): Promise<void> {
-    for (const id of ids) {
-      const cur = this.pendings.get(id)
-      if (cur !== undefined && cur.state === 'pending') {
-        this.pendings.set(id, {
+  async markDead(ledgerId: number, items: DeadOutcome[]): Promise<void> {
+    for (const item of items) {
+      const cur = this.pendings.get(item.id)
+      if (ownsPendingRow(cur, ledgerId) && cur.state === 'pending') {
+        this.pendings.set(item.id, {
           ...cur,
           state: 'dead',
-          last_error_code: code,
-          last_error: error,
+          last_error_code: item.code,
+          last_error: item.error,
         })
       }
     }
@@ -329,7 +408,7 @@ export class MemorySyncStore implements SyncStore {
     error: string,
   ): Promise<void> {
     const cur = this.pendings.get(id)
-    if (cur !== undefined && cur.state === 'pending') {
+    if (ownsPendingRow(cur, ledgerId) && cur.state === 'pending') {
       this.pendings.set(id, {
         ...cur,
         attempts,
@@ -343,7 +422,7 @@ export class MemorySyncStore implements SyncStore {
   async reviveDead(ledgerId: number, ids: number[]): Promise<void> {
     for (const id of ids) {
       const cur = this.pendings.get(id)
-      if (cur !== undefined && cur.state === 'dead') {
+      if (ownsPendingRow(cur, ledgerId) && cur.state === 'dead') {
         this.pendings.set(id, { ...cur, state: 'pending', attempts: 0, next_retry_at: 0 })
       }
     }
@@ -351,7 +430,7 @@ export class MemorySyncStore implements SyncStore {
 
   async discardPending(ledgerId: number, ids: number[]): Promise<void> {
     for (const id of ids) {
-      this.pendings.delete(id)
+      if (ownsPendingRow(this.pendings.get(id), ledgerId)) this.pendings.delete(id)
     }
   }
 
@@ -364,7 +443,7 @@ export class MemorySyncStore implements SyncStore {
       if (key.startsWith(prefix)) this.txns.delete(key)
     }
     for (const entry of this.pendings.values()) {
-      if (entry.state === 'pending') {
+      if (ownsPendingRow(entry, ledgerId) && entry.state === 'pending') {
         this.pendings.set(entry.id, {
           ...entry,
           state: 'dead',

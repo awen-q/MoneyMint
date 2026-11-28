@@ -98,6 +98,11 @@ export interface PendingChange {
 /** 待推送条目（含死信元数据；id 由存储层分配，单调递增保序）。 */
 export interface PendingEntry {
   id: number
+  /**
+   * 归属账本（P0 补写）。旧数据可能没有该字段：一律视为「未知归属」，
+   * 不参与任何账本作用域的读写（详见 localStore.ownsPendingRow）。
+   */
+  ledger_id?: number
   state: 'pending' | 'dead'
   attempts: number
   last_error_code?: string

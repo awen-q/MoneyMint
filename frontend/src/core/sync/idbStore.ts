@@ -5,6 +5,10 @@
  * accounts / txns / pending / meta / uuid_map 五个 store 完成；
  * 事务失败自动回滚，崩溃只能落在事务边界外、重放幂等。
  *
+ * P0 修复：`applyPushOutcome` 将删除 / 合并 / 死信 / 重试四类处置放进
+ * 同一个 ALL_STORES 事务；pending 行写入 `ledger_id`，所有读写严格按
+ * 账本归属守卫；`markDead` 逐条保存 code/error。
+ *
  * Safari 14.1 兼容：只用最基础的 IDB API（open / transaction / objectStore /
  * get / put / delete / getAll + IDBKeyRange），不用 cursor 高级特性。
  */
@@ -19,8 +23,10 @@ import type { SyncChange } from '@/api/types'
 import { replayTagEvents } from '@/core/tagEvents/merge'
 import { notifyMergeSuccess } from '@/core/tagEvents/notice'
 import {
-  backoffMs,
+  ownsPendingRow,
+  type ApplyPushOutcomeInput,
   type ApplyPushResultsInput,
+  type DeadOutcome,
   type MemorySyncStore,
   type RecordEntryInput,
   type SyncStore,
@@ -37,6 +43,19 @@ const S_UUID_MAP = 'uuid_map'
 const S_TAG_EVENTS = 'tag_events'
 
 const ALL_STORES = [S_ACCOUNTS, S_TXNS, S_PENDING, S_META, S_UUID_MAP, S_TAG_EVENTS]
+
+/** pending 物理行。`v` 是新口径，`change` 只用于兼容升级前写入的旧行。 */
+interface PendingRow {
+  id: number
+  ledger_id?: number
+  state: 'pending' | 'dead'
+  attempts: number
+  next_retry_at: number
+  last_error_code?: string
+  last_error?: string
+  v?: PendingChange
+  change?: PendingChange
+}
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -183,18 +202,30 @@ export class IdbSyncStore implements SyncStore {
           this.entityKey(ledgerId, input.txn.uuid),
         )
       }
-      const entry: Omit<PendingEntry, 'id'> = {
+      // P0：显式写归属；`v` 与 getPending / applyPushOutcome 的字段名保持一致。
+      const entry: Omit<PendingRow, 'id'> = {
+        ledger_id: ledgerId,
         state: 'pending',
         attempts: 0,
         next_retry_at: 0,
-        change: input.pending,
+        v: input.pending,
       }
       const id = await reqAs(t.objectStore(S_PENDING).add(entry) as IDBRequest<IDBValidKey>)
       return Number(id)
     })
   }
 
+  /** 兼容公开 API：四类处置中的死信/重试为空，等价于旧版行为。 */
   async applyPushResults(ledgerId: number, input: ApplyPushResultsInput): Promise<void> {
+    await this.applyOutcome(ledgerId, { ...input, dead: [], retries: [] })
+  }
+
+  /** 引擎主路径：四类处置合并为单个 ALL_STORES 事务。 */
+  async applyPushOutcome(ledgerId: number, input: ApplyPushOutcomeInput): Promise<void> {
+    await this.applyOutcome(ledgerId, input)
+  }
+
+  private async applyOutcome(ledgerId: number, input: ApplyPushOutcomeInput): Promise<void> {
     await this.tx([...ALL_STORES], async (t) => {
       const mapStore = t.objectStore(S_UUID_MAP)
       const mapRow =
@@ -213,7 +244,11 @@ export class IdbSyncStore implements SyncStore {
         )) ?? null
         if (accRow !== null) {
           accStore.delete(accRow.k)
-          accStore.put({ k: this.entityKey(ledgerId, serverUuid), v: { ...accRow.v, uuid: serverUuid } })
+          // accounts store 无 keyPath，必须显式传 key（与 txnStore.put 一致）。
+          accStore.put(
+            { k: this.entityKey(ledgerId, serverUuid), v: { ...accRow.v, uuid: serverUuid } },
+            this.entityKey(ledgerId, serverUuid),
+          )
         }
         const txnRows = (await reqAs(
           txnStore.getAll() as IDBRequest<Array<{ k: string; v: LocalTxn }>>,
@@ -240,15 +275,49 @@ export class IdbSyncStore implements SyncStore {
       }
 
       const pendingStore = t.objectStore(S_PENDING)
-      for (const id of input.removedIds) {
-        pendingStore.delete(id)
+      const readRow = (id: number): Promise<PendingRow | undefined> =>
+        reqAs(pendingStore.get(id) as IDBRequest<PendingRow | undefined>)
+
+      // 删除：账本守卫，绝不跨账本移除别人的待推项。
+      for (const id of new Set(input.removedIds)) {
+        const row = await readRow(id)
+        if (ownsPendingRow(row, ledgerId)) pendingStore.delete(id)
       }
+      // 引用改写（合并重映射）：同样带账本守卫。
       for (const u of input.updates) {
-        const row = (await reqAs(
-          pendingStore.get(u.id) as IDBRequest<{ id: number; state: string; v: PendingChange } | undefined>,
-        )) ?? null
-        if (row !== null) {
-          pendingStore.put({ ...row, v: u.change }, u.id)
+        const row = await readRow(u.id)
+        if (ownsPendingRow(row, ledgerId)) {
+          // pending store 有 keyPath=id，不能用显式 key（IndexedDB 会抛 DataError）。
+          pendingStore.put({ ...(row as PendingRow), v: u.change })
+        }
+      }
+      // 死信：逐条 code/error，只对仍为 pending 的同账本行生效（幂等）。
+      for (const item of input.dead) {
+        const row = await readRow(item.id)
+        if (ownsPendingRow(row, ledgerId) && row.state === 'pending') {
+          pendingStore.put(
+            {
+              ...(row as PendingRow),
+              state: 'dead',
+              last_error_code: item.code,
+              last_error: item.error,
+            },
+          )
+        }
+      }
+      // 重试：逐条落盘，重复应用不会二次写坏 attempts。
+      for (const item of input.retries) {
+        const row = await readRow(item.id)
+        if (ownsPendingRow(row, ledgerId) && row.state === 'pending') {
+          pendingStore.put(
+            {
+              ...(row as PendingRow),
+              attempts: item.attempts,
+              next_retry_at: item.nextRetryAt,
+              last_error_code: item.code,
+              last_error: item.error,
+            },
+          )
         }
       }
 
@@ -344,35 +413,47 @@ export class IdbSyncStore implements SyncStore {
     const tx = this.db.transaction(S_PENDING, 'readonly')
     const rows =
       (await reqAs(
-        tx.objectStore(S_PENDING).getAll() as IDBRequest<
-          Array<{ id: number; state: 'pending' | 'dead'; attempts: number; next_retry_at: number; last_error_code?: string; last_error?: string; v: PendingChange }>
-        >,
+        tx.objectStore(S_PENDING).getAll() as IDBRequest<PendingRow[]>,
       )) ?? []
-    const out = rows.map((r) => ({
-      id: r.id,
-      state: r.state,
-      attempts: r.attempts,
-      next_retry_at: r.next_retry_at,
-      last_error_code: r.last_error_code,
-      last_error: r.last_error,
-      change: r.v,
-    }))
-    return out
-      .filter((e) => state === undefined || e.state === state)
-      .sort((a, b) => a.id - b.id)
+    const out: PendingEntry[] = []
+    for (const r of rows) {
+      if (!ownsPendingRow(r, ledgerId)) continue
+      if (state !== undefined && r.state !== state) continue
+      const change = r.v ?? r.change
+      // 归属明确但实体字段缺失 = 损坏行；不伪造空变更，直接跳过。
+      if (change === undefined) continue
+      out.push({
+        id: r.id,
+        ledger_id: r.ledger_id,
+        state: r.state,
+        attempts: r.attempts,
+        next_retry_at: r.next_retry_at,
+        last_error_code: r.last_error_code,
+        last_error: r.last_error,
+        change,
+      })
+    }
+    return out.sort((a, b) => a.id - b.id)
   }
 
   async countPending(ledgerId: number, state?: 'pending' | 'dead'): Promise<number> {
     return (await this.getPending(ledgerId, state)).length
   }
 
-  async markDead(ledgerId: number, ids: number[], code: string, error: string): Promise<void> {
+  async markDead(ledgerId: number, items: DeadOutcome[]): Promise<void> {
     await this.tx([S_PENDING], async (t) => {
       const store = t.objectStore(S_PENDING)
-      for (const id of ids) {
-        const row = (await reqAs(store.get(id) as IDBRequest<Record<string, unknown> | undefined>)) ?? null
-        if (row !== null && row['state'] === 'pending') {
-          store.put({ ...row, state: 'dead', last_error_code: code, last_error: error }, id)
+      for (const item of items) {
+        const row = await reqAs(store.get(item.id) as IDBRequest<PendingRow | undefined>)
+        if (ownsPendingRow(row, ledgerId) && row.state === 'pending') {
+          store.put(
+            {
+              ...(row as PendingRow),
+              state: 'dead',
+              last_error_code: item.code,
+              last_error: item.error,
+            },
+          )
         }
       }
       await Promise.resolve()
@@ -387,14 +468,18 @@ export class IdbSyncStore implements SyncStore {
     code: string,
     error: string,
   ): Promise<void> {
-    void backoffMs(attempts) // 引擎负责计算；存储层只落盘
     await this.tx([S_PENDING], async (t) => {
       const store = t.objectStore(S_PENDING)
-      const row = (await reqAs(store.get(id) as IDBRequest<Record<string, unknown> | undefined>)) ?? null
-      if (row !== null && row['state'] === 'pending') {
+      const row = await reqAs(store.get(id) as IDBRequest<PendingRow | undefined>)
+      if (ownsPendingRow(row, ledgerId) && row.state === 'pending') {
         store.put(
-          { ...row, attempts, next_retry_at: nextRetryAt, last_error_code: code, last_error: error },
-          id,
+          {
+            ...(row as PendingRow),
+            attempts,
+            next_retry_at: nextRetryAt,
+            last_error_code: code,
+            last_error: error,
+          },
         )
       }
       await Promise.resolve()
@@ -405,9 +490,9 @@ export class IdbSyncStore implements SyncStore {
     await this.tx([S_PENDING], async (t) => {
       const store = t.objectStore(S_PENDING)
       for (const id of ids) {
-        const row = (await reqAs(store.get(id) as IDBRequest<Record<string, unknown> | undefined>)) ?? null
-        if (row !== null && row['state'] === 'dead') {
-          store.put({ ...row, state: 'pending', attempts: 0, next_retry_at: 0 }, id)
+        const row = await reqAs(store.get(id) as IDBRequest<PendingRow | undefined>)
+        if (ownsPendingRow(row, ledgerId) && row.state === 'dead') {
+          store.put({ ...(row as PendingRow), state: 'pending', attempts: 0, next_retry_at: 0 })
         }
       }
       await Promise.resolve()
@@ -417,8 +502,9 @@ export class IdbSyncStore implements SyncStore {
   async discardPending(ledgerId: number, ids: number[]): Promise<void> {
     await this.tx([S_PENDING], async (t) => {
       const store = t.objectStore(S_PENDING)
-      for (const id of ids) {
-        store.delete(id)
+      for (const id of new Set(ids)) {
+        const row = await reqAs(store.get(id) as IDBRequest<PendingRow | undefined>)
+        if (ownsPendingRow(row, ledgerId)) store.delete(id)
       }
       await Promise.resolve()
     })
@@ -439,11 +525,9 @@ export class IdbSyncStore implements SyncStore {
       }
       const pendingStore = t.objectStore(S_PENDING)
       const pendingRows =
-        (await reqAs(
-          pendingStore.getAll() as IDBRequest<Array<Record<string, unknown>>>,
-        )) ?? []
+        (await reqAs(pendingStore.getAll() as IDBRequest<PendingRow[]>)) ?? []
       for (const row of pendingRows) {
-        if (row['state'] === 'pending') {
+        if (ownsPendingRow(row, ledgerId) && row.state === 'pending') {
           pendingStore.put(
             {
               ...row,
@@ -451,7 +535,6 @@ export class IdbSyncStore implements SyncStore {
               last_error_code: 'instance_rotated',
               last_error: '服务端账本已被还原，本条待同步变更已隔离（同步页可导出后丢弃或重试）',
             },
-            row['id'] as number,
           )
         }
       }
