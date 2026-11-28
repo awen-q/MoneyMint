@@ -230,7 +230,9 @@ func newRouter(h *handler.Handler, svc *service.Service, webRoot string, corsCfg
 	// cors 必须包在最外层：浏览器对带 Authorization / X-Ledger-Id 等自定义头的
 	// 请求会先发 OPTIONS 预检，预检请求没有 token，若先经过 authMiddleware 会被 401
 	// 拦截（到不了 cors 的 OPTIONS 处理），导致浏览器拒绝发真实请求、前端表现为「无响应」。
-	return cors(corsOpt, authMiddleware(h, svc, mux))
+	// requestContextMiddleware 紧随 cors 之后：生成 request_id 并包住写头，
+	// 这样鉴权中间件的 401/403 与 handler 的 4xx/5xx 都能被记录。
+	return cors(corsOpt, requestContextMiddleware(authMiddleware(h, svc, mux)))
 }
 
 // methodSwitch 按 HTTP 方法分发到对应 handler。

@@ -51,9 +51,10 @@ func GenerateToken() (string, error) {
 type ctxKey struct{ name string }
 
 var (
-	userIDCtxKey   = ctxKey{"uid"}
-	ledgerIDCtxKey = ctxKey{"ledger_id"}
-	roleCtxKey     = ctxKey{"role"}
+	userIDCtxKey    = ctxKey{"uid"}
+	ledgerIDCtxKey  = ctxKey{"ledger_id"}
+	roleCtxKey      = ctxKey{"role"}
+	requestIDCtxKey = ctxKey{"request_id"}
 )
 
 // WithUser 把已认证用户 id 注入 context。
@@ -96,4 +97,24 @@ func Role(ctx context.Context) string {
 	}
 	role, _ := v.(string)
 	return role
+}
+
+// ---- 请求链路中的 request_id ----
+
+// WithRequestID 把 request_id 注入 context（由 server 层中间件在入口处调用）。
+func WithRequestID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, requestIDCtxKey, id)
+}
+
+// RequestID 从 context 取出 request_id；中间件未启用时返回空串。
+//
+// handler 层可直接用本函数把 request_id 附带到认证/异常日志上，
+// 无需改动 service 方法签名。
+func RequestID(ctx context.Context) string {
+	v := ctx.Value(requestIDCtxKey)
+	if v == nil {
+		return ""
+	}
+	id, _ := v.(string)
+	return id
 }

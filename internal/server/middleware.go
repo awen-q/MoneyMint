@@ -1,10 +1,18 @@
 package server
 
 import (
+	"bufio"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"familyledger/internal/auth"
 	"familyledger/internal/domain"
@@ -56,13 +64,150 @@ func cors(opt corsOptions, next http.Handler) http.Handler {
 		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,DELETE,PATCH,OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Ledger-Id, X-CSRF")
-		// 导出接口通过响应头附带恒等式提示，跨域部署时浏览器必须被显式允许读取。
-		w.Header().Set("Access-Control-Expose-Headers", "X-Ledger-Balanced, X-Ledger-Diffs, Content-Disposition")
+		// 导出接口通过响应头附带恒等式提示，跨域部署时浏览器必须被显式允许读取；
+		// X-Request-Id 同理——前端排查异常时要把响应头里的 id 与后端日志关联。
+		w.Header().Set("Access-Control-Expose-Headers", "X-Ledger-Balanced, X-Ledger-Diffs, Content-Disposition, X-Request-Id")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		next.ServeHTTP(w, r)
+	})
+}
+
+// ---- request_id 与异常请求日志 ----
+
+// requestIDHeader 是对外暴露的请求关联头。浏览器跨域读取依赖 cors 的 Expose 列表。
+const requestIDHeader = "X-Request-Id"
+
+// requestState 是随请求传递的可变状态。外层日志中间件创建它，内层鉴权中间件
+// 在解析出 uid 后回填，这样请求结束时外层仍能拿到 user_id，而不必改动
+// authMiddleware 的签名或让 service 感知 HTTP。
+type requestState struct {
+	userID int64
+}
+
+type requestStateCtxKey struct{}
+
+func withRequestState(ctx context.Context, st *requestState) context.Context {
+	return context.WithValue(ctx, requestStateCtxKey{}, st)
+}
+
+func requestStateFrom(ctx context.Context) *requestState {
+	st, _ := ctx.Value(requestStateCtxKey{}).(*requestState)
+	return st
+}
+
+// noteRequestUser 回填当前请求的 user_id（未启用日志中间件时为 no-op）。
+func noteRequestUser(r *http.Request, uid int64) {
+	if st := requestStateFrom(r.Context()); st != nil {
+		st.userID = uid
+	}
+}
+
+// newRequestID 生成 8 字节随机数的 16 位小写 hex；crypto/rand 异常时降级为
+// 纳秒时间戳字符串（仍然是合法的 [A-Za-z0-9_-]{1,64} 值，不引任何依赖）。
+func newRequestID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err == nil {
+		return hex.EncodeToString(b)
+	}
+	return strconv.FormatInt(time.Now().UnixNano(), 10)
+}
+
+// validRequestID 校验客户端传入的 request_id：只允许 [A-Za-z0-9_-]{1,64}，
+// 超出长度或含空格/斜杠/控制字符等非法值一律忽略并重新生成，
+// 避免把外部不可信内容原样写进响应头或日志。
+func validRequestID(s string) bool {
+	if len(s) == 0 || len(s) > 64 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '_', c == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// statusRecorder 记录响应状态码的轻量 ResponseWriter 包装。
+//
+// 本项目当前没有流式响应（无 Flusher / Hijacker / Pusher 使用点），但这里仍
+// 实现 Unwrap 与 Flush / Hijack 的透传：将来接入 SSE / WebSocket 时包装器
+// 不会切断底层能力。底层不支持时 Flush 为 no-op、Hijack 返回错误。
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	if s.status == 0 {
+		s.status = code
+	}
+	s.ResponseWriter.WriteHeader(code)
+}
+
+func (s *statusRecorder) Write(p []byte) (int, error) {
+	if s.status == 0 {
+		s.status = http.StatusOK
+	}
+	return s.ResponseWriter.Write(p)
+}
+
+func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
+
+func (s *statusRecorder) Flush() {
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (s *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := s.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, errors.New("underlying ResponseWriter does not support hijack")
+}
+
+// requestContextMiddleware 为每个穿过 cors 的请求生成（或沿用合法的）request_id，
+// 写入响应头、注入 context，并在请求结束时仅为异常请求记一条 WARN。
+//
+// 设计取舍：
+//   - 不做全量 access log：HEALTHCHECK 每 30s 一次，2880 条/天纯噪声；
+//   - 只记 status >= 400 且非 /api/health 的请求；
+//   - 与 handler.writeError 的 http.error 互补——后者记错误详情（err 文本），
+//     本条记请求级上下文（request_id / method / path / 耗时 / user_id）；
+//   - path 只取 URL.Path，绝不拼 query string（query 里可能带 token）。
+func requestContextMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := r.Header.Get(requestIDHeader)
+		if !validRequestID(id) {
+			id = newRequestID()
+		}
+		w.Header().Set(requestIDHeader, id)
+
+		st := &requestState{}
+		ctx := withRequestState(auth.WithRequestID(r.Context(), id), st)
+		rec := &statusRecorder{ResponseWriter: w}
+		start := time.Now()
+
+		next.ServeHTTP(rec, r.WithContext(ctx))
+
+		path := r.URL.Path
+		if rec.status >= http.StatusBadRequest && path != "/api/health" {
+			slog.Warn("http.request.failed",
+				"event", "http.request.failed",
+				"request_id", id,
+				"method", r.Method,
+				"path", path,
+				"status", rec.status,
+				"duration_ms", time.Since(start).Milliseconds(),
+				"user_id", st.userID,
+			)
+		}
 	})
 }
 
@@ -114,6 +259,8 @@ func authMiddleware(h *handler.Handler, svc *service.Service, next http.Handler)
 			return
 		}
 		uid := sess.UserID
+		// 回填给外层异常日志中间件；后续所有鉴权失败分支都能带上 user_id。
+		noteRequestUser(r, uid)
 
 		// CSRF（D-7）：只针对 Cookie 会话的写请求。Bearer 请求豁免——
 		// 旧版 Flutter 用 localStorage token 走 Authorization，不能被新规则打断；

@@ -1,6 +1,11 @@
 package handler
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -9,6 +14,64 @@ import (
 	"familyledger/internal/domain"
 	"familyledger/internal/service"
 )
+
+// ---- 认证事件日志（只记事件与稳定原因码，绝不记密码 / token / cookie / session id）----
+
+// authLogAttrs 组装认证事件的公共字段：request_id 能取到才带，user_id 失败时记 0。
+func authLogAttrs(ctx context.Context, userID int64, reason string) []any {
+	attrs := make([]any, 0, 5)
+	if rid := auth.RequestID(ctx); rid != "" {
+		attrs = append(attrs, "request_id", rid)
+	}
+	attrs = append(attrs, "user_id", userID)
+	if reason != "" {
+		attrs = append(attrs, "reason", reason)
+	}
+	return attrs
+}
+
+// isRateLimitError 判断是否为登录失败限流错误。
+func isRateLimitError(err error) bool {
+	var rl *domain.RateLimitError
+	return errors.As(err, &rl)
+}
+
+// isDecodeError 判断是否为请求体 JSON 解码失败（客户端输入问题）。
+func isDecodeError(err error) bool {
+	var syntax *json.SyntaxError
+	var typeErr *json.UnmarshalTypeError
+	return errors.As(err, &syntax) || errors.As(err, &typeErr) || errors.Is(err, io.EOF)
+}
+
+// authFailureReason 把 service 错误归一化为稳定原因码；只输出码，
+// 不输出错误文案（文案可能含用户名等个人信息，且随版本变化）。
+func authFailureReason(err error) string {
+	switch {
+	case err == nil:
+		return ""
+	case isRateLimitError(err):
+		return "rate_limited"
+	case errors.Is(err, domain.ErrUnauthorized):
+		return "invalid_credentials"
+	case errors.Is(err, domain.ErrForbidden):
+		return "forbidden"
+	case errors.Is(err, domain.ErrNotFound):
+		return "not_found"
+	case errors.Is(err, domain.ErrInvalid), isDecodeError(err):
+		return "invalid_request"
+	default:
+		return "internal"
+	}
+}
+
+// passwordChangeReason 复用统一映射，并额外识别「旧密码错误」这一安全相关原因。
+// 这里的文案比对只用于生成稳定码，原文不会进入日志。
+func passwordChangeReason(err error) string {
+	if err != nil && errors.Is(err, domain.ErrInvalid) && err.Error() == "旧密码错误" {
+		return "old_password_mismatch"
+	}
+	return authFailureReason(err)
+}
 
 // ClientIP 提取客户端 IP：优先 X-Forwarded-For 首段（反代场景），
 // 否则回退 RemoteAddr 的主机部分。
@@ -161,6 +224,7 @@ func (h *Handler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	h.svc.AttachSessionMeta(res.Token, ClientIP(r), r.UserAgent())
 	h.setSessionCookie(w, res.Token)
+	slog.Info("auth.register", append([]any{"event", "auth.register"}, authLogAttrs(r.Context(), res.User.ID, "")...)...)
 	writeJSON(w, http.StatusCreated, h.authResult(res))
 }
 
@@ -171,16 +235,19 @@ func (h *Handler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := readJSON(r, &req); err != nil {
+		slog.Warn("auth.login.failed", append([]any{"event", "auth.login.failed"}, authLogAttrs(r.Context(), 0, authFailureReason(err))...)...)
 		writeError(w, err)
 		return
 	}
 	res, err := h.svc.LoginFrom(req.Username, req.Password, ClientIP(r))
 	if err != nil {
+		slog.Warn("auth.login.failed", append([]any{"event", "auth.login.failed"}, authLogAttrs(r.Context(), 0, authFailureReason(err))...)...)
 		writeError(w, err)
 		return
 	}
 	h.svc.AttachSessionMeta(res.Token, ClientIP(r), r.UserAgent())
 	h.setSessionCookie(w, res.Token)
+	slog.Info("auth.login.success", append([]any{"event", "auth.login.success"}, authLogAttrs(r.Context(), res.User.ID, "")...)...)
 	writeJSON(w, http.StatusOK, h.authResult(res))
 }
 
@@ -198,10 +265,12 @@ func (h *Handler) authResult(res service.AuthResult) service.AuthResult {
 
 // HandleLogout 注销当前会话，并清空会话 Cookie。
 func (h *Handler) HandleLogout(w http.ResponseWriter, r *http.Request) {
+	uid, _ := auth.UserID(r.Context())
 	if tok := h.RequestToken(r); tok != "" {
 		_ = h.svc.Logout(tok)
 	}
 	h.clearSessionCookie(w)
+	slog.Info("auth.logout", append([]any{"event", "auth.logout"}, authLogAttrs(r.Context(), uid, "")...)...)
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "true"})
 }
 
@@ -249,16 +318,19 @@ func (h *Handler) HandleChangePassword(w http.ResponseWriter, r *http.Request) {
 		NewPassword string `json:"new_password"`
 	}
 	if err := readJSON(r, &req); err != nil {
+		slog.Warn("auth.password_change_failed", append([]any{"event", "auth.password_change_failed"}, authLogAttrs(r.Context(), uid, authFailureReason(err))...)...)
 		writeError(w, err)
 		return
 	}
 	newTok, err := h.svc.ChangePassword(uid, req.OldPassword, req.NewPassword)
 	if err != nil {
+		slog.Warn("auth.password_change_failed", append([]any{"event", "auth.password_change_failed"}, authLogAttrs(r.Context(), uid, passwordChangeReason(err))...)...)
 		writeError(w, err)
 		return
 	}
 	h.svc.AttachSessionMeta(newTok, ClientIP(r), r.UserAgent())
 	h.setSessionCookie(w, newTok)
+	slog.Info("auth.password_changed", append([]any{"event", "auth.password_changed"}, authLogAttrs(r.Context(), uid, "")...)...)
 	resp := map[string]any{"ok": true}
 	if h.auth.ExposeToken {
 		resp["token"] = newTok

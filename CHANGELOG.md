@@ -16,6 +16,7 @@
 - **批量处置**：`retryNow(ledgerId, ids)` 双实现（保留 attempts）+ `requestRetry` 仅持租约 tab 执行；失败子集单一 `isRetryingPending` 来源贯穿引擎 / store / UI / 徽标。
 - **服务端日志最小集（第一段）**：push 逐条拒绝记 `sync.push.reject` WARN（ledger/user/client/index/entity/op/uuid/code/err，与前端 code 对齐）；`writeError` 未映射未知错误记 `http.error` ERROR，已知 4xx / CodedError 不记。走标准库 `slog` 输出到 stderr（`docker logs` 可见），不引依赖、不落盘、不改变任何响应与同步行为。
 - **PWA 手动刷新入口**：standalone 模式无浏览器刷新键，在「更多」弹层新增「刷新页面」（移动底栏「更多」与 PC 顶栏「⋯」共用）。主动 `registration.update()` 检查新版本：有更新只出横幅、用户确认后才激活（AC-35 不打断录入），无更新 / 离线则重载缓存壳。
+- **服务端日志完整集（第三段）**：每请求生成（或沿用合法值）`X-Request-Id` 并写入响应头与 context；仅异常请求（status ≥ 400，排除 `/api/health`）记 `http.request.failed` WARN，字段含 request_id / method / path（不含 query）/ status / duration_ms / user_id；认证事件（注册、登录成功与失败、登出、改密成功与失败）记稳定原因码，不记密码、token、cookie。不做全量 access log，避免 HEALTHCHECK 噪声。
 
 ### Fixed
 
@@ -23,10 +24,12 @@
 - **账本隔离**：pending 行补 `ledger_id`，读写全链路加账本守卫；修复 IDB `change`/`v` 读写不一致与无 keyPath store 的 DataError。
 - **CI Release tag 门禁**：仅严格 `vX.Y.Z` 正式 tag 创建 GitHub Release，非正式 tag（如 `-pre` / `-rc`）只跑校验，避免 Release 钉住 tag 无法强推。
 - **CI `:latest` 收紧**：版本号 tag 恒打；`:latest` 仅正式 SemVer tag 才打，预发布 / rc / 手动 dispatch 只出版本号 tag，不再覆盖稳定版 `:latest`。
+- **Windows CRLF 测试欠账**：`CategoriesView.s2.test.ts` 的窄屏布局断言改为行尾无关（源文件读入后归一化 `\r\n` → `\n`），不再随 Windows `core.autocrlf` 的签出状态时红时绿。
 
 ### Changed
 
-- 全站 JS gzip 上限由 420 KB 上调至 460 KB（收紧的临时止损线，非因新依赖；历史欠账另立债务任务优化回 ≤420 KB）。
+- **全站 JS gzip 上限收紧至 425 KB**：英文字典（边际 21.7 KB gzip）改为构建期由 `scripts/generate-en-dict.mjs` 从 `en.ts` 生成 `public/i18n/en.json`、运行时 fetch 填充，不再进入 `assets/*.js`；生产首屏未就绪时逐 key 回退中文，加载完成后响应式刷新，`t()` 仍为同步 API。实测 423.1 KB。polyfills 未动——`modernPolyfills` 收窄有 iOS 14.8 运行时风险，需真机验证后单独评估。
+- **bundle 门禁新增 dist 新鲜度校验**：比对 `dist/i18n/build-meta.json` 的源码指纹与 en.json sha256，源码改动后未重新构建即失败，堵住「陈旧 dist 假绿」；`build-meta.json` 含时间戳，由 prebuild 生成、不入库。
 
 ## [0.6.3] - 2026-11-27
 
