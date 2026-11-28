@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -108,7 +109,20 @@ func writeError(w http.ResponseWriter, err error) {
 		return
 	}
 
-	writeJSON(w, statusOf(err), map[string]string{"error": err.Error()})
+	// P2 最小集：未映射错误的兜底日志（纯副作用，不改变状态码/响应体）。
+	// RateLimit / BalanceNotZero / CodedError 已在上面分支返回；这里剩下的若命中
+	// 已知哨兵（404/409/401/403）或 ErrInvalid（客户端校验失败）属预期路径，不记 ERROR，
+	// 避免把正常 4xx 变成日志噪声。仅「落到 statusOf 默认 400 的未知错误」才记一条 ——
+	// 这类错误（如 SyncPull/Push 末尾 DB 上抛）此前被静默映射成 400，服务端零痕迹。
+	status := statusOf(err)
+	if status == http.StatusBadRequest && !errors.Is(err, domain.ErrInvalid) {
+		slog.Error("http.error",
+			"event", "http.error",
+			"status", status,
+			"err", err.Error(),
+		)
+	}
+	writeJSON(w, status, map[string]string{"error": err.Error()})
 }
 
 // statusForCoded 决定 CodedError 的 HTTP 状态：优先哨兵语义，其次错误码。

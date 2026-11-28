@@ -4,9 +4,11 @@ name: build-and-push
 #   - push main：只跑校验（go vet + test + bean-check + 版本一致），不产镜像
 #     → 相当于免费的 CI 守护，每次提交就知道有没有破坏账芯
 #   - push tag v*：校验通过后构建 amd64+arm64 并推送 Docker Hub。
-#     但只有「正式 tag」（严格 vX.Y.Z，如 v0.6.4）才创建 GitHub Release；
-#     非正式 tag（如 v0.6.4-pre、v1.2.3-rc.1）只跑校验（若版本校验通过）或至多构建，
-#     绝不创建 Release —— Release 会把 tag 钉住，导致无法强推/移动 tag。
+#     镜像标签分两档：
+#       * 版本号 tag（如 :0.6.4-pre）—— 所有 v* tag / 手动 push_image 都打；
+#       * :latest —— 只有「正式 tag」（严格 vX.Y.Z，如 v0.6.4）才打，
+#         非正式 tag / 手动 dispatch 绝不覆盖 :latest，避免预发布版本顶掉稳定版。
+#     Release 同样只给正式 tag 创建 —— Release 会把 tag 钉住，导致无法强推/移动 tag。
 #     正式 tag 才允许 Release（notes 取 CHANGELOG.md 对应版本段落）。
 #   - workflow_dispatch：手动触发；默认只校验，勾选 push_image 才真正推镜像
 on:
@@ -197,6 +199,32 @@ jobs:
           echo "date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
           echo "hash=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
+      # 标签渲染：版本号 tag 恒打；:latest 仅正式 SemVer tag（is_release_tag=true）才打。
+      # 用 GITHUB_OUTPUT 多行值喂给 build-push-action 的 tags，避免把条件塞进 YAML 字面量。
+      # 非正式 tag（v0.6.4-pre / v1.2.3-rc.1）与手动 dispatch 只出版本号 tag，
+      # 绝不覆盖 :latest —— 预发布不得顶掉稳定版。
+      - name: Resolve image tags
+        id: tags
+        env:
+          IMAGE_REF: ${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          IS_RELEASE_TAG: ${{ needs.verify.outputs.is_release_tag }}
+        run: |
+          {
+            echo "list<<TAGS_EOF"
+            echo "${IMAGE_REF}:${VERSION}"
+            if [ "${IS_RELEASE_TAG}" = "true" ]; then
+              echo "${IMAGE_REF}:latest"
+            fi
+            echo "TAGS_EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "镜像标签："
+          if [ "${IS_RELEASE_TAG}" = "true" ]; then
+            echo "  ${IMAGE_REF}:${VERSION}  ${IMAGE_REF}:latest"
+          else
+            echo "  ${IMAGE_REF}:${VERSION}  （非正式 tag / 手动触发，不打 :latest）"
+          fi
+
       - name: Build and push (amd64 + arm64)
         uses: docker/build-push-action@v7
         with:
@@ -208,21 +236,28 @@ jobs:
             BUILD_DATE=${{ steps.info.outputs.date }}
             BUILD_HASH=${{ steps.info.outputs.hash }}
             GIT_VERSION=${{ needs.verify.outputs.version }}
-          tags: |
-            ${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:${{ needs.verify.outputs.version }}
-            ${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+          tags: ${{ steps.tags.outputs.list }}
           # Node/Vite 构建较 Flutter 轻量，但 gha 缓存仍能省掉 npm ci 与重复编译
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Summary
+        env:
+          IMAGE_REF: ${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          IS_RELEASE_TAG: ${{ needs.verify.outputs.is_release_tag }}
         run: |
           {
             echo "### 镜像已发布"
             echo ""
-            echo "- 版本：\`${{ needs.verify.outputs.version }}\`"
+            echo "- 版本：\`${VERSION}\`"
             echo "- 架构：linux/amd64, linux/arm64"
-            echo "- 标签：\`${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:${{ needs.verify.outputs.version }}\`、\`:latest\`"
+            echo "- 标签：\`${IMAGE_REF}:${VERSION}\`"
+            if [ "${IS_RELEASE_TAG}" = "true" ]; then
+              echo "      并打 \`:latest\`（正式 SemVer tag）"
+            else
+              echo "      未打 \`:latest\`（非正式 tag / 手动触发，避免覆盖稳定版）"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------- 发布收尾：仅正式 tag 构建成功后创建 GitHub Release ----------

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"time"
 
@@ -226,6 +227,25 @@ func (s *Service) SyncPush(ledgerID, userID int64, req PushRequest) (PushResultO
 				pr.Code = domain.CodeAccountBalanceNotZero
 				pr.Balances = bz.Balances
 			}
+			// P2 最小集：逐条拒绝的服务端诊断日志（纯副作用，不改变 pr/results/accepted）。
+			// 只在真正拒绝时记录；幂等跳过 / 自然键合并在成功分支，不会落到这里。
+			// code 与前端 PushResult 对齐；无稳定码填 internal，便于 docker logs grep 对照。
+			code := pr.Code
+			if code == "" {
+				code = "internal"
+			}
+			slog.Warn("sync.push.reject",
+				"event", "sync.push.reject",
+				"ledger_id", ledgerID,
+				"user_id", userID,
+				"client_id", req.ClientID,
+				"index", idx,
+				"entity_type", c.EntityType,
+				"op", op,
+				"uuid", pr.UUID,
+				"code", code,
+				"err", err.Error(),
+			)
 			results = append(results, pr)
 			return
 		}

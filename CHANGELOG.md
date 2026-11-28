@@ -14,12 +14,14 @@
 
 - **同步失败可观测性**：`SyncState.lastSyncError` 带真实 code/message/at/phase 且成功时清空；`PendingEntry` 补 `display_label` 等 7 个可观测字段；`errorMessages.ts` 薄映射错误码（未知码原文透传）；`/sync` 页四段信息架构（错误横幅 / 重试中 / 死信 / 摘要条）、批量限组内、徽标按可处置状态、移动端展开复制、导出补 `last_error` 全文。
 - **批量处置**：`retryNow(ledgerId, ids)` 双实现（保留 attempts）+ `requestRetry` 仅持租约 tab 执行；失败子集单一 `isRetryingPending` 来源贯穿引擎 / store / UI / 徽标。
+- **服务端日志最小集（第一段）**：push 逐条拒绝记 `sync.push.reject` WARN（ledger/user/client/index/entity/op/uuid/code/err，与前端 code 对齐）；`writeError` 未映射未知错误记 `http.error` ERROR，已知 4xx / CodedError 不记。走标准库 `slog` 输出到 stderr（`docker logs` 可见），不引依赖、不落盘、不改变任何响应与同步行为。
 
 ### Fixed
 
 - **多条推送结果落库一致性**：`applyPushOutcome` 单事务合并四类处置；results 数量与 index 严格校验，异常整批退避不删除；`decideDisposition` 纯函数化，`account_not_found` 按条目判定不再全局连坐；多条死信独立记录 code/error。
 - **账本隔离**：pending 行补 `ledger_id`，读写全链路加账本守卫；修复 IDB `change`/`v` 读写不一致与无 keyPath store 的 DataError。
 - **CI Release tag 门禁**：仅严格 `vX.Y.Z` 正式 tag 创建 GitHub Release，非正式 tag（如 `-pre` / `-rc`）只跑校验，避免 Release 钉住 tag 无法强推。
+- **CI `:latest` 收紧**：版本号 tag 恒打；`:latest` 仅正式 SemVer tag 才打，预发布 / rc / 手动 dispatch 只出版本号 tag，不再覆盖稳定版 `:latest`。
 
 ### Changed
 
