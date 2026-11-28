@@ -20,6 +20,7 @@ import push6 from './fixtures/push-6-account-closed.json'
 import {
   SyncEngine,
   decideDisposition,
+  toSyncError,
   validatePushResults,
   type PushChange,
   type SyncApiClient,
@@ -721,5 +722,165 @@ describe('P0：push 结果落地路径', () => {
 
     expect(outcomeSpy).toHaveBeenCalledTimes(1)
     expect(resultsSpy).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// P1 可观测性与立即重试
+// ---------------------------------------------------------------------------
+
+describe('P1：顶层错误通道 / 逐条错误隔离', () => {
+  function record(store: MemorySyncStore, key: string): Promise<number> {
+    return store.recordEntry(LID, {
+      pending: { entity_type: 'transaction', key, entity: { uuid: key } },
+    })
+  }
+
+  it('pull 抛网络错误：SyncState 带真实 code/message/at/phase，成功同步后清空', async () => {
+    const now = 3_000_000
+    const store = new MemorySyncStore()
+    let fail = true
+    const api: SyncApiClient = {
+      pull: async () => {
+        if (fail) throw Object.assign(new Error('net down'), { code: 'network_error', status: 0 })
+        return pullResp([], 0)
+      },
+      push: async () => pullResp([], 0) as unknown as SyncPushResponse,
+    }
+    const engine = new SyncEngine(store, api, () => LID, { now: () => now })
+
+    expect(await engine.sync()).toBe('offline')
+    expect(await engine.getState()).toMatchObject({
+      status: 'offline',
+      lastSyncError: { code: 'network_error', message: 'net down', at: now, phase: 'pull' },
+    })
+
+    fail = false
+    expect(await engine.sync()).toBe('ok')
+    expect((await engine.getState()).lastSyncError).toBeUndefined()
+  })
+
+  it('push 抛 5xx：phase=push，code 由 status 生成，message 不丢', async () => {
+    const now = 4_000_000
+    const store = new MemorySyncStore()
+    await record(store, 'a')
+    const api = makeApi({ pulls: [pullResp([], 0)] })
+    api.push = async () => {
+      throw Object.assign(new Error('server exploded'), { status: 503 })
+    }
+    const engine = new SyncEngine(store, api, () => LID, { now: () => now })
+
+    expect(await engine.sync()).toBe('offline')
+    expect((await engine.getState()).lastSyncError).toEqual({
+      code: 'http_503',
+      message: 'server exploded',
+      at: now,
+      phase: 'push',
+    })
+  })
+
+  it('toSyncError：401/403 归一，未知抛出形态也不丢文案', () => {
+    expect(toSyncError({ status: 401 }, 'pull', 1).code).toBe('unauthorized')
+    expect(toSyncError({ status: 403 }, 'push', 1).code).toBe('forbidden')
+    expect(toSyncError(new Error('boom'), 'push', 9)).toEqual({
+      code: 'unknown_error',
+      message: 'boom',
+      at: 9,
+      phase: 'push',
+    })
+  })
+
+  it('网络退避不把顶层文案灌进本来干净的 last_error，已有逐条错误保留', async () => {
+    const now = 5_000_000
+    const store = new MemorySyncStore()
+    const fresh = await record(store, 'fresh')
+    const stale = await record(store, 'stale')
+    await store.scheduleRetry(LID, stale, 1, 0, 'validation', '原有逐条错误')
+    const api: SyncApiClient = {
+      pull: async () => {
+        throw Object.assign(new Error('顶层网络文案'), { code: 'network_error', status: 0 })
+      },
+      push: async () => pullResp([], 0) as unknown as SyncPushResponse,
+    }
+    await new SyncEngine(store, api, () => LID, { now: () => now }).sync()
+
+    const pending = await store.getPending(LID, 'pending')
+    const freshRow = pending.find((entry) => entry.id === fresh)
+    const staleRow = pending.find((entry) => entry.id === stale)
+    expect(freshRow?.attempts).toBe(1)
+    expect(freshRow?.last_error ?? '').not.toContain('顶层网络文案')
+    expect(staleRow?.last_error).toBe('原有逐条错误')
+    expect(staleRow?.attempts).toBe(2)
+  })
+})
+
+describe('P1：requestRetry 与本次同步摘要', () => {
+  function record(store: MemorySyncStore, key: string): Promise<number> {
+    return store.recordEntry(LID, {
+      pending: { entity_type: 'transaction', key, entity: { uuid: key } },
+    })
+  }
+
+  it('持租约 tab：retryNow + sync 一步完成；非 leader 跳过且不动队列', async () => {
+    const now = 6_000_000
+    const store = new MemorySyncStore()
+    const id = await record(store, 'retry-me')
+    await store.scheduleRetry(LID, id, 3, now + 99_999, 'busy', 'boom')
+    const api = makeApi({
+      pulls: [pullResp([], 0), pullResp([], 0)],
+      pushes: [
+        {
+          instance_id: INSTANCE,
+          checkpoint: 12,
+          accepted: 1,
+          results: [{ index: 0, entity_type: 'transaction', uuid: 'retry-me', status: 'ok', accepted: true }],
+        },
+      ],
+    })
+    const engine = new SyncEngine(store, api, () => LID, { now: () => now })
+    expect(await engine.requestRetry([id])).toBe('ok')
+    expect(api.pushBodies).toHaveLength(1)
+    expect(await store.countPending(LID)).toBe(0)
+
+    const otherStore = new MemorySyncStore()
+    const otherId = await record(otherStore, 'not-mine')
+    await otherStore.scheduleRetry(LID, otherId, 2, now + 88_888, 'busy', 'x')
+    const otherEngine = new SyncEngine(otherStore, makeApi({ pulls: [] }), () => LID, { now: () => now })
+    await otherStore.tryAcquireLease('other-tab', now, 90_000)
+    expect(await otherEngine.requestRetry([otherId])).toBe('skipped')
+    const rows = await otherStore.getPending(LID, 'pending')
+    expect(rows[0].attempts).toBe(2)
+    expect(rows[0].next_retry_at).toBe(now + 88_888)
+  })
+
+  it('摘要成功/重试/死信三数取最终队列，与列表口径一致', async () => {
+    const now = 7_000_000
+    const store = new MemorySyncStore()
+    await record(store, 'ok')
+    await record(store, 'dead')
+    await record(store, 'wait')
+    const api = makeApi({
+      pulls: [pullResp([], 0), pullResp([], 0)],
+      pushes: [
+        {
+          instance_id: INSTANCE,
+          checkpoint: 77,
+          accepted: 1,
+          results: [
+            { index: 0, entity_type: 'transaction', uuid: 'ok', status: 'ok', accepted: true },
+            { index: 1, entity_type: 'transaction', status: 'error', accepted: false, code: 'account_closed', error: 'closed' },
+            { index: 2, entity_type: 'transaction', status: 'error', accepted: false, code: 'server_busy', error: 'busy' },
+          ],
+        },
+      ],
+    })
+    const engine = new SyncEngine(store, api, () => LID, { now: () => now })
+    expect(await engine.sync()).toBe('ok')
+    expect((await engine.getState()).lastSyncSummary).toEqual({
+      success: 1,
+      retry: 1,
+      dead: 1,
+      at: now,
+    })
   })
 })

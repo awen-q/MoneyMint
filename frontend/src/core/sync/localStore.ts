@@ -19,6 +19,7 @@
  * 双实现：IndexedDB（生产，`typeof indexedDB !== 'undefined'`）与内存
  * （jsdom 单测 / 无 IndexedDB 环境降级）。两者行为由同一组测试约束。
  */
+import { describePendingChange } from './models'
 import type {
   LocalAccount,
   LocalTxn,
@@ -123,6 +124,11 @@ export interface SyncStore {
     error: string,
   ): Promise<void>
   reviveDead(ledgerId: number, ids: number[]): Promise<void>
+  /**
+   * 立即重试（P1）：单事务把指定 pending 项 next_retry_at 归零，保留 attempts；
+   * 同时清掉逐条错误，使其回到「正常排队」。幂等，严格按账本 + state 守卫。
+   */
+  retryNow(ledgerId: number, ids: number[]): Promise<void>
   discardPending(ledgerId: number, ids: number[]): Promise<void>
 
   /**
@@ -226,12 +232,16 @@ export class MemorySyncStore implements SyncStore {
     }
     const id = this.nextId
     this.nextId += 1
+    const now = Date.now()
     this.pendings.set(id, {
       id,
       ledger_id: ledgerId,
       state: 'pending',
       attempts: 0,
       next_retry_at: 0,
+      created_at: now,
+      state_changed_at: now,
+      ...describePendingChange(input.pending),
       change: input.pending,
     })
     return id
@@ -280,6 +290,7 @@ export class MemorySyncStore implements SyncStore {
     }
 
     // 死信：逐条保存 code/error，且仅对仍为 pending 的同账本行生效（幂等）。
+    const changedAt = Date.now()
     for (const item of input.dead) {
       const cur = this.pendings.get(item.id)
       if (ownsPendingRow(cur, ledgerId) && cur.state === 'pending') {
@@ -288,6 +299,8 @@ export class MemorySyncStore implements SyncStore {
           state: 'dead',
           last_error_code: item.code,
           last_error: item.error,
+          state_changed_at: changedAt,
+          last_attempt_at: changedAt,
         })
       }
     }
@@ -301,6 +314,8 @@ export class MemorySyncStore implements SyncStore {
           next_retry_at: item.nextRetryAt,
           last_error_code: item.code,
           last_error: item.error,
+          state_changed_at: changedAt,
+          last_attempt_at: changedAt,
         })
       }
     }
@@ -386,6 +401,7 @@ export class MemorySyncStore implements SyncStore {
   }
 
   async markDead(ledgerId: number, items: DeadOutcome[]): Promise<void> {
+    const changedAt = Date.now()
     for (const item of items) {
       const cur = this.pendings.get(item.id)
       if (ownsPendingRow(cur, ledgerId) && cur.state === 'pending') {
@@ -394,6 +410,8 @@ export class MemorySyncStore implements SyncStore {
           state: 'dead',
           last_error_code: item.code,
           last_error: item.error,
+          state_changed_at: changedAt,
+          last_attempt_at: changedAt,
         })
       }
     }
@@ -409,22 +427,50 @@ export class MemorySyncStore implements SyncStore {
   ): Promise<void> {
     const cur = this.pendings.get(id)
     if (ownsPendingRow(cur, ledgerId) && cur.state === 'pending') {
+      const changedAt = Date.now()
       this.pendings.set(id, {
         ...cur,
         attempts,
         next_retry_at: nextRetryAt,
         last_error_code: code,
         last_error: error,
+        state_changed_at: changedAt,
+        last_attempt_at: changedAt,
       })
     }
   }
 
   async reviveDead(ledgerId: number, ids: number[]): Promise<void> {
+    const changedAt = Date.now()
     for (const id of ids) {
       const cur = this.pendings.get(id)
       if (ownsPendingRow(cur, ledgerId) && cur.state === 'dead') {
-        this.pendings.set(id, { ...cur, state: 'pending', attempts: 0, next_retry_at: 0 })
+        this.pendings.set(id, {
+          ...cur,
+          state: 'pending',
+          attempts: 0,
+          next_retry_at: 0,
+          last_error: undefined,
+          last_error_code: undefined,
+          state_changed_at: changedAt,
+        })
       }
+    }
+  }
+
+  async retryNow(ledgerId: number, ids: number[]): Promise<void> {
+    const changedAt = Date.now()
+    for (const id of new Set(ids)) {
+      const cur = this.pendings.get(id)
+      if (!ownsPendingRow(cur, ledgerId) || cur.state !== 'pending') continue
+      this.pendings.set(id, {
+        ...cur,
+        next_retry_at: 0,
+        last_error: undefined,
+        last_error_code: undefined,
+        state_changed_at: changedAt,
+        // attempts 刻意保留：立即重试不是「重新记账」，失败次数仍是真实观测。
+      })
     }
   }
 
@@ -442,6 +488,7 @@ export class MemorySyncStore implements SyncStore {
     for (const key of [...this.txns.keys()]) {
       if (key.startsWith(prefix)) this.txns.delete(key)
     }
+    const now = Date.now()
     for (const entry of this.pendings.values()) {
       if (ownsPendingRow(entry, ledgerId) && entry.state === 'pending') {
         this.pendings.set(entry.id, {
@@ -449,6 +496,8 @@ export class MemorySyncStore implements SyncStore {
           state: 'dead',
           last_error_code: 'instance_rotated',
           last_error: '服务端账本已被还原，本条待同步变更已隔离（同步页可导出后丢弃或重试）',
+          state_changed_at: now,
+          last_attempt_at: now,
         })
       }
     }

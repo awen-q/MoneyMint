@@ -95,8 +95,26 @@ export interface PendingChange {
   entity: Record<string, unknown>
 }
 
+/**
+ * P1 可观测字段（全部可选，兼容升级前落库的旧行）。
+ *
+ * `display_label` 在 `recordEntry` 写入时生成：UI 不再解析 `change.entity`，
+ * 也不必猜测交易描述 / 账户名 / 币种 uuid 展示在哪一个字段。
+ * 三个时间戳均为毫秒 epoch；`state_changed_at` 在转死信 / 改退避 / 立即重试时更新，
+ * `last_attempt_at` 只在真实尝试（push 结果或退避）时更新。
+ */
+export interface PendingObservability {
+  entity_type?: PendingChange['entity_type']
+  op?: PendingChange['op']
+  entity_uuid?: string
+  display_label?: string
+  created_at?: number
+  state_changed_at?: number
+  last_attempt_at?: number
+}
+
 /** 待推送条目（含死信元数据；id 由存储层分配，单调递增保序）。 */
-export interface PendingEntry {
+export interface PendingEntry extends PendingObservability {
   id: number
   /**
    * 归属账本（P0 补写）。旧数据可能没有该字段：一律视为「未知归属」，
@@ -110,6 +128,61 @@ export interface PendingEntry {
   /** 下次重试时间戳（ms）；0 表示立即可推。 */
   next_retry_at: number
   change: PendingChange
+}
+
+/** uuid 只取前 8 位作为人可读兜底摘要（旧版日志口径）。 */
+export function shortUuid(uuid: string): string {
+  const value = uuid.trim()
+  return value.length > 8 ? value.slice(0, 8) : value
+}
+
+/** 从待推变更生成可观测摘要；纯函数，两个 SyncStore 实现共用。 */
+export function describePendingChange(
+  change: PendingChange,
+): Required<Pick<PendingEntry, 'entity_type' | 'op' | 'entity_uuid' | 'display_label'>> {
+  const entity = change.entity ?? {}
+  const rawUuid =
+    typeof entity['uuid'] === 'string' && entity['uuid'].trim() !== ''
+      ? entity['uuid']
+      : change.key
+  const readText = (field: string): string => {
+    const value = entity[field]
+    return typeof value === 'string' ? value.trim() : ''
+  }
+
+  let label = ''
+  if (change.entity_type === 'transaction') {
+    label = readText('description') || shortUuid(rawUuid)
+  } else if (change.entity_type === 'account') {
+    label = readText('display_name') || readText('name') || shortUuid(rawUuid)
+  } else if (change.entity_type === 'commodity') {
+    label = rawUuid
+  } else {
+    label = shortUuid(rawUuid)
+  }
+
+  return {
+    entity_type: change.entity_type,
+    op: change.op ?? 'create',
+    entity_uuid: rawUuid,
+    display_label: label === '' ? shortUuid(rawUuid) : label,
+  }
+}
+
+/**
+ * 「重试中」= 尚未死信、但已失败过且当前有逐条错误或仍处在退避窗口。
+ *
+ * `retryNow` 会清掉逐条错误并把 next_retry_at 归零，条目随即回到「正常排队」，
+ * 直到下一轮 push 再次失败才重新出现在 UI 的失败列表里。
+ */
+export function isRetryingPending(entry: PendingEntry, now: number = Date.now()): boolean {
+  return (
+    entry.state === 'pending' &&
+    entry.attempts > 0 &&
+    (typeof entry.last_error === 'string' && entry.last_error !== ''
+      ? true
+      : entry.next_retry_at > now)
+  )
 }
 
 /** push 逐条结果（对齐 wire `results[]`；status 为字符串以兼容宽松解析）。 */

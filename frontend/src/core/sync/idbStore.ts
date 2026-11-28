@@ -12,6 +12,7 @@
  * Safari 14.1 兼容：只用最基础的 IDB API（open / transaction / objectStore /
  * get / put / delete / getAll + IDBKeyRange），不用 cursor 高级特性。
  */
+import { describePendingChange } from './models'
 import type {
   LocalAccount,
   LocalTxn,
@@ -53,6 +54,13 @@ interface PendingRow {
   next_retry_at: number
   last_error_code?: string
   last_error?: string
+  entity_type?: PendingEntry['entity_type']
+  op?: PendingEntry['op']
+  entity_uuid?: string
+  display_label?: string
+  created_at?: number
+  state_changed_at?: number
+  last_attempt_at?: number
   v?: PendingChange
   change?: PendingChange
 }
@@ -203,11 +211,16 @@ export class IdbSyncStore implements SyncStore {
         )
       }
       // P0：显式写归属；`v` 与 getPending / applyPushOutcome 的字段名保持一致。
+      // P1：摘要就地生成，UI 无需解析实体；时间戳给失败时间倒序用。
+      const now = Date.now()
       const entry: Omit<PendingRow, 'id'> = {
         ledger_id: ledgerId,
         state: 'pending',
         attempts: 0,
         next_retry_at: 0,
+        created_at: now,
+        state_changed_at: now,
+        ...describePendingChange(input.pending),
         v: input.pending,
       }
       const id = await reqAs(t.objectStore(S_PENDING).add(entry) as IDBRequest<IDBValidKey>)
@@ -292,6 +305,7 @@ export class IdbSyncStore implements SyncStore {
         }
       }
       // 死信：逐条 code/error，只对仍为 pending 的同账本行生效（幂等）。
+      const changedAt = Date.now()
       for (const item of input.dead) {
         const row = await readRow(item.id)
         if (ownsPendingRow(row, ledgerId) && row.state === 'pending') {
@@ -301,6 +315,8 @@ export class IdbSyncStore implements SyncStore {
               state: 'dead',
               last_error_code: item.code,
               last_error: item.error,
+              state_changed_at: changedAt,
+              last_attempt_at: changedAt,
             },
           )
         }
@@ -316,6 +332,8 @@ export class IdbSyncStore implements SyncStore {
               next_retry_at: item.nextRetryAt,
               last_error_code: item.code,
               last_error: item.error,
+              state_changed_at: changedAt,
+              last_attempt_at: changedAt,
             },
           )
         }
@@ -430,6 +448,13 @@ export class IdbSyncStore implements SyncStore {
         next_retry_at: r.next_retry_at,
         last_error_code: r.last_error_code,
         last_error: r.last_error,
+        entity_type: r.entity_type,
+        op: r.op,
+        entity_uuid: r.entity_uuid,
+        display_label: r.display_label,
+        created_at: r.created_at,
+        state_changed_at: r.state_changed_at,
+        last_attempt_at: r.last_attempt_at,
         change,
       })
     }
@@ -443,6 +468,7 @@ export class IdbSyncStore implements SyncStore {
   async markDead(ledgerId: number, items: DeadOutcome[]): Promise<void> {
     await this.tx([S_PENDING], async (t) => {
       const store = t.objectStore(S_PENDING)
+      const changedAt = Date.now()
       for (const item of items) {
         const row = await reqAs(store.get(item.id) as IDBRequest<PendingRow | undefined>)
         if (ownsPendingRow(row, ledgerId) && row.state === 'pending') {
@@ -452,6 +478,8 @@ export class IdbSyncStore implements SyncStore {
               state: 'dead',
               last_error_code: item.code,
               last_error: item.error,
+              state_changed_at: changedAt,
+              last_attempt_at: changedAt,
             },
           )
         }
@@ -472,6 +500,7 @@ export class IdbSyncStore implements SyncStore {
       const store = t.objectStore(S_PENDING)
       const row = await reqAs(store.get(id) as IDBRequest<PendingRow | undefined>)
       if (ownsPendingRow(row, ledgerId) && row.state === 'pending') {
+        const changedAt = Date.now()
         store.put(
           {
             ...(row as PendingRow),
@@ -479,6 +508,8 @@ export class IdbSyncStore implements SyncStore {
             next_retry_at: nextRetryAt,
             last_error_code: code,
             last_error: error,
+            state_changed_at: changedAt,
+            last_attempt_at: changedAt,
           },
         )
       }
@@ -489,11 +520,40 @@ export class IdbSyncStore implements SyncStore {
   async reviveDead(ledgerId: number, ids: number[]): Promise<void> {
     await this.tx([S_PENDING], async (t) => {
       const store = t.objectStore(S_PENDING)
+      const changedAt = Date.now()
       for (const id of ids) {
         const row = await reqAs(store.get(id) as IDBRequest<PendingRow | undefined>)
         if (ownsPendingRow(row, ledgerId) && row.state === 'dead') {
-          store.put({ ...(row as PendingRow), state: 'pending', attempts: 0, next_retry_at: 0 })
+          store.put({
+            ...(row as PendingRow),
+            state: 'pending',
+            attempts: 0,
+            next_retry_at: 0,
+            last_error: undefined,
+            last_error_code: undefined,
+            state_changed_at: changedAt,
+          })
         }
+      }
+      await Promise.resolve()
+    })
+  }
+
+  /** P1：与 MemorySyncStore.retryNow 同契约，单事务、账本守卫、保留 attempts。 */
+  async retryNow(ledgerId: number, ids: number[]): Promise<void> {
+    await this.tx([S_PENDING], async (t) => {
+      const store = t.objectStore(S_PENDING)
+      const changedAt = Date.now()
+      for (const id of new Set(ids)) {
+        const row = await reqAs(store.get(id) as IDBRequest<PendingRow | undefined>)
+        if (!ownsPendingRow(row, ledgerId) || row.state !== 'pending') continue
+        store.put({
+          ...(row as PendingRow),
+          next_retry_at: 0,
+          last_error: undefined,
+          last_error_code: undefined,
+          state_changed_at: changedAt,
+        })
       }
       await Promise.resolve()
     })
@@ -526,6 +586,7 @@ export class IdbSyncStore implements SyncStore {
       const pendingStore = t.objectStore(S_PENDING)
       const pendingRows =
         (await reqAs(pendingStore.getAll() as IDBRequest<PendingRow[]>)) ?? []
+      const now = Date.now()
       for (const row of pendingRows) {
         if (ownsPendingRow(row, ledgerId) && row.state === 'pending') {
           pendingStore.put(
@@ -534,6 +595,8 @@ export class IdbSyncStore implements SyncStore {
               state: 'dead',
               last_error_code: 'instance_rotated',
               last_error: '服务端账本已被还原，本条待同步变更已隔离（同步页可导出后丢弃或重试）',
+              state_changed_at: now,
+              last_attempt_at: now,
             },
           )
         }

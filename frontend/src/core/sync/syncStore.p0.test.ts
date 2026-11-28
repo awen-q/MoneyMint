@@ -164,6 +164,48 @@ async function assertStoreContract(
   await store.discardPending(LEDGER_A, [9001])
   await store.markDead(LEDGER_B, [{ id: 9001, code: 'x', error: 'x' }])
   expect(await legacyExists()).toBe(true)
+
+  // ⑨ P1：写入口生成可观测摘要；retryNow 清退避但保留 attempts，跨账本不动。
+  const retryId = await store.recordEntry(LEDGER_A, {
+    account: {
+      uuid: 'acc-observe',
+      name: 'Assets:Cash',
+      display_name: '现金',
+      type: 'Assets',
+      open_date: '2026-01-01',
+    },
+    pending: {
+      entity_type: 'account',
+      key: 'acc-observe',
+      entity: { uuid: 'acc-observe', name: 'Assets:Cash', display_name: '现金' },
+    },
+  })
+  const written = (await store.getPending(LEDGER_A)).find((entry) => entry.id === retryId)
+  expect(written?.entity_type).toBe('account')
+  expect(written?.op).toBe('create')
+  expect(written?.entity_uuid).toBe('acc-observe')
+  expect(written?.display_label).toBe('现金')
+  expect(written?.created_at ?? 0).toBeGreaterThan(0)
+
+  await store.scheduleRetry(LEDGER_A, retryId, 3, 9_999_999, 'busy', '逐条错误')
+  await store.scheduleRetry(LEDGER_B, b1, 5, 8_888_888, 'other', 'other')
+  await store.retryNow(LEDGER_A, [retryId, b1])
+  const retried = (await store.getPending(LEDGER_A)).find((entry) => entry.id === retryId)
+  expect(retried?.next_retry_at).toBe(0)
+  expect(retried?.attempts).toBe(3)
+  expect(retried?.last_error ?? '').toBe('')
+  expect(retried?.state_changed_at ?? 0).toBeGreaterThan(0)
+  const untouchedB = (await store.getPending(LEDGER_B)).find((entry) => entry.id === b1)
+  expect(untouchedB?.next_retry_at).toBe(8_888_888)
+  expect(untouchedB?.attempts).toBe(5)
+
+  // 幂等：重复 retryNow 不改 attempts。
+  await store.retryNow(LEDGER_A, [retryId])
+  expect((await store.getPending(LEDGER_A)).find((entry) => entry.id === retryId)?.attempts).toBe(3)
+  // 死信不在 retryNow 作用域内（需先 reviveDead）。
+  await store.markDead(LEDGER_A, [{ id: retryId, code: 'validation', error: 'x' }])
+  await store.retryNow(LEDGER_A, [retryId])
+  expect((await store.getPending(LEDGER_A, 'dead')).some((entry) => entry.id === retryId)).toBe(true)
 }
 
 describe('P0：MemorySyncStore 账本隔离与单事务处置', () => {

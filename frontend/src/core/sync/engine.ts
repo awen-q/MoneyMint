@@ -17,13 +17,13 @@
  *
  * 同步节奏与旧版一致：pull → push（最多两轮，自然键合并重映射）→ pull。
  */
-import { ApiError } from '@/api/errors'
 import type { SyncPullResponse, PushChange, SyncPushResponse, PushResult } from '@/api/types'
 
 /** push 请求里的一条变更（wire：entity_type / op / entity）。 */
 export type { PushChange }
 import {
   classifyResult,
+  isRetryingPending,
   DEAD_CODES,
   type LocalAccount,
   type LocalTxn,
@@ -48,11 +48,64 @@ export type SyncOutcome = 'ok' | 'offline' | 'error' | 'skipped'
 
 export type SyncStatus = 'idle' | 'syncing' | 'ok' | 'offline' | 'error'
 
+/** 顶层错误的发生阶段；lease = 租约 / 启动阶段，拿不到抛出点时默认 push。 */
+export type SyncErrorPhase = 'pull' | 'push' | 'lease'
+
+/** 顶层错误（网络 / 5xx / 4xx / 401 之外的 API 错误）的可观测形态。 */
+export interface SyncErrorInfo {
+  code: string
+  message: string
+  at: number
+  phase: SyncErrorPhase
+}
+
+/** 本次同步结果摘要：成功数取自 push 结果，重试/死信取最终队列状态。 */
+export interface SyncSummary {
+  success: number
+  retry: number
+  dead: number
+  at: number
+}
+
 export interface SyncState {
   status: SyncStatus
   lastSyncAt: number
   pendingCount: number
   deadCount: number
+  /** P1：顶层错误；成功同步后清空。 */
+  lastSyncError?: SyncErrorInfo
+  /** P1：本次同步摘要，保留到下一轮同步结束才覆盖。 */
+  lastSyncSummary?: SyncSummary
+}
+
+/**
+ * 任意抛出形态 → 顶层错误对象（纯函数，供引擎与 store 共用）。
+ *
+ * 不再只把 err.status 映射成状态而丢掉 code/message：UI 需要真实文案与阶段。
+ */
+export function toSyncError(err: unknown, phase: SyncErrorPhase, now: number): SyncErrorInfo {
+  const record: Record<string, unknown> =
+    typeof err === 'object' && err !== null ? (err as Record<string, unknown>) : {}
+  const rawCode = typeof record['code'] === 'string' && record['code'] !== '' ? record['code'] : undefined
+  const status = typeof record['status'] === 'number' ? record['status'] : undefined
+  const code =
+    rawCode ??
+    (status === 401
+      ? 'unauthorized'
+      : status === 403
+        ? 'forbidden'
+        : status !== undefined
+          ? `http_${status}`
+          : 'unknown_error')
+  const message =
+    typeof record['message'] === 'string' && record['message'] !== ''
+      ? record['message']
+      : err instanceof Error && err.message !== ''
+        ? err.message
+        : typeof err === 'string'
+          ? err
+          : String(err)
+  return { code, message, at: now, phase }
 }
 
 /**
@@ -216,6 +269,8 @@ export class SyncEngine {
   private dataChangeSeq = 0
   private statusValue: SyncStatus = 'idle'
   private lastSyncAt = 0
+  private lastSyncError: SyncErrorInfo | undefined
+  private lastSyncSummary: SyncSummary | undefined
   private readonly leaseTtlMs: number
   private readonly maxPushRounds: number
   private readonly nowFn: () => number
@@ -258,17 +313,31 @@ export class SyncEngine {
     }
   }
 
-  /** 从 store 读取真实队列计数（P0：getState 与 emit 共用同一口径）。 */
+  /** 从 store 读取真实队列计数（P0：getState 与 emit 共用同一口径；P1 带错误/摘要）。 */
   private async snapshot(status: SyncStatus): Promise<SyncState> {
     const ledgerId = this.ledgerIdProvider()
     if (ledgerId === null) {
-      return { status, lastSyncAt: this.lastSyncAt, pendingCount: 0, deadCount: 0 }
+      return {
+        status,
+        lastSyncAt: this.lastSyncAt,
+        pendingCount: 0,
+        deadCount: 0,
+        lastSyncError: this.lastSyncError,
+        lastSyncSummary: this.lastSyncSummary,
+      }
     }
     const [pendingCount, deadCount] = await Promise.all([
       this.store.countPending(ledgerId, 'pending'),
       this.store.countPending(ledgerId, 'dead'),
     ])
-    return { status, lastSyncAt: this.lastSyncAt, pendingCount, deadCount }
+    return {
+      status,
+      lastSyncAt: this.lastSyncAt,
+      pendingCount,
+      deadCount,
+      lastSyncError: this.lastSyncError,
+      lastSyncSummary: this.lastSyncSummary,
+    }
   }
 
   private async emit(status: SyncStatus): Promise<void> {
@@ -312,6 +381,8 @@ export class SyncEngine {
     const clientId = await this.store.getClientId()
     const holder = `sync-${clientId}`
     let leaseHeld = false
+    // P1：抛出点即错误阶段；拿不到时按 push 处理（绝大多数 API 错误来自 push）。
+    let phase: SyncErrorPhase = 'lease'
     try {
       await this.emit('syncing')
       // §6.6.1 #4：非 leader 跳过（另一个标签页在同步）。
@@ -322,15 +393,20 @@ export class SyncEngine {
       }
 
       // ① pull（增量；库世代不匹配时内部会全量重拉）。
+      phase = 'pull'
       const first = await this.pullNow(ledgerId, clientId, false)
 
       // ② push 循环（自然键合并重映射，最多 maxPushRounds 轮）。
-      await this.pushLoop(ledgerId, clientId)
+      phase = 'push'
+      const success = await this.pushLoop(ledgerId, clientId)
 
       // ③ 再 pull：合并 push 后服务端事件（含他人删除等）。
+      phase = 'pull'
       const second = await this.pullNow(ledgerId, clientId, false)
 
       this.lastSyncAt = this.nowFn()
+      this.lastSyncError = undefined
+      await this.refreshSummary(ledgerId, success)
       await this.emit('ok')
       // 两轮 pull 聚合为**一次**变更事件：空变化（60s 心跳）不通知，
       // 避免每分钟全设备无谓重拉。世代重置优先于普通 pull 原因。
@@ -341,17 +417,21 @@ export class SyncEngine {
       }
       return 'ok'
     } catch (err) {
+      // P1：真实 code/message/at/phase 写进 SyncState，不再只映射 status 丢详情。
+      this.lastSyncError = toSyncError(err, phase, this.nowFn())
       // 网络 / 5xx：离线退避（不要求 ApiError 实例，容错任意抛出形态）。
       const status = (err as { status?: unknown }).status
       const code = (err as { code?: unknown }).code
       const isOffline =
         code === 'network_error' || (typeof status === 'number' && status >= 500)
       if (isOffline) {
-        await this.backoffAll(ledgerId, err as ApiError)
+        await this.backoffAll(ledgerId, err, this.lastSyncError.at)
+        await this.refreshSummary(ledgerId, 0)
         await this.emit('offline')
         return 'offline'
       }
       // 401 已由客户端全局登出处理；其余 API 错误标记 error，保留队列。
+      await this.refreshSummary(ledgerId, 0)
       await this.emit('error')
       return 'error'
     } finally {
@@ -362,10 +442,16 @@ export class SyncEngine {
     }
   }
 
-  /** 退避：网络/5xx 时给所有 pending 项推进 attempts 并设下次重试时间。 */
-  private async backoffAll(ledgerId: number, err: ApiError): Promise<void> {
+  /**
+   * 退避：网络/5xx 时给所有 pending 项推进 attempts 并设下次重试时间。
+   *
+   * P1：顶层网络错误只写 SyncState.lastSyncError。条目本来没有逐条错误时
+   * 不把顶层文案灌进 last_error（否则 UI 会把所有正常排队误报成「失败」）。
+   */
+  private async backoffAll(ledgerId: number, err: unknown, at: number): Promise<void> {
     const entries = await this.store.getPending(ledgerId, 'pending')
     const now = this.nowFn()
+    const top = toSyncError(err, 'push', at)
     for (const entry of entries) {
       if (entry.next_retry_at > now) continue
       await this.store.scheduleRetry(
@@ -373,9 +459,60 @@ export class SyncEngine {
         entry.id,
         entry.attempts + 1,
         now + backoffMs(entry.attempts + 1),
-        err.code ?? 'network_error',
-        err.message,
+        entry.last_error_code ?? top.code,
+        entry.last_error ?? '',
       )
+    }
+  }
+
+  /** 本次同步摘要：成功数来自 push 结果，重试/死信取最终队列（与列表同口径）。 */
+  private async refreshSummary(ledgerId: number, success: number): Promise<void> {
+    try {
+      const now = this.nowFn()
+      const pending = await this.store.getPending(ledgerId, 'pending')
+      const dead = await this.store.countPending(ledgerId, 'dead')
+      this.lastSyncSummary = {
+        success,
+        retry: pending.filter((entry) => isRetryingPending(entry, now)).length,
+        dead,
+        at: now,
+      }
+    } catch {
+      // 摘要是只读观测，读失败保留上一轮结果，绝不打断同步主路径。
+    }
+  }
+
+  /**
+   * 立即重试（P1）：仅持租约的 tab 执行，一步完成 retryNow + 一轮 sync。
+   *
+   * 非 leader 直接返回 'skipped'，避免多 tab 互相通知导致同一批条目反复重试。
+   * retryNow 保留 attempts、清逐条错误并归零 next_retry_at；随后 sync 会真正重推。
+   */
+  async requestRetry(ids: number[]): Promise<'ok' | 'skipped'> {
+    const ledgerId = this.ledgerIdProvider()
+    if (ledgerId === null || ids.length === 0) return 'skipped'
+    const clientId = await this.store.getClientId()
+    const holder = `sync-${clientId}`
+    const leader = await this.store.tryAcquireLease(holder, this.nowFn(), this.leaseTtlMs)
+    if (!leader) return 'skipped'
+
+    let handedToSync = false
+    try {
+      await this.store.retryNow(ledgerId, ids)
+      await this.emit(this.statusValue)
+      if (this.syncing) {
+        // 同 tab 已有同步在跑：重试已落库，交给它带走；租约由它释放。
+        handedToSync = true
+        return 'ok'
+      }
+      const outcome = await this.sync()
+      handedToSync = outcome !== 'skipped'
+      return 'ok'
+    } finally {
+      // sync 自己会在结束时释放租约；skipped（同 tab 正在同步 / 租约被抢）时这里收尾。
+      if (!handedToSync) {
+        await this.store.releaseLease(holder).catch(() => undefined)
+      }
     }
   }
 
@@ -417,8 +554,9 @@ export class SyncEngine {
     }
   }
 
-  /** push 循环（最多两轮）：收集合并映射 → 重映射 → 重推。 */
-  private async pushLoop(ledgerId: number, clientId: string): Promise<void> {
+  /** push 循环（最多两轮）：收集合并映射 → 重映射 → 重推；返回成功落地笔数。 */
+  private async pushLoop(ledgerId: number, clientId: string): Promise<number> {
+    let success = 0
     for (let round = 1; round <= this.maxPushRounds; round += 1) {
       // §6.6.1 #3：push 前回放 uuid_map（崩溃恢复路径）。
       await this.replayUuidMap(ledgerId)
@@ -426,7 +564,7 @@ export class SyncEngine {
       const now = this.nowFn()
       const all = await this.store.getPending(ledgerId, 'pending')
       const entries = all.filter((e) => e.next_retry_at <= now)
-      if (entries.length === 0) return
+      if (entries.length === 0) return success
 
       const changes: PushChange[] = entries.map((e) => ({
         entity_type: e.change.entity_type,
@@ -461,7 +599,7 @@ export class SyncEngine {
             now,
             `push 结果 index 越界: ${String(result.index)}`,
           )
-          return
+          return success
         }
         const disposition = decideDisposition({
           entry,
@@ -473,6 +611,7 @@ export class SyncEngine {
         switch (disposition.kind) {
           case 'removed':
             removedIds.push(disposition.id)
+            success += 1
             break
           case 'merged':
             // 自然键合并：记录本地→服务端映射并移除本地 pending；
@@ -481,6 +620,7 @@ export class SyncEngine {
               uuidMap[disposition.localUuid] = disposition.serverUuid
             }
             removedIds.push(disposition.id)
+            success += 1
             break
           case 'dead':
             dead.push(disposition.dead)
@@ -516,8 +656,9 @@ export class SyncEngine {
         await this.pullNow(ledgerId, clientId, true)
       }
 
-      if (allSettled) return
+      if (allSettled) return success
     }
+    return success
   }
 
   /** 协议错误：整批按临时失败退避；checkpoint=0 由 store 单调守卫挡住，不推进水位。 */
