@@ -191,7 +191,11 @@ describe('新建分类表单的窄屏布局（375px 不横向溢出）', () => {
       resolve(process.cwd(), 'src/views/CategoriesView.vue'),
       'utf8',
     )
-    const css = source.slice(source.indexOf('<style scoped>'), source.indexOf('</style>'))
+    // Windows 下 core.autocrlf=true 会让源文件签出为 CRLF，而本用例的 CSS 断言
+    // 硬编码 \n；先归一化行尾再断言，保持与平台无关（不改源文件、不改断言本体）。
+    const css = source
+      .slice(source.indexOf('<style scoped>'), source.indexOf('</style>'))
+      .replace(/\r\n/g, '\n')
     const createRule = css.match(/\.cats__create\s*\{([^}]*)\}/)?.[1] ?? ''
     const controlsRule =
       css.match(/\.cats__create \.cats__type,\s*\.cats__create \.cats__name,\s*\.cats__create \.cats__ascii\s*\{([^}]*)\}/)?.[1] ?? ''
