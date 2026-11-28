@@ -6,6 +6,25 @@
 > 版本号单一事实源：git tag（`vX.Y.Z`）。发布前 `scripts/verify-version.sh` 会校验
 > tag / 本文件顶部版本 / `frontend/package.json` 三处一致，不一致则构建失败。
 
+## [0.6.4-pre] - 2026-11-28
+
+预发布版本：同步失败可观测性与多条待推送的批量处置，以及多条推送结果的落库一致性与账本隔离修复。账核、Beancount 导出与同步 wire 协议均未改动。
+
+### Added
+
+- **同步失败可观测性**：`SyncState.lastSyncError` 带真实 code/message/at/phase 且成功时清空；`PendingEntry` 补 `display_label` 等 7 个可观测字段；`errorMessages.ts` 薄映射错误码（未知码原文透传）；`/sync` 页四段信息架构（错误横幅 / 重试中 / 死信 / 摘要条）、批量限组内、徽标按可处置状态、移动端展开复制、导出补 `last_error` 全文。
+- **批量处置**：`retryNow(ledgerId, ids)` 双实现（保留 attempts）+ `requestRetry` 仅持租约 tab 执行；失败子集单一 `isRetryingPending` 来源贯穿引擎 / store / UI / 徽标。
+
+### Fixed
+
+- **多条推送结果落库一致性**：`applyPushOutcome` 单事务合并四类处置；results 数量与 index 严格校验，异常整批退避不删除；`decideDisposition` 纯函数化，`account_not_found` 按条目判定不再全局连坐；多条死信独立记录 code/error。
+- **账本隔离**：pending 行补 `ledger_id`，读写全链路加账本守卫；修复 IDB `change`/`v` 读写不一致与无 keyPath store 的 DataError。
+- **CI Release tag 门禁**：仅严格 `vX.Y.Z` 正式 tag 创建 GitHub Release，非正式 tag（如 `-pre` / `-rc`）只跑校验，避免 Release 钉住 tag 无法强推。
+
+### Changed
+
+- 全站 JS gzip 上限由 420 KB 上调至 460 KB（收紧的临时止损线，非因新依赖；历史欠账另立债务任务优化回 ≤420 KB）。
+
 ## [0.6.3] - 2026-11-27
 
 「标签编辑」专项：标签从「冲正 + 新建」改为**原地更新窄通道**（P0），并补齐**离线标签编辑**（P1，并集 + 墓碑合并）。经济事实（date/flag/description/postings）的冲正机制**原样保留**；迁移 **017→018**；端点表 **44→46 条路径**、`path×method` **56→58**（新增 `PUT /api/transactions/{uuid}/tags`、`GET /api/transactions/{uuid}/tag-edits`）。导出仍为 `tags: "..."` 元数据行，`bean-check` 校验通过。
